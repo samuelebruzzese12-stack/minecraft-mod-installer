@@ -58,7 +58,7 @@ Altre schermate: **FILE RECENTI**, **MOD INSTALLATI** (rinvia, segna l'esito, el
 
 ## Sicurezza e privacy
 
-- **Nessun permesso** richiesto, **nessun accesso a Internet**: nessun file lascia il telefono.
+- **Nessun permesso** richiesto all'utente (nel manifest compare solo un permesso interno di AndroidX, a livello «firma», che altre app non possono usare) e **nessun accesso a Internet**: nessun file lascia il telefono.
 - Protezione da ZIP Slip / path traversal (percorsi con `..`, assoluti, con lettera di unità o con caratteri nulli: l'archivio
   viene rifiutato); i file non vengono mai estratti con il nome che hanno nell'archivio, ma riscritti in un nuovo pacchetto.
   Limiti su dimensione dell'archivio, dei singoli file, numero di voci e rapporto di compressione (zip bomb), tutti misurati sui

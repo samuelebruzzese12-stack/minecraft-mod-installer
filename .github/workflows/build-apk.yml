@@ -73,7 +73,7 @@ jobs:
             echo '```'
             "$BT/apksigner" verify --print-certs dist/MinecraftModInstaller.apk 2>&1 | head -n 8
             echo '```'
-            echo "### Permessi richiesti (devono essere nessuno)"
+            echo "### Permessi (atteso: solo il permesso interno di AndroidX, a livello firma)"
             echo '```'
             "$BT/aapt2" dump permissions dist/MinecraftModInstaller.apk 2>&1 | head -n 20
             echo '```'
@@ -110,3 +110,54 @@ jobs:
             - `MinecraftModInstaller.apk` — versione normale
             - `MinecraftModInstaller-debug.apk` — stessa app con le informazioni di debug
           files: dist/*.apk
+
+  # Prova l'APK appena compilato su un emulatore Android: schermate, pulsanti, apertura di file di prova.
+  # Non blocca la consegna dell'APK (continue-on-error): serve a trovare i difetti che la compilazione non vede.
+  emulator:
+    name: Prova su emulatore Android
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    continue-on-error: true
+
+    steps:
+      - name: Scarica il codice
+        uses: actions/checkout@v4
+
+      - name: Abilita l'accelerazione KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm || echo "KVM NON DISPONIBILE"
+          nproc
+          free -m | head -n 2
+
+      - name: Scarica l'APK compilato
+        uses: actions/download-artifact@v4
+        with:
+          name: MinecraftModInstaller-apk
+          path: apk
+
+      - name: Crea i file di prova
+        run: python3 ci/make_samples.py samples
+
+      - name: Prova l'app sull'emulatore
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          ram-size: 3072M
+          disable-animations: true
+          emulator-boot-timeout: 900
+          script: bash ci/emulator_smoke.sh
+
+      - name: Salva schermate e log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prova-emulatore
+          path: ci-out
+          if-no-files-found: warn
