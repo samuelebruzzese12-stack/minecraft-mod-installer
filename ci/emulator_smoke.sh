@@ -33,13 +33,28 @@ fail() { log "PROBLEMA: $*"; echo "$*" >> "$PROBLEMS"; }
 note() { log "NOTA: $*"; echo "$*" >> "$NOTES"; }
 phase() { echo; log "=================== $* ==================="; }
 
+# Sull'emulatore di GitHub, subito dopo l'avvio, Android può mostrare «System UI isn't responding» (o simili): copre l'app
+# e la prova non vede più nulla. È un problema dell'emulatore, non dell'app: si preme «Wait» e si annota. Se invece è
+# l'app a non rispondere, è un problema vero e si segnala.
+dismiss_anr() {
+  local title; title=$($UI anr 2>/dev/null) || title=""
+  note "finestra di Android «${title:-non risponde}»: premo Wait"
+  if echo "$title" | grep -qiE "Minecraft Mod Installer|$PKG"; then fail "Android segnala che l'app non risponde: $title"; fi
+  sleep 4
+}
+
 shot() {
   STEP=$((STEP+1))
   # Nome file sicuro: GitHub rifiuta nei file caricati : " < > | * ? \ / e gli a capo, quindi si tiene solo ASCII semplice.
   local n; n=$(printf "%03d-%s" "$STEP" "$(echo "$1" | LC_ALL=C sed -e 's/[^A-Za-z0-9._-]/_/g' -e 's/__*/_/g' -e 's/_$//')")
-  adb exec-out screencap -p > "$OUT/shots/$n.png" 2>/dev/null
-  LAST_SHOT="$OUT/shots/$n.png"
-  if $UI dump "$OUT/ui/$n.xml" >/dev/null 2>&1; then
+  local attempt
+  for attempt in 1 2 3; do
+    adb exec-out screencap -p > "$OUT/shots/$n.png" 2>/dev/null
+    LAST_SHOT="$OUT/shots/$n.png"
+    $UI dump "$OUT/ui/$n.xml" >/dev/null 2>&1 || break
+    if grep -qiE "isn.{1,8}t responding|not responding" "$OUT/ui/$n.xml"; then dismiss_anr; else break; fi
+  done
+  if [ -s "$OUT/ui/$n.xml" ]; then
     LAST_UI="$OUT/ui/$n.xml"
     $UI texts "$LAST_UI" > "$OUT/ui/$n.txt" 2>/dev/null
     $UI actions "$LAST_UI" > "$OUT/ui/$n.azioni" 2>/dev/null
@@ -70,7 +85,13 @@ back() { adb shell input keyevent KEYCODE_BACK; sleep 1.2; }
 app_front() { adb shell am start -n $PKG/.MainActivity > /dev/null 2>&1; sleep 2; }
 
 # Legge la schermata attuale in $CUR; «seen TESTO» dice se il testo compare nell'ultima lettura.
-snap() { rm -f "$CUR"; $UI dump "$CUR" >/dev/null 2>&1; }
+snap() {
+  local i
+  for i in 1 2 3; do
+    rm -f "$CUR"; $UI dump "$CUR" >/dev/null 2>&1
+    if [ -s "$CUR" ] && grep -qiE "isn.{1,8}t responding|not responding" "$CUR"; then dismiss_anr; else return 0; fi
+  done
+}
 seen() { [ -s "$CUR" ] && $UI has-in "$CUR" "$1" 2>/dev/null; }
 
 # Porta l'app alla dashboard (la prima schermata). Dalla dashboard «Indietro» esce dall'app, quindi si controlla prima.
@@ -187,6 +208,15 @@ adb shell input keyevent KEYCODE_WAKEUP > /dev/null 2>&1
 adb logcat -c
 adb logcat -v threadtime > "$OUT/logcat.txt" 2>&1 &
 LOGCAT_PID=$!
+
+# Subito dopo l'avvio l'emulatore è ancora carico (servizi di Google, indicizzazione): si lascia calmare il sistema e si
+# chiudono eventuali finestre «non risponde» prima di cominciare.
+log "Attendo che il sistema si calmi"
+adb shell input keyevent KEYCODE_HOME > /dev/null 2>&1
+sleep 20
+for _ in 1 2 3; do
+  if t=$($UI anr 2>/dev/null); then note "finestra di Android chiusa all'avvio: $t"; sleep 4; else break; fi
+done
 
 log "Installo l'APK: $APK"
 adb install -r -t "$APK" 2>&1 | tee "$OUT/install.txt"

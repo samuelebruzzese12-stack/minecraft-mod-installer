@@ -5,6 +5,7 @@ Comandi:
   dump PERCORSO          salva l'albero dell'interfaccia in PERCORSO
   texts PERCORSO         elenca i testi visibili (uno per riga)
   has-in PERCORSO TESTO  esce 0 se TESTO compare nel dump
+  anr                    se c'è una finestra di Android «… non risponde», preme «Wait» e stampa il titolo (esce 0); altrimenti esce 1
   has TESTO              come sopra ma su una schermata nuova
   tap TESTO              tocca il primo elemento che contiene TESTO (scorre fino a 3 volte per trovarlo)
   tap-last TESTO         come tap, ma sceglie l'ULTIMO elemento che contiene TESTO (es. la voce del menu laterale)
@@ -249,6 +250,33 @@ def wait(needle, seconds=20):
     return False
 
 
+ANR_RE = re.compile(r"isn.t responding|not responding", re.I)
+
+
+def anr():
+    """Chiude la finestra di sistema «… non risponde» (ANR) toccando «Wait». Restituisce il titolo, o None se non c'è."""
+    p = dump("/tmp/mmi_anr.xml")
+    if not p:
+        return None
+    ns = nodes(p)
+    title = None
+    for n in ns:
+        for label in (n["text"], n["desc"]):
+            if label and ANR_RE.search(label):
+                title = label.strip()
+    if title is None:
+        return None
+    for needle in ("wait", "close app"):
+        for n in ns:
+            if n["text"].strip().lower() == needle:
+                x1, y1, x2, y2 = n["box"]
+                adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
+                return title
+    adb("shell", "input", "keyevent", "KEYCODE_ENTER")
+    return title
+
+
+
 def main(argv):
     cmd = argv[1]
     if cmd == "dump":
@@ -261,6 +289,12 @@ def main(argv):
                 if label and label not in seen:
                     seen.append(label)
         print("\n".join(seen))
+        return 0
+    if cmd == "anr":
+        t = anr()
+        if t is None:
+            return 1
+        print(t)
         return 0
     if cmd == "has-in":
         return 0 if find(nodes(argv[2]), argv[3]) else 1

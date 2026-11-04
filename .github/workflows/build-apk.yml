@@ -46,7 +46,7 @@ jobs:
       - name: Esegui i test (analisi, download e testi dell'app)
         id: coretests
         continue-on-error: true
-        run: gradle :core:test :download-engine:test :app:testDebugUnitTest --continue --stacktrace
+        run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :app:testDebugUnitTest --continue --stacktrace
 
       - name: Compila l'APK
         run: gradle :app:assembleDebug :app:assembleRelease --stacktrace
@@ -121,6 +121,8 @@ jobs:
           path: |
             core/build/reports/tests/test
             download-engine/build/reports/tests/test
+            jar-analyzer/build/reports/tests/test
+            mod-manager/build/reports/tests/test
             app/build/reports/tests/testDebugUnitTest
           if-no-files-found: ignore
 

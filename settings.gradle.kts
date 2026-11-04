@@ -18,6 +18,8 @@ rootProject.name = "MinecraftModInstaller"
 
 include(":core")
 include(":download-engine")
+include(":jar-analyzer")
+include(":mod-manager")
 include(":app")
 
 // Finto Minecraft usato solo dalla prova su emulatore in CI (vedi ci/emulator_smoke.sh). Si include soltanto con
