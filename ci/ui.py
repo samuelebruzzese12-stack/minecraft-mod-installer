@@ -15,7 +15,7 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 
-REMOTE = "/sdcard/mmi_ui.xml"
+REMOTE = "/data/local/tmp/mmi_ui.xml"
 
 
 def adb(*args, timeout=60):

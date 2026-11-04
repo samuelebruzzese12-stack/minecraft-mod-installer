@@ -186,7 +186,7 @@ class PreparerTest {
         assertEquals(inScope, p.sourceFileCount)
         assertEquals(inScope - 1, p.entryCount)
         assertTrue(p.notes.any { n -> n == "Inclusi ${inScope - 1} file su $inScope dei contenuti scelti" })
-        assertTrue(p.notes.any { n -> n.contains("1 file dell'archivio non fanno parte") })
+        assertTrue(p.notes.any { n -> n.contains("1 file dell'archivio non fa parte") })
         assertEquals(listOf("Conti"), p.packNames)
     }
 

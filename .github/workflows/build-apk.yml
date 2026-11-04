@@ -111,6 +111,20 @@ jobs:
             - `MinecraftModInstaller-debug.apk` — stessa app con le informazioni di debug
           files: dist/*.apk
 
+      # Il finto Minecraft serve solo alla prova su emulatore: non entra mai nella Release.
+      # Questi passaggi non possono bloccare la consegna dell'APK (vengono dopo e non fanno fallire l'esecuzione).
+      - name: Compila il finto Minecraft (solo per la prova su emulatore)
+        continue-on-error: true
+        run: gradle -PwithFakeMinecraft :fakeminecraft:assembleDebug --stacktrace
+
+      - name: Salva il finto Minecraft per la prova
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: fakeminecraft-apk
+          path: ci/fakeminecraft/build/outputs/apk/debug/*.apk
+          if-no-files-found: warn
+
   # Prova l'APK appena compilato su un emulatore Android: schermate, pulsanti, apertura di file di prova.
   # Non blocca la consegna dell'APK (continue-on-error): serve a trovare i difetti che la compilazione non vede.
   emulator:
@@ -139,6 +153,13 @@ jobs:
           name: MinecraftModInstaller-apk
           path: apk
 
+      - name: Scarica il finto Minecraft
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: fakeminecraft-apk
+          path: fake
+
       - name: Crea i file di prova
         run: python3 ci/make_samples.py samples
 
@@ -161,3 +182,18 @@ jobs:
           name: prova-emulatore
           path: ci-out
           if-no-files-found: warn
+
+      # Gli artifact si scaricano solo dal sito di GitHub: lo stesso materiale viene allegato anche alla Release.
+      - name: Comprimi i risultati della prova
+        if: always()
+        run: |
+          if [ -d ci-out ]; then (cd ci-out && zip -qr ../prova-emulatore.zip .); fi
+          ls -l prova-emulatore.zip || true
+
+      - name: Allega i risultati alla Release
+        if: always()
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          files: prova-emulatore.zip

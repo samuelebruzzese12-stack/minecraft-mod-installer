@@ -277,10 +277,16 @@ class PackagePreparer(
             notes.add("Ignorati ${tally.duplicates} file con lo stesso identico percorso (tenuto il primo)")
         }
         if (tally.caseVariants > 0) {
-            notes.add("${tally.caseVariants} file hanno lo stesso nome di altri a meno delle maiuscole: inclusi tutti")
+            notes.add(
+                (if (tally.caseVariants == 1) "1 file ha lo stesso nome di un altro" else "${tally.caseVariants} file hanno lo stesso nome di altri") +
+                    " a meno delle maiuscole: inclusi tutti"
+            )
         }
         if (tally.outside > 0) {
-            notes.add("${tally.outside} file dell'archivio non fanno parte dei contenuti scelti (es. LEGGIMI, altri pacchetti)")
+            notes.add(
+                (if (tally.outside == 1) "1 file dell'archivio non fa parte" else "${tally.outside} file dell'archivio non fanno parte") +
+                    " dei contenuti scelti (es. LEGGIMI, altri pacchetti)"
+            )
         }
     }
 

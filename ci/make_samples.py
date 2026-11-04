@@ -89,6 +89,15 @@ def world_entries(prefix, name, version=(1, 21, 0)):
     return e
 
 
+def zip_bytes(entries):
+    import io
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in entries.items():
+            z.writestr(name, data)
+    return buf.getvalue()
+
+
 def write_zip(path, entries):
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         for name, data in entries.items():
@@ -129,7 +138,28 @@ def main(out):
               pack_entries("", "Behavior Senza Dipendenza", uid("senza-dip"), "data",
                            deps=[{"uuid": uid("non-esiste"), "version": [1, 0, 0]}]))
 
-    # 7) file che non è un pacchetto
+    # 7) «mod» come si trova in giro: uno ZIP con DUE .mcpack separati (comportamento + risorse) che dipendono
+    #    l'uno dall'altro, più oggetti, bandiere e un aereo con nomi che differiscono solo per le maiuscole.
+    #    È il caso che prima veniva consegnato a Minecraft un pacchetto alla volta.
+    gbp, grp = uid("gunmod-bp"), uid("gunmod-rp")
+    gun_bp = pack_entries("", "Gun Mod BP", gbp, "data", deps=[{"uuid": grp, "version": [1, 0, 0]}])
+    gun_bp["items/pistola.json"] = b'{"format_version":"1.20.0","minecraft:item":{"description":{"identifier":"gun:pistola"}}}'
+    gun_bp["items/bandiera.json"] = b'{"format_version":"1.20.0","minecraft:item":{"description":{"identifier":"gun:bandiera"}}}'
+    gun_bp["entities/aereo.json"] = b'{"format_version":"1.16.0"}'
+    gun_bp["scripts/main.js"] = b"console.log('gun mod');\n"
+    gun_rp = pack_entries("", "Gun Mod RP", grp, "resources")
+    gun_rp["textures/items/pistola.png"] = png(16, 16, (90, 90, 90), (40, 40, 40))
+    gun_rp["textures/items/bandiera.png"] = png(16, 16, (200, 40, 40), (160, 20, 20))
+    gun_rp["textures/items/Aereo.png"] = png(16, 16, (60, 90, 200), (30, 50, 150))
+    gun_rp["textures/items/aereo.png"] = png(16, 16, (70, 100, 210), (40, 60, 160))
+    gun_rp["textures/item_texture.json"] = b'{"resource_pack_name":"gun","texture_name":"atlas.items","texture_data":{}}'
+    write_zip(os.path.join(out, "Gun_Mod.zip"), {
+        "Gun Mod BP.mcpack": zip_bytes(gun_bp),
+        "Gun Mod RP.mcpack": zip_bytes(gun_rp),
+        "LEGGIMI.txt": b"Installa prima il pacchetto risorse.\n",
+    })
+
+    # 8) file che non è un pacchetto
     with open(os.path.join(out, "Appunti.txt"), "wb") as f:
         f.write(b"Questo non e' un pacchetto Minecraft.\n")
 
