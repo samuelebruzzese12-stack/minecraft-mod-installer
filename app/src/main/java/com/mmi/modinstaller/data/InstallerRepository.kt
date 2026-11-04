@@ -34,17 +34,18 @@ class DeleteResult(val entry: InstalledEntry, val backup: BackupInfo?)
  * Unico punto di accesso ai dati e alle operazioni sui file. Contiene la logica che non riguarda l'interfaccia:
  * copia, analisi, preparazione, elenchi, backup ed eliminazione.
  */
-class InstallerRepository(context: Context) {
+class InstallerRepository(context: Context, val paths: AppPaths, val store: LibraryStore) {
 
     private val appContext: Context = context.applicationContext
     private val limits = SafetyLimits()
 
-    val paths: AppPaths = AppPaths(appContext).also {
-        it.ensure()
-        it.clearSessions()
-        it.clearPartialFiles()
+    init {
+        // Pulizia a ogni avvio: copie temporanee dei file scelti e pacchetti rimasti a metà.
+        paths.ensure()
+        paths.clearSessions()
+        paths.clearPartialFiles()
     }
-    val store: LibraryStore = LibraryStore(paths.libraryFile)
+
     val backups: BackupManager = BackupManager(paths.backups)
     val bridge: MinecraftBridge = MinecraftBridge(appContext, appContext.packageName + ".fileprovider")
 

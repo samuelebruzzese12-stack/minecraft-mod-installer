@@ -11,7 +11,30 @@ import com.mmi.modinstaller.core.ItemStatus
 import com.mmi.modinstaller.core.RecentFile
 import java.io.File
 
+/** Schermate interne dell'INSTALLER BEDROCK (HOME = la sua pagina principale). */
 enum class Screen { HOME, REPORT, RECENT, INSTALLED, BACKUPS, HISTORY, ABOUT }
+
+/** Quanto una sezione è realmente utilizzabile: serve a non far credere che funzioni ciò che non c'è ancora. */
+enum class Availability(val label: String) {
+    READY("Pronto"),
+    PARTIAL("Parziale"),
+    SOON("In arrivo")
+}
+
+/** Le sezioni dell'app, nell'ordine del menu. [availability] va aggiornata solo quando il motore è davvero verificato. */
+enum class Section(val title: String, val availability: Availability, val summary: String) {
+    HOME("HOME", Availability.READY, "Panoramica dell'app"),
+    INSTALLER("INSTALLER BEDROCK", Availability.READY, "Controlla e installa mod, mappe, texture e add-on in Minecraft Bedrock"),
+    JAVA("JAVA EDITION", Availability.PARTIAL, "Requisiti del telefono, memoria consigliata e versioni di Java"),
+    MODS("MOD MANAGER", Availability.SOON, "Mod Java in profili indipendenti"),
+    MODPACKS("MODPACK MANAGER", Availability.SOON, "Modpack Modrinth e CurseForge"),
+    WORLDS("WORLD MANAGER", Availability.SOON, "Importazione di mondi Java e Bedrock, anche enormi"),
+    CONVERTER("WORLD CONVERTER", Availability.SOON, "Conversione di mondi tra Java e Bedrock"),
+    JAVA_TO_BEDROCK("JAVA TO BEDROCK", Availability.SOON, "Analisi e conversione delle mod Java"),
+    DOWNLOADS("DOWNLOAD MANAGER", Availability.SOON, "Download con ripresa e verifica dei file"),
+    DIAGNOSTICS("DIAGNOSTICA", Availability.READY, "Dispositivo, integrità dei file ed errori recenti"),
+    SETTINGS("IMPOSTAZIONI", Availability.READY, "Tema e profilo prestazioni")
+}
 
 /** Quale pulsante della home ha aperto il selettore: serve solo a segnalare se il file scelto è di altro tipo. */
 enum class PickPurpose(val label: String, val expected: Set<ContentKind>) {
@@ -68,6 +91,9 @@ sealed class DialogState {
 }
 
 data class UiState(
+    /** Sezione aperta (la dashboard all'avvio). */
+    val section: Section = Section.HOME,
+    /** Schermata interna dell'INSTALLER BEDROCK: conta solo quando [section] è INSTALLER. */
     val screen: Screen = Screen.HOME,
     val busy: BusyState? = null,
     val minecraft: MinecraftStatus = MinecraftStatus(false, null, null),

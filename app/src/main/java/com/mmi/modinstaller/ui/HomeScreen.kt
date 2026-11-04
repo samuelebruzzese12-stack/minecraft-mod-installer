@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -36,7 +37,7 @@ import com.mmi.modinstaller.UiState
 import com.mmi.modinstaller.core.InstallState
 
 @Composable
-fun HomeScreen(state: UiState, vm: MainViewModel, onPick: (PickPurpose) -> Unit) {
+fun HomeScreen(state: UiState, vm: MainViewModel, onMenu: () -> Unit, onPick: (PickPurpose) -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -45,9 +46,12 @@ fun HomeScreen(state: UiState, vm: MainViewModel, onPick: (PickPurpose) -> Unit)
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onMenu) {
+                Icon(Icons.Filled.Menu, contentDescription = "Apri il menu")
+            }
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = "Minecraft Mod Installer",
+                    text = "Installer Bedrock",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold
                 )

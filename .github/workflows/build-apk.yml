@@ -160,6 +160,19 @@ jobs:
           name: fakeminecraft-apk
           path: fake
 
+      # La versione precedente (build 5: l'ultima con il solo INSTALLER BEDROCK) serve alla prova di aggiornamento:
+      # l'emulatore la installa, ci lavora, poi installa sopra quella nuova e controlla che i dati restino.
+      # Se non si riesce a scaricarla la prova di aggiornamento viene saltata e il rapporto lo dice.
+      - name: Scarica la versione precedente (per la prova di aggiornamento)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_TAG: build-5
+        run: |
+          mkdir -p baseline
+          gh release download "$BASELINE_TAG" --repo "$GITHUB_REPOSITORY" --pattern MinecraftModInstaller-debug.apk --dir baseline
+          ls -l baseline
+
       - name: Crea i file di prova
         run: python3 ci/make_samples.py samples
 

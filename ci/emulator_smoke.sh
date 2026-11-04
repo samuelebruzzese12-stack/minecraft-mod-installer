@@ -1,7 +1,10 @@
 #!/bin/bash
-# Prova su emulatore Android: installa l'APK, avvia l'app, apre file di prova dal selettore di sistema (come farebbe
-# l'utente) e tocca i pulsanti. Con il FINTO Minecraft (ci/fakeminecraft) controlla anche che il file consegnato dall'app
-# contenga tutto, byte per byte. Salva schermate, dump dell'interfaccia e log in $OUT. Non si ferma al primo problema.
+# Prova su emulatore Android dell'app completa: dashboard, menu, INSTALLER BEDROCK, Java Edition, Diagnostica,
+# Impostazioni e sezioni non ancora costruite. Installa l'APK, apre file di prova dal selettore di sistema (come farebbe
+# l'utente) e tocca i pulsanti. Con il FINTO Minecraft (ci/fakeminecraft) controlla anche che il file consegnato
+# dall'app contenga tutto, byte per byte. Alla fine installa l'APK nuovo SOPRA quello della versione precedente per
+# controllare che elenchi e cronologia non vadano persi. Salva schermate, dump dell'interfaccia e log in $OUT.
+# Non si ferma al primo problema.
 #
 # Il finto Minecraft non importa niente: verifica solo che l'app consegni il file giusto con lo stesso Intent.
 # Se Minecraft vero importi o no il file non si può provare qui.
@@ -9,22 +12,32 @@ PKG=com.mmi.modinstaller
 FAKE_PKG=com.mojang.minecraftpe
 APK=${APK:-apk/MinecraftModInstaller-debug.apk}
 FAKE_APK=$(ls fake/*.apk 2>/dev/null | head -n 1)
+BASE_APK=$(ls baseline/*.apk 2>/dev/null | head -n 1)
 OUT=${OUT:-ci-out}
 SAMPLES=${SAMPLES:-samples}
-UI="python3 ci/ui.py"
+UI=${UI:-"python3 ci/ui.py"}
 mkdir -p "$OUT/shots" "$OUT/ui" "$OUT/received"
 PROBLEMS="$OUT/problemi.txt"; : > "$PROBLEMS"
-STEP=0; LAST_UI=""
+NOTES="$OUT/note.txt"; : > "$NOTES"
+STEP=0; LAST_UI=""; LAST_SHOT=""
+CUR=/tmp/mmi_cur.xml
+declare -A RECV_SEEN
+RECV_LINE=""
 
 log()  { echo "[$(date +%H:%M:%S)] $*"; }
 fail() { log "PROBLEMA: $*"; echo "$*" >> "$PROBLEMS"; }
+note() { log "NOTA: $*"; echo "$*" >> "$NOTES"; }
+phase() { echo; log "=================== $* ==================="; }
+
 shot() {
   STEP=$((STEP+1))
-  local n; n=$(printf "%02d-%s" "$STEP" "$(echo "$1" | tr ' /' '__')")
+  local n; n=$(printf "%03d-%s" "$STEP" "$(echo "$1" | tr ' /' '__')")
   adb exec-out screencap -p > "$OUT/shots/$n.png" 2>/dev/null
+  LAST_SHOT="$OUT/shots/$n.png"
   if $UI dump "$OUT/ui/$n.xml" >/dev/null 2>&1; then
     LAST_UI="$OUT/ui/$n.xml"
     $UI texts "$LAST_UI" > "$OUT/ui/$n.txt" 2>/dev/null
+    $UI actions "$LAST_UI" > "$OUT/ui/$n.azioni" 2>/dev/null
     log "schermata $n: $(tr '\n' '|' < "$OUT/ui/$n.txt" | cut -c1-500)"
   else
     LAST_UI=""
@@ -35,15 +48,71 @@ expect() {
   [ -z "$LAST_UI" ] && return
   for t in "$@"; do $UI has-in "$LAST_UI" "$t" || fail "manca «$t» nella schermata $(basename "$LAST_UI" .xml)"; done
 }
+# Le azioni toccabili della schermata (ultima salvata con shot) devono essere solo quelle elencate: serve a provare
+# che le sezioni non ancora costruite non hanno pulsanti finti.
+only_actions() {
+  [ -z "$LAST_UI" ] && return
+  local line a ok
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    ok=0
+    for a in "$@"; do [ "$line" = "$a" ] && ok=1; done
+    [ $ok = 1 ] || fail "$(basename "$LAST_UI" .xml): azione inattesa «$line» (nessun pulsante finto ammesso)"
+  done < <($UI actions "$LAST_UI")
+}
+
 back() { adb shell input keyevent KEYCODE_BACK; sleep 1.2; }
+app_front() { adb shell am start -n $PKG/.MainActivity > /dev/null 2>&1; sleep 2; }
+
+# Legge la schermata attuale in $CUR; «seen TESTO» dice se il testo compare nell'ultima lettura.
+snap() { rm -f "$CUR"; $UI dump "$CUR" >/dev/null 2>&1; }
+seen() { [ -s "$CUR" ] && $UI has-in "$CUR" "$1" 2>/dev/null; }
+
+# Porta l'app alla dashboard (la prima schermata). Dalla dashboard «Indietro» esce dall'app, quindi si controlla prima.
+go_dash() {
+  local i
+  for i in 1 2 3 4 5 6; do
+    snap
+    if seen "in un'unica app"; then return 0; fi
+    back
+  done
+  app_front; snap; seen "in un'unica app"
+}
+# Porta l'app alla home dell'INSTALLER BEDROCK (nella versione precedente era la schermata iniziale).
 go_home() {
-  for _ in 1 2 3 4 5; do
-    $UI has "SELEZIONA FILE" && return 0
+  local i
+  for i in 1 2 3 4 5 6; do
+    snap
+    if seen "SELEZIONA FILE"; then return 0; fi
+    if seen "in un'unica app"; then $UI tap "INSTALLER BEDROCK" > /dev/null; sleep 1.5; continue; fi
     back
   done
   return 1
 }
-app_front() { adb shell am start -n $PKG/.MainActivity > /dev/null 2>&1; sleep 2; }
+# Apre il menu laterale e sceglie una voce (l'ultima corrispondenza è quella del menu, composto dopo la pagina).
+open_from_menu() {
+  $UI tap "Apri il menu" || return 1
+  sleep 1.5
+  $UI tap-last "$1" || return 1
+  sleep 1.5
+}
+
+# Colore di sfondo (somma di R+G+B) della pagina nell'ultimo screenshot: chiaro ≈ 740, scuro ≈ 52.
+bg_sum() {
+  local rgb; rgb=$(python3 -I ci/pixel.py "$LAST_SHOT" 6 1000 2>/dev/null) || { echo -1; return; }
+  set -- $rgb; echo $(( $1 + $2 + $3 ))
+}
+check_theme() { # light|dark  descrizione
+  local want="$1" what="$2" sum; sum=$(bg_sum)
+  log "sfondo ($what): somma RGB $sum"
+  if [ "$sum" -lt 0 ]; then fail "$what: non riesco a leggere il colore dello sfondo"
+  elif [ "$want" = dark ] && [ "$sum" -ge 200 ]; then fail "$what: lo sfondo dovrebbe essere scuro (somma RGB $sum)"
+  elif [ "$want" = light ] && [ "$sum" -le 600 ]; then fail "$what: lo sfondo dovrebbe essere chiaro (somma RGB $sum)"
+  fi
+}
+
+pull_lib() { adb exec-out run-as $PKG cat files/library/library.json > "$1" 2>/dev/null; [ -s "$1" ]; }
+lib_has() { pull_lib "$OUT/.lib.tmp" && grep -Eq "$1" "$OUT/.lib.tmp"; }
 
 # Apre un file di prova dal selettore di sistema, come farebbe l'utente.
 open_sample() {
@@ -68,12 +137,15 @@ open_sample() {
   return 1
 }
 
-# Aspetta che il finto Minecraft scriva nel log di aver ricevuto un file; stampa la riga.
+# Aspetta che il finto Minecraft scriva nel log di aver ricevuto un file NUOVO (una ricezione in più rispetto
+# all'ultima attesa con lo stesso nome); la riga finisce in $RECV_LINE. Va chiamata senza $( ), per conservare il conteggio.
 wait_received() {
-  local name="$1" i
+  local name="$1" i n seen=${RECV_SEEN[$1]:-0}
   for i in $(seq 1 60); do
-    if grep -q "FAKE_MC.*RECEIVED name=$name " "$OUT/logcat.txt" 2>/dev/null; then
-      grep "FAKE_MC.*RECEIVED name=$name " "$OUT/logcat.txt" | tail -n 1
+    n=$(grep -c "FAKE_MC.*RECEIVED name=$name " "$OUT/logcat.txt" 2>/dev/null); n=${n:-0}
+    if [ "$n" -gt "$seen" ]; then
+      RECV_SEEN[$name]=$n
+      RECV_LINE=$(grep "FAKE_MC.*RECEIVED name=$name " "$OUT/logcat.txt" | tail -n 1)
       return 0
     fi
     sleep 1
@@ -86,18 +158,6 @@ pull_received() {
   adb exec-out run-as $FAKE_PKG cat "files/received/$name" > "$OUT/received/$name" 2>/dev/null
   [ -s "$OUT/received/$name" ]
 }
-
-log "Dispositivo: $(adb shell getprop ro.product.model | tr -d '\r'), Android API $(adb shell getprop ro.build.version.sdk | tr -d '\r'), schermo $(adb shell wm size | tr -d '\r')"
-adb logcat -c
-adb logcat -v threadtime > "$OUT/logcat.txt" 2>&1 &
-LOGCAT_PID=$!
-
-log "Installo l'APK: $APK"
-adb install -r -t "$APK" 2>&1 | tee "$OUT/install.txt"
-if ! grep -q Success "$OUT/install.txt"; then
-  fail "installazione dell'APK non riuscita"
-  kill $LOGCAT_PID 2>/dev/null; exit 1
-fi
 
 # La memoria condivisa (/sdcard) si monta qualche secondo DOPO la fine dell'avvio: copiare i file troppo presto
 # fallisce con «Operation not permitted» e il selettore di sistema resta vuoto. Si aspetta, si copia un file
@@ -113,6 +173,23 @@ wait_storage() {
   done
   return 1
 }
+
+# ======================================================================================================== preparazione
+
+log "Dispositivo: $(adb shell getprop ro.product.model | tr -d '\r'), Android API $(adb shell getprop ro.build.version.sdk | tr -d '\r'), schermo $(adb shell wm size | tr -d '\r')"
+adb shell svc power stayon true > /dev/null 2>&1
+adb shell input keyevent KEYCODE_WAKEUP > /dev/null 2>&1
+adb logcat -c
+adb logcat -v threadtime > "$OUT/logcat.txt" 2>&1 &
+LOGCAT_PID=$!
+
+log "Installo l'APK: $APK"
+adb install -r -t "$APK" 2>&1 | tee "$OUT/install.txt"
+if ! grep -q Success "$OUT/install.txt"; then
+  fail "installazione dell'APK non riuscita"
+  kill $LOGCAT_PID 2>/dev/null; exit 1
+fi
+
 : > "$OUT/push.txt"
 if wait_storage; then
   for f in "$SAMPLES"/*; do
@@ -131,44 +208,250 @@ else
 fi
 adb shell ls -l /sdcard/Download > "$OUT/download-dir.txt" 2>&1
 
-# ---------- Home ----------
+# ======================================================================================================== permessi
+
+phase "Permessi dichiarati dall'app"
+adb shell dumpsys package $PKG > "$OUT/dumpsys-package.txt" 2>&1
+if grep -q "android.permission.INTERNET" "$OUT/dumpsys-package.txt"; then
+  fail "l'app dichiara il permesso INTERNET, ma la schermata Impostazioni dice che non ha accesso a Internet"
+fi
+if grep -Eq "android.permission.(READ|WRITE|MANAGE)_EXTERNAL_STORAGE|READ_MEDIA" "$OUT/dumpsys-package.txt"; then
+  fail "l'app dichiara permessi sulla memoria del telefono: dovrebbe usare solo il selettore di sistema"
+fi
+
+# ======================================================================================================== dashboard
+
+phase "Dashboard"
 adb shell am start -W -n $PKG/.MainActivity 2>&1 | tee "$OUT/start.txt"
 sleep 3
-shot "home"
-expect "SELEZIONA FILE" "IMPORTA MOD" "IMPORTA MAPPA" "IMPORTA TEXTURE" "IMPORTA ADD-ON" "FILE RECENTI" "MOD INSTALLATI" "CRONOLOGIA" "BACKUP" "Minecraft non trovato"
+shot "dashboard"
+expect "Minecraft Mod Installer" "in un'unica app" "Stato" "Minecraft Bedrock" "non trovato" \
+  "Contenuti Bedrock gestiti" "Runtime Java" "non integrato" "Errori registrati" "Sezioni" \
+  "INSTALLER BEDROCK" "JAVA EDITION" "Pronto" "Parziale" "In arrivo"
+check_theme light "tema predefinito (Automatico, telefono in modalità chiara)"
 
-# ---------- Elenchi ----------
+# ======================================================================================================== menu laterale
+
+phase "Menu laterale"
+if go_dash && $UI tap "Apri il menu"; then
+  sleep 1.5; shot "menu laterale"
+  expect "HOME" "INSTALLER BEDROCK" "JAVA EDITION" "MOD MANAGER" "MODPACK MANAGER" "WORLD MANAGER" \
+    "WORLD CONVERTER" "JAVA TO BEDROCK" "DOWNLOAD MANAGER" "DIAGNOSTICA" "IMPOSTAZIONI"
+  # Con il menu aperto «Indietro» deve chiudere solo il menu, non uscire dall'app.
+  back; snap
+  if seen "HOME"; then fail "menu: con il menu aperto il tasto Indietro non lo chiude"; fi
+  seen "in un'unica app" || fail "menu: chiudendo il menu con Indietro non si resta sulla dashboard"
+else
+  fail "menu: l'icona «Apri il menu» non si trova nella dashboard"
+fi
+
+# ======================================================================================================== sezioni non costruite
+
+phase "Sezioni non ancora costruite"
+for s in "MOD MANAGER" "MODPACK MANAGER" "WORLD MANAGER" "WORLD CONVERTER" "JAVA TO BEDROCK" "DOWNLOAD MANAGER"; do
+  go_dash || { fail "$s: non trovo la dashboard"; continue; }
+  if ! $UI tap "$s"; then fail "$s: scheda non trovata nella dashboard"; continue; fi
+  if $UI wait "TORNA ALLA DASHBOARD" 10; then
+    sleep 0.5; shot "sezione $s"
+    expect "$s" "In arrivo" "Cosa farà" "A che punto è" "Non è ancora stato costruito"
+    only_actions "Indietro" "Apri il menu" "TORNA ALLA DASHBOARD"
+    back; sleep 0.5; snap
+    seen "in un'unica app" || fail "$s: il tasto Indietro non riporta alla dashboard"
+  else
+    shot "sezione $s non aperta"; fail "$s: toccando la scheda non si apre la pagina della sezione"
+  fi
+done
+
+# Dal menu laterale, poi il pulsante «TORNA ALLA DASHBOARD».
+if go_dash && open_from_menu "MODPACK MANAGER"; then
+  if $UI wait "TORNA ALLA DASHBOARD" 10; then
+    shot "sezione aperta dal menu"; expect "MODPACK MANAGER" "In arrivo"
+    $UI tap "TORNA ALLA DASHBOARD"; sleep 1.2; snap
+    seen "in un'unica app" || fail "«TORNA ALLA DASHBOARD» non riporta alla dashboard"
+  else
+    fail "MODPACK MANAGER: aprendolo dal menu non compare la pagina della sezione"
+  fi
+else
+  fail "il menu laterale non apre MODPACK MANAGER"
+fi
+# Dal menu laterale di una sezione: la voce HOME riporta alla dashboard; «Indietro» col menu aperto chiude solo il menu.
+if go_dash && $UI tap "WORLD MANAGER" && $UI wait "TORNA ALLA DASHBOARD" 10; then
+  $UI tap "Apri il menu"; sleep 1.5
+  back; snap
+  if seen "IMPOSTAZIONI"; then fail "menu: aperto da una sezione, Indietro non lo chiude"; fi
+  seen "TORNA ALLA DASHBOARD" || fail "menu: chiudendolo con Indietro si esce dalla sezione"
+  $UI tap "Apri il menu"; sleep 1.5
+  if $UI tap-last "HOME"; then
+    sleep 1.2; snap
+    seen "in un'unica app" || fail "menu: la voce HOME non porta alla dashboard"
+  else
+    fail "menu: voce HOME non trovata"
+  fi
+fi
+
+# ======================================================================================================== Java Edition
+
+phase "Java Edition"
+if go_dash && $UI tap "JAVA EDITION"; then
+  if $UI wait "non si può ancora avviare" 10; then
+    sleep 0.5; shot "java edition"
+    expect "JAVA EDITION" "Java Edition non si può ancora avviare"
+    only_actions "Indietro" "Apri il menu" "CAMBIA PROFILO PRESTAZIONI"
+    for t in "Il tuo telefono" "Memoria consigliata" "Versione di Java richiesta" "Java 8" "Java 17" "Java 21" "CAMBIA PROFILO PRESTAZIONI"; do
+      $UI scan "$t" 6 || fail "Java Edition: manca «$t»"
+    done
+    if $UI tap "CAMBIA PROFILO PRESTAZIONI"; then
+      $UI wait "Profilo prestazioni" 10 || fail "Java Edition: «CAMBIA PROFILO PRESTAZIONI» non apre le Impostazioni"
+    fi
+  else
+    shot "java edition non aperta"; fail "JAVA EDITION: la pagina non compare"
+  fi
+else
+  fail "JAVA EDITION: scheda non trovata nella dashboard"
+fi
+
+# ======================================================================================================== Diagnostica (prima dell'uso)
+
+phase "Diagnostica"
+if go_dash && open_from_menu "DIAGNOSTICA"; then
+  if $UI wait "Controllo dei file" 12; then
+    sleep 0.5; shot "diagnostica"
+    expect "Telefono" "Modello" "Android" "Architettura" "Core CPU" "Memoria libera" "Spazio libero"
+    $UI scan "Spazio usato dall'app" 4 || fail "Diagnostica: manca «Spazio usato dall'app»"
+    $UI top
+    if $UI tap "CONTROLLA I FILE"; then
+      if $UI wait "controllat" 20; then
+        sleep 0.5; shot "controllo file senza contenuti"; expect "Nessun problema"
+      else
+        shot "controllo file senza esito"; fail "Diagnostica: «CONTROLLA I FILE» non mostra alcun esito"
+      fi
+    else
+      fail "Diagnostica: pulsante «CONTROLLA I FILE» non trovato"
+    fi
+    $UI scan "Ultimi errori" 6 || fail "Diagnostica: manca «Ultimi errori»"
+    $UI scan "Nessun errore registrato" 6 || fail "Diagnostica: all'inizio dovrebbe dire «Nessun errore registrato»"
+    if $UI tap "CONDIVIDI IL RAPPORTO"; then
+      sleep 3; shot "condivisione del rapporto"
+      $UI has "Condividi il rapporto" || fail "Diagnostica: «CONDIVIDI IL RAPPORTO» non apre la finestra di condivisione"
+      back; sleep 1
+      $UI wait "CONDIVIDI IL RAPPORTO" 10 || $UI scan "CONDIVIDI IL RAPPORTO" 4 || fail "Diagnostica: dopo la condivisione non si torna alla pagina"
+    else
+      fail "Diagnostica: pulsante «CONDIVIDI IL RAPPORTO» non trovato"
+    fi
+  else
+    shot "diagnostica non aperta"; fail "DIAGNOSTICA: la pagina non compare"
+  fi
+else
+  fail "DIAGNOSTICA: non si apre dal menu"
+fi
+
+# ======================================================================================================== Impostazioni
+
+phase "Impostazioni"
+if go_dash && open_from_menu "IMPOSTAZIONI"; then
+  if $UI wait "Profilo prestazioni" 12; then
+    sleep 0.5; shot "impostazioni"
+    expect "Tema" "Automatico" "Chiaro" "Scuro" "Profilo prestazioni" "Risparmio energetico" "Bilanciato" "Prestazioni" "Personalizzato"
+    for t in "Manutenzione" "SVUOTA I FILE TEMPORANEI" "AZZERA IL REGISTRO ERRORI" "Versione"; do
+      $UI scan "$t" 6 || fail "Impostazioni: manca «$t»"
+    done
+    $UI top
+
+    # Tema: ogni scelta cambia davvero i colori. «Automatico» segue il telefono.
+    $UI tap "Scuro"; sleep 1.5; shot "tema scuro"; check_theme dark "tema Scuro"
+    $UI tap "Chiaro"; sleep 1.5; shot "tema chiaro"; check_theme light "tema Chiaro"
+    $UI tap "Automatico"; sleep 1
+    adb shell cmd uimode night yes > /dev/null 2>&1; sleep 2.5
+    shot "automatico con telefono scuro"; check_theme dark "Automatico con il telefono in modalità scura"
+    adb shell cmd uimode night no > /dev/null 2>&1; sleep 2.5
+    shot "automatico con telefono chiaro"; check_theme light "Automatico con il telefono in modalità chiara"
+
+    # Profilo prestazioni e memoria personalizzata.
+    $UI tap "Prestazioni"; sleep 1
+    $UI tap "Personalizzato"; sleep 1.2
+    shot "profilo personalizzato"; expect "2048 MB"
+    if $UI tap "+"; then sleep 1; shot "memoria personalizzata"; expect "2304 MB"; else fail "Impostazioni: pulsante «+» della memoria non trovato"; fi
+
+    # Le scelte restano dopo la chiusura dell'app: sono nell'archivio centrale.
+    $UI tap "Scuro"; sleep 2.5
+    lib_has '"theme" *: *"DARK"' || fail "Impostazioni: il tema scelto non è nell'archivio dell'app"
+    lib_has '"profile" *: *"CUSTOM"' || fail "Impostazioni: il profilo scelto non è nell'archivio dell'app"
+    lib_has '"customMemoryMb" *: *2304' || fail "Impostazioni: la memoria personalizzata non è nell'archivio dell'app"
+    adb shell am force-stop $PKG; sleep 1.5
+    adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3
+    shot "dopo riavvio con tema scuro"; check_theme dark "tema Scuro dopo il riavvio dell'app"
+    if go_dash && open_from_menu "IMPOSTAZIONI" && $UI wait "Profilo prestazioni" 12; then
+      shot "impostazioni dopo riavvio"; expect "Personalizzato" "2304 MB"
+      # Ripristino i valori predefiniti, così le prove seguenti vedono l'aspetto normale.
+      $UI tap "Automatico"; sleep 1
+      $UI tap "Bilanciato"; sleep 2
+      lib_has '"theme" *: *"AUTO"' || fail "Impostazioni: il ripristino del tema non è stato salvato"
+      lib_has '"profile" *: *"BALANCED"' || fail "Impostazioni: il ripristino del profilo non è stato salvato"
+    else
+      fail "Impostazioni: non si riaprono dopo il riavvio dell'app"
+    fi
+
+    # Manutenzione: svuota i file temporanei.
+    if $UI tap "SVUOTA I FILE TEMPORANEI"; then
+      if $UI wait "Non c'erano file temporanei" 6 || $UI has "File temporanei eliminati"; then
+        shot "file temporanei svuotati"
+      else
+        shot "svuota temporanei senza messaggio"; fail "Impostazioni: «SVUOTA I FILE TEMPORANEI» non mostra alcun messaggio"
+      fi
+    else
+      fail "Impostazioni: «SVUOTA I FILE TEMPORANEI» non trovato"
+    fi
+  else
+    shot "impostazioni non aperte"; fail "IMPOSTAZIONI: la pagina non compare"
+  fi
+else
+  fail "IMPOSTAZIONI: non si apre dal menu"
+fi
+
+# ======================================================================================================== INSTALLER BEDROCK (Minecraft assente)
+
+phase "INSTALLER BEDROCK, Minecraft non installato"
+go_dash
+if $UI tap "INSTALLER BEDROCK"; then
+  $UI wait "SELEZIONA FILE" 10 || fail "INSTALLER BEDROCK: la scheda non apre la home dell'installer"
+  sleep 0.5; shot "installer home"
+  expect "SELEZIONA FILE" "IMPORTA MOD" "IMPORTA MAPPA" "IMPORTA TEXTURE" "IMPORTA ADD-ON" "FILE RECENTI" "MOD INSTALLATI" "CRONOLOGIA" "BACKUP" "Minecraft non trovato" "Apri il menu"
+  # Dalla home dell'installer «Indietro» porta alla dashboard (non esce dall'app).
+  back; snap
+  seen "in un'unica app" || fail "INSTALLER BEDROCK: Indietro dalla home non riporta alla dashboard"
+else
+  fail "scheda INSTALLER BEDROCK non trovata nella dashboard"
+fi
+go_home || fail "non riesco a tornare alla home dell'installer"
+
 for label in "FILE RECENTI" "MOD INSTALLATI" "CRONOLOGIA" "BACKUP"; do
   if $UI tap "$label"; then
     sleep 1.5; shot "elenco $label"
     back
-    $UI wait "SELEZIONA FILE" 8 || fail "dopo «$label» il tasto Indietro non riporta alla Home"
+    $UI wait "SELEZIONA FILE" 8 || fail "dopo «$label» il tasto Indietro non riporta alla home dell'installer"
   else
-    fail "pulsante «$label» non trovato nella Home"
+    fail "pulsante «$label» non trovato nella home dell'installer"
   fi
 done
 
-# ---------- Informazioni ----------
 if $UI tap "Informazioni e limiti"; then
   sleep 1.5; shot "informazioni"; back
-  $UI wait "SELEZIONA FILE" 8 || fail "dopo «Informazioni» il tasto Indietro non riporta alla Home"
+  $UI wait "SELEZIONA FILE" 8 || fail "dopo «Informazioni» il tasto Indietro non riporta alla home dell'installer"
 else
   fail "icona Informazioni non trovata"
 fi
 
-# ---------- Selettore di sistema dai riquadri ----------
 for tile in "IMPORTA MAPPA" "IMPORTA TEXTURE"; do
   if $UI tap "$tile"; then
     sleep 2.5; shot "selettore da $tile"
     back; sleep 1
-    go_home || fail "dopo il selettore («$tile») non torno alla Home"
+    go_home || fail "dopo il selettore («$tile») non torno alla home dell'installer"
   else
     fail "riquadro «$tile» non trovato"
   fi
 done
 [ -z "$(adb shell pidof $PKG | tr -d '\r')" ] && fail "l'app non è più in esecuzione dopo la prova dei riquadri"
 
-# ---------- Rapporti dei file di prova (Minecraft NON installato) ----------
 # 1) texture pack valido: rapporto + pulsante INSTALLA con Minecraft assente
 if open_sample "Texture_Verde.mcpack"; then
   if $UI wait "INSTALLA IN MINECRAFT" 40; then
@@ -212,7 +495,9 @@ if open_sample "Gun_Mod.zip"; then
   fi
 fi
 
-# ---------- Con il finto Minecraft: consegna vera, file ricevuto controllato ----------
+# ======================================================================================================== con il finto Minecraft
+
+phase "Consegna a Minecraft (finto Minecraft)"
 if [ -z "$FAKE_APK" ]; then
   fail "finto Minecraft non disponibile: la consegna del file non è stata provata"
 else
@@ -224,15 +509,26 @@ else
   adb shell input keyevent KEYCODE_HOME; sleep 2
   app_front
   go_home
-  shot "home con finto minecraft"
-  if $UI has "Minecraft non trovato"; then fail "con il finto Minecraft installato la Home dice ancora «Minecraft non trovato»"; fi
+  t0=$(date +%s)
+  if $UI wait "Versione 1.21.50.7" 40; then
+    log "Minecraft riconosciuto dopo $(( $(date +%s) - t0 )) s"
+    shot "home con finto minecraft"; expect "trovato"
+  else
+    shot "home con finto minecraft non riconosciuto"
+    fail "con il finto Minecraft installato la home dell'installer non lo riconosce entro 40 s"
+    adb shell input keyevent KEYCODE_HOME; sleep 2; app_front; go_home
+    $UI wait "Versione 1.21.50.7" 20 || fail "Minecraft non viene riconosciuto nemmeno dopo aver riaperto l'app"
+  fi
+
+  # La dashboard deve mostrare la stessa informazione.
+  go_dash && { shot "dashboard con finto minecraft"; expect "versione 1.21.50.7"; }
 
   # A) Gun Mod: due pacchetti → un solo .mcaddon con tutti i file
   if open_sample "Gun_Mod.zip" && $UI wait "INSTALLA IN MINECRAFT (2)" 40; then
     sleep 1; shot "rapporto gun mod con minecraft"
     if $UI tap "INSTALLA IN MINECRAFT (2)"; then
-      if line=$(wait_received "Gun_Mod.mcaddon"); then
-        log "ricevuto: $line"
+      if wait_received "Gun_Mod.mcaddon"; then
+        log "ricevuto: $RECV_LINE"
         shot "finto minecraft ha ricevuto gun mod"
         if pull_received "Gun_Mod.mcaddon"; then
           python3 -I ci/verify_bundle.py "$OUT/received/Gun_Mod.mcaddon" "$SAMPLES/Gun_Mod.zip" | tee "$OUT/verifica-gun-mod.txt"
@@ -275,13 +571,15 @@ else
     fail "MOD INSTALLATI non toccabile dopo la consegna"
   fi
 
-  # C) texture pack già corretto: dev'essere consegnato identico all'originale
+  # C) texture pack già corretto: dev'essere consegnato identico all'originale (copia senza modifiche).
+  #    Il file preparato prende il nome del pacchetto («Texture Verde HD»), non quello del file scelto.
   if open_sample "Texture_Verde.mcpack" && $UI wait "INSTALLA IN MINECRAFT" 40; then
     sleep 1
     if $UI tap "INSTALLA IN MINECRAFT"; then
-      if wait_received "Texture_Verde.mcpack" > /dev/null; then
-        if pull_received "Texture_Verde.mcpack"; then
-          a=$(sha256sum "$OUT/received/Texture_Verde.mcpack" | cut -d' ' -f1)
+      if wait_received "Texture_Verde_HD.mcpack"; then
+        log "ricevuto: $RECV_LINE"
+        if pull_received "Texture_Verde_HD.mcpack"; then
+          a=$(sha256sum "$OUT/received/Texture_Verde_HD.mcpack" | cut -d' ' -f1)
           b=$(sha256sum "$SAMPLES/Texture_Verde.mcpack" | cut -d' ' -f1)
           log "Texture_Verde: ricevuto $a, originale $b"
           [ "$a" = "$b" ] || fail "Texture_Verde: il file ricevuto non è identico all'originale (atteso: copia senza modifiche)"
@@ -289,7 +587,7 @@ else
           fail "Texture_Verde: non riesco a leggere il file ricevuto"
         fi
       else
-        fail "Texture_Verde: il finto Minecraft non ha ricevuto nulla"
+        shot "texture verde non ricevuto"; fail "Texture_Verde: il finto Minecraft non ha ricevuto nulla"
       fi
       app_front
       if $UI wait "Minecraft ha importato il contenuto?" 20; then
@@ -300,6 +598,8 @@ else
         shot "conferma texture mancante"; fail "Texture_Verde: non compare la domanda di conferma"
       fi
     fi
+  else
+    shot "rapporto texture verde mancante"; fail "Texture_Verde: il rapporto non compare con il finto Minecraft installato"
   fi
   go_home
 
@@ -308,7 +608,7 @@ else
   if open_sample "Texture_Windows.zip" && $UI wait "INSTALLA IN MINECRAFT" 40; then
     sleep 1; shot "rapporto zip windows"; expect "Texture Windows"
     if $UI tap "INSTALLA IN MINECRAFT"; then
-      if wait_received "Texture_Windows.mcpack" > /dev/null; then
+      if wait_received "Texture_Windows.mcpack"; then
         if pull_received "Texture_Windows.mcpack"; then
           python3 -I ci/verify_windows.py "$OUT/received/Texture_Windows.mcpack" "$SAMPLES/Texture_Windows.zip" | tee "$OUT/verifica-zip-windows.txt"
           [ "${PIPESTATUS[0]}" = 0 ] || fail "Texture_Windows: il file ricevuto non è corretto (vedi verifica-zip-windows.txt)"
@@ -336,20 +636,231 @@ else
   fi
 fi
 
-# ---------- Elenchi dopo l'uso ----------
+# ======================================================================================================== elenchi dopo l'uso
+
+phase "Elenchi dopo l'uso"
+go_home
 for label in "FILE RECENTI" "CRONOLOGIA"; do
   if $UI tap "$label"; then sleep 1.5; shot "elenco dopo uso $label"; back; go_home; fi
 done
 
-# ---------- Verifica finale ----------
+# ======================================================================================================== controllo dei file dopo l'uso
+
+phase "Diagnostica: controllo dei file dopo l'uso"
+if go_dash && open_from_menu "DIAGNOSTICA" && $UI wait "Controllo dei file" 12; then
+  if $UI tap "CONTROLLA I FILE" && $UI wait "controllat" 20; then
+    sleep 0.5; shot "controllo file dopo uso"; expect "Nessun problema"
+  else
+    shot "controllo file dopo uso senza esito"; fail "Diagnostica: il controllo dei file non dà un esito dopo l'uso"
+  fi
+  # Tolgo di nascosto un file preparato: la Diagnostica deve accorgersene e dirlo, senza modificare nulla.
+  victim=$(adb shell run-as $PKG ls files/prepared 2>/dev/null | tr -d '\r' | grep -i windows | head -n 1)
+  if [ -n "$victim" ]; then
+    adb shell run-as $PKG rm "files/prepared/$victim"
+    if $UI tap "CONTROLLA I FILE" && $UI wait "preparato mancante" 20; then
+      sleep 0.5; shot "controllo file con un file mancante"; expect "Texture Windows" "file preparato mancante"
+    else
+      shot "controllo file senza segnalazione"; fail "Diagnostica: un file preparato è stato eliminato ma il controllo non lo segnala"
+    fi
+  else
+    fail "Diagnostica: non trovo il file preparato di Texture Windows per la prova"
+  fi
+else
+  fail "Diagnostica: non si riapre dopo l'uso"
+fi
+
+# ======================================================================================================== arresto inatteso
+
+phase "Arresto inatteso dell'app"
+if go_dash && open_from_menu "DIAGNOSTICA" && $UI wait "Controllo dei file" 12; then
+  $UI tap "SVUOTA IL REGISTRO" > /dev/null 2>&1 && sleep 1   # toglie gli errori dell'uso normale, per vedere solo l'arresto
+  go_dash
+  adb shell settings put global hide_error_dialogs 1 > /dev/null 2>&1
+  adb shell am crash $PKG > "$OUT/crash-test.txt" 2>&1
+  sleep 4
+  if adb shell run-as $PKG ls files/last_crash.txt > /dev/null 2>&1; then
+    adb exec-out run-as $PKG cat files/last_crash.txt > "$OUT/last_crash.txt" 2>/dev/null
+    log "rapporto dell'arresto scritto: $(head -c 120 "$OUT/last_crash.txt" | tr '\n' '|')"
+  else
+    fail "arresto inatteso: l'app non ha scritto il rapporto dell'arresto"
+  fi
+  [ -n "$(adb shell pidof $PKG | tr -d '\r')" ] && note "dopo «am crash» il processo dell'app era ancora in vita"
+  adb shell settings put global hide_error_dialogs 0 > /dev/null 2>&1
+  adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3
+  if $UI wait "in un'unica app" 15; then
+    shot "dashboard dopo l'arresto"
+    if adb shell run-as $PKG ls files/last_crash.txt > /dev/null 2>&1; then
+      fail "arresto inatteso: dopo il riavvio il rapporto non è stato letto e tolto"
+    fi
+    if open_from_menu "DIAGNOSTICA" && $UI wait "Controllo dei file" 12; then
+      if $UI scan "Arresto inatteso dell'app" 8; then
+        shot "diagnostica con l'arresto"
+      else
+        shot "diagnostica senza l'arresto"; fail "arresto inatteso: la Diagnostica non mostra «Arresto inatteso dell'app»"
+      fi
+      if $UI tap "SVUOTA IL REGISTRO"; then
+        sleep 1; $UI scan "Nessun errore registrato" 8 || fail "Diagnostica: dopo «SVUOTA IL REGISTRO» gli errori sono ancora elencati"
+      else
+        fail "Diagnostica: «SVUOTA IL REGISTRO» non trovato"
+      fi
+    else
+      fail "Diagnostica: non si apre dopo l'arresto"
+    fi
+  else
+    shot "app non riparte dopo l'arresto"; fail "arresto inatteso: l'app non riparte"
+  fi
+else
+  fail "arresto inatteso: non riesco a preparare la prova"
+fi
+
+# ======================================================================================================== uscita con Indietro
+
+phase "Tasto Indietro sulla dashboard"
+if go_dash; then
+  adb shell input keyevent KEYCODE_BACK; sleep 2
+  focus=$(adb shell dumpsys window 2>/dev/null | grep -E "mCurrentFocus" | head -n 1)
+  log "finestra attiva dopo Indietro: $focus"
+  case "$focus" in
+    *"$PKG"*) fail "dalla dashboard il tasto Indietro non esce dall'app" ;;
+  esac
+  app_front
+  $UI wait "in un'unica app" 15 || fail "dopo l'uscita l'app non riparte dalla dashboard"
+fi
+
+# ======================================================================================================== aggiornamento dalla versione precedente
+
+phase "Aggiornamento sopra la versione precedente"
+if [ -z "$BASE_APK" ] || [ -z "$FAKE_APK" ]; then
+  note "prova di aggiornamento NON eseguita: manca l'APK della versione precedente o il finto Minecraft"
+  echo "NON ESEGUITA" > "$OUT/aggiornamento.txt"
+else
+  log "Versione precedente: $BASE_APK"
+  adb uninstall $PKG > /dev/null 2>&1
+  adb install -r -t "$BASE_APK" 2>&1 | tee "$OUT/install-precedente.txt"
+  if ! grep -q Success "$OUT/install-precedente.txt"; then
+    fail "aggiornamento: installazione della versione precedente non riuscita"
+  else
+    adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3
+    shot "versione precedente: home"
+    expect "SELEZIONA FILE"
+    old_version=$(adb shell dumpsys package $PKG | grep -m1 versionName | tr -d ' \r')
+    log "versione precedente installata: $old_version"
+    # Con la versione precedente apro un file, lo invio al finto Minecraft e confermo: così ci sono dati veri da conservare.
+    if open_sample "Texture_Verde.mcpack" && $UI wait "INSTALLA IN MINECRAFT" 40; then
+      sleep 1
+      if $UI tap "INSTALLA IN MINECRAFT"; then
+        if wait_received "Texture_Verde_HD.mcpack"; then
+          app_front
+          if $UI wait "Minecraft ha importato il contenuto?" 20; then
+            $UI tap "Sì, Minecraft l'ha importato" || fail "aggiornamento: pulsante di conferma non trovato nella versione precedente"
+            sleep 2
+          else
+            fail "aggiornamento: la versione precedente non chiede la conferma"
+          fi
+        else
+          fail "aggiornamento: il finto Minecraft non ha ricevuto il file dalla versione precedente"
+        fi
+      fi
+    else
+      fail "aggiornamento: la versione precedente non mostra il rapporto"
+    fi
+    go_home
+    shot "versione precedente: dopo l'uso"
+    pull_lib "$OUT/library-prima.json" || fail "aggiornamento: non riesco a leggere l'archivio della versione precedente"
+
+    # Installo la versione nuova sopra la vecchia, come farebbe l'utente.
+    log "Installo la versione nuova sopra la precedente"
+    adb install -r -t "$APK" 2>&1 | tee "$OUT/install-aggiornamento.txt"
+    if grep -q Success "$OUT/install-aggiornamento.txt"; then
+      log "versione nuova: $(adb shell dumpsys package $PKG | grep -m1 versionName | tr -d ' \r')"
+      adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3
+      if $UI wait "in un'unica app" 20; then
+        shot "dopo l'aggiornamento: dashboard"
+        expect "Contenuti Bedrock gestiti"
+        go_home
+        if $UI tap "FILE RECENTI"; then
+          sleep 1.5; shot "dopo l'aggiornamento: file recenti"; expect "Texture_Verde.mcpack"; back; go_home
+        else
+          fail "aggiornamento: FILE RECENTI non trovato dopo l'aggiornamento"
+        fi
+        if $UI tap "MOD INSTALLATI"; then
+          sleep 1.5; shot "dopo l'aggiornamento: contenuti gestiti"; expect "Texture Verde HD"; back; go_home
+        else
+          fail "aggiornamento: MOD INSTALLATI non trovato dopo l'aggiornamento"
+        fi
+        if $UI tap "CRONOLOGIA"; then
+          sleep 1.5; shot "dopo l'aggiornamento: cronologia"; expect "Texture Verde HD"; back; go_home
+        else
+          fail "aggiornamento: CRONOLOGIA non trovato dopo l'aggiornamento"
+        fi
+        if pull_lib "$OUT/library-dopo.json" && [ -s "$OUT/library-prima.json" ]; then
+          python3 -I ci/verify_library.py "$OUT/library-prima.json" "$OUT/library-dopo.json" | tee "$OUT/aggiornamento.txt"
+          [ "${PIPESTATUS[0]}" = 0 ] || fail "aggiornamento: dati persi o cambiati (vedi aggiornamento.txt)"
+        else
+          fail "aggiornamento: non riesco a confrontare l'archivio prima e dopo"
+        fi
+        # I dati salvati dalla versione precedente restano utilizzabili: il pacchetto già consegnato si può reinviare.
+        if go_dash && open_from_menu "DIAGNOSTICA" && $UI wait "Controllo dei file" 12 && $UI tap "CONTROLLA I FILE" && $UI wait "controllat" 20; then
+          shot "dopo l'aggiornamento: controllo dei file"; expect "Nessun problema"
+        else
+          fail "aggiornamento: il controllo dei file non funziona sui dati della versione precedente"
+        fi
+      else
+        shot "dopo l'aggiornamento: app non parte"; fail "aggiornamento: dopo l'installazione sopra la vecchia l'app non mostra la dashboard"
+      fi
+    else
+      fail "aggiornamento: installazione sopra la versione precedente non riuscita (firma o versione incompatibili?)"
+    fi
+  fi
+fi
+
+# ======================================================================================================== verifica finale
+
+phase "Verifica finale"
+go_dash
 sleep 2
 kill $LOGCAT_PID 2>/dev/null
+cp "$CUR" "$OUT/ultima-schermata.xml" 2>/dev/null
+pull_lib "$OUT/library-finale.json" || true
 [ -z "$(adb shell pidof $PKG | tr -d '\r')" ] && fail "l'app non è in esecuzione alla fine della prova"
-if grep -qE "FATAL EXCEPTION|ANR in $PKG" "$OUT/logcat.txt"; then
-  fail "nel log compaiono crash o blocchi dell'app"
-  grep -nE -A12 "FATAL EXCEPTION|ANR in $PKG" "$OUT/logcat.txt" | head -n 80 > "$OUT/crash.txt"
-fi
-grep -E "modinstaller|MMI|AndroidRuntime|FAKE_MC" "$OUT/logcat.txt" | head -n 400 > "$OUT/logcat-app.txt"
 
+# Gli arresti provocati di proposito («am crash», messaggio «shell-induced crash») sono attesi; ogni altro no.
+python3 -I - "$OUT/logcat.txt" "$PKG" > "$OUT/crash.txt" <<'PY'
+import sys
+lines = open(sys.argv[1], errors="replace").read().splitlines()
+pkg = sys.argv[2]
+expected = unexpected = 0
+for i, line in enumerate(lines):
+    if "FATAL EXCEPTION" not in line:
+        continue
+    block = lines[i:i + 30]
+    if not any(("Process: " + pkg) in b for b in block[:6]):
+        continue
+    if any("shell-induced crash" in b for b in block):
+        expected += 1
+    else:
+        unexpected += 1
+        print("\n".join(block))
+        print("-----")
+print("ARRESTI_ATTESI=%d ARRESTI_INATTESI=%d" % (expected, unexpected))
+PY
+summary=$(tail -n 1 "$OUT/crash.txt")
+log "arresti dell'app nel log: $summary"
+case "$summary" in
+  *"ARRESTI_INATTESI=0") ;;
+  *) fail "nel log compaiono arresti inattesi dell'app (vedi crash.txt)" ;;
+esac
+case "$summary" in
+  "ARRESTI_ATTESI=1 "*) ;;
+  *) fail "l'arresto provocato di proposito non risulta nel log una volta sola ($summary)" ;;
+esac
+if grep -q "ANR in $PKG" "$OUT/logcat.txt"; then
+  fail "nel log compare un blocco dell'app (ANR)"
+  grep -n -A12 "ANR in $PKG" "$OUT/logcat.txt" | head -n 60 >> "$OUT/crash.txt"
+fi
+grep -E "modinstaller|MMI|AndroidRuntime|FAKE_MC" "$OUT/logcat.txt" | head -n 600 > "$OUT/logcat-app.txt"
+
+echo
 log "=== RIEPILOGO ==="
+[ -s "$NOTES" ] && { echo "Note:"; cat "$NOTES"; }
 if [ -s "$PROBLEMS" ]; then cat "$PROBLEMS"; exit 1; else echo "Nessun problema rilevato."; fi

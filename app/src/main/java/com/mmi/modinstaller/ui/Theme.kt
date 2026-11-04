@@ -1,12 +1,21 @@
 package com.mmi.modinstaller.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
+import com.mmi.modinstaller.core.ThemeMode
 
 /** Verde del pulsante INSTALLA IN MINECRAFT: uguale in tema chiaro e scuro. */
 val InstallGreen = Color(0xFF2E7D32)
@@ -53,15 +62,49 @@ private val DarkColors = darkColorScheme(
     onError = Color(0xFF690005)
 )
 
+/** Vale true quando l'app sta usando i colori scuri (scelta dell'utente o tema del telefono). */
+val LocalDarkTheme = staticCompositionLocalOf { false }
+
 @Composable
-fun MmiTheme(content: @Composable () -> Unit) {
-    val colors = if (isSystemInDarkTheme()) DarkColors else LightColors
-    MaterialTheme(colorScheme = colors, typography = Typography(), content = content)
+fun MmiTheme(mode: ThemeMode = ThemeMode.AUTO, content: @Composable () -> Unit) {
+    val dark = when (mode) {
+        ThemeMode.AUTO -> isSystemInDarkTheme()
+        ThemeMode.LIGHT -> false
+        ThemeMode.DARK -> true
+    }
+    // Se il tema scelto è diverso da quello del telefono, le icone della barra di stato vanno adattate.
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = findActivity(view.context)?.window
+            if (window != null) {
+                val controller = WindowCompat.getInsetsController(window, view)
+                controller.isAppearanceLightStatusBars = !dark
+                controller.isAppearanceLightNavigationBars = !dark
+            }
+        }
+    }
+    CompositionLocalProvider(LocalDarkTheme provides dark) {
+        MaterialTheme(
+            colorScheme = if (dark) DarkColors else LightColors,
+            typography = Typography(),
+            content = content
+        )
+    }
+}
+
+private fun findActivity(context: Context): Activity? {
+    var current: Context? = context
+    while (current is ContextWrapper) {
+        if (current is Activity) return current
+        current = current.baseContext
+    }
+    return null
 }
 
 @Composable
 fun toneColor(tone: Tone): Color {
-    val dark = isSystemInDarkTheme()
+    val dark = LocalDarkTheme.current
     return when (tone) {
         Tone.OK -> if (dark) Color(0xFF7FD68A) else Color(0xFF2E7D32)
         Tone.WARN -> if (dark) Color(0xFFFFC857) else Color(0xFF9A5B00)

@@ -18,6 +18,9 @@ class AppPaths(context: Context) {
     /** Elenchi persistenti: file recenti, contenuti gestiti, cronologia. */
     val libraryFile: File = File(context.filesDir, "library/library.json")
 
+    /** Rapporto dell'ultimo arresto inatteso, scritto da CrashRecorder e letto al riavvio. */
+    val crashFile: File = File(context.filesDir, "last_crash.txt")
+
     /** Copie temporanee dei file scelti e archivi annidati estratti. Si svuota a ogni avvio dell'app. */
     val sessions: File = File(context.cacheDir, "sessions")
 

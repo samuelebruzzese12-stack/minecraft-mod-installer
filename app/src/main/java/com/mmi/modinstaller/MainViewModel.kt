@@ -2,6 +2,7 @@ package com.mmi.modinstaller
 
 import android.app.Application
 import android.net.Uri
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mmi.modinstaller.core.AnalysisReport
@@ -16,6 +17,7 @@ import com.mmi.modinstaller.core.ProgressCallback
 import com.mmi.modinstaller.core.RecentFile
 import com.mmi.modinstaller.core.Severity
 import com.mmi.modinstaller.core.formatBytes
+import com.mmi.modinstaller.data.AppContainer
 import com.mmi.modinstaller.data.DeleteResult
 import com.mmi.modinstaller.data.ErrorMessages
 import com.mmi.modinstaller.data.InstallerRepository
@@ -23,6 +25,7 @@ import com.mmi.modinstaller.data.SendResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -41,7 +44,8 @@ import java.io.File
  */
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repo = InstallerRepository(application)
+    private val container = AppContainer.get(application)
+    private val repo = InstallerRepository(application, container.paths, container.store)
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
@@ -54,6 +58,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private class InstallUnit(val parts: List<QueuedInstall>)
 
     private var job: Job? = null
+    private var recheckJob: Job? = null
     private val queue = ArrayList<InstallUnit>()
     private var queueTotal = 0
     private var batchActive = false
@@ -76,9 +81,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ------------------------------------------------------------------ navigazione
 
+    /** Apre una schermata dell'INSTALLER BEDROCK (e quindi anche la sua sezione). */
     fun go(screen: Screen) {
         if (screen == Screen.BACKUPS) refreshBackups()
-        _state.update { it.copy(screen = screen, query = "") }
+        _state.update { it.copy(section = Section.INSTALLER, screen = screen, query = "") }
+        refreshLists()
+    }
+
+    /** Apre una sezione dell'app dalla dashboard o dal menu. Le altre sezioni non toccano lo stato dell'installer. */
+    fun openSection(section: Section) {
+        if (section == Section.INSTALLER) {
+            refreshMinecraft()
+            refreshBackups()
+        }
+        _state.update { it.copy(section = section, query = "") }
         refreshLists()
     }
 
@@ -93,8 +109,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             dismissDialog()
             return true
         }
+        // Dalle sezioni diverse dalla dashboard si torna alla dashboard; dalla dashboard si esce dall'app.
+        if (s.section == Section.HOME) return false
+        if (s.section != Section.INSTALLER) {
+            _state.update { it.copy(section = Section.HOME, query = "") }
+            return true
+        }
         return when (s.screen) {
-            Screen.HOME -> false
+            Screen.HOME -> {
+                _state.update { it.copy(section = Section.HOME, query = "") }
+                true
+            }
             Screen.REPORT -> {
                 discardReports()
                 _state.update { it.copy(screen = Screen.HOME, query = "") }
@@ -119,6 +144,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun onAppStarted() {
         refreshMinecraft()
+        recheckMinecraftSoon()
         refreshLists()
         refreshBackups()
         val s = _state.value
@@ -190,6 +216,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             dir?.deleteRecursively()
             val message = ErrorMessages.describe(e)
             val title = name
+            logError("Analisi del file", e)
             withContext(Dispatchers.IO) { repo.store.addHistory(title, "Analisi non riuscita", message) }
             return FileReport(index, name, size, null, message, null, null)
         }
@@ -221,7 +248,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         _state.update {
-            it.copy(files = results, selected = selected, forced = emptySet(), screen = Screen.REPORT, query = "")
+            it.copy(
+                files = results, selected = selected, forced = emptySet(),
+                section = Section.INSTALLER, screen = Screen.REPORT, query = ""
+            )
         }
         refreshLists()
     }
@@ -321,7 +351,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun bundleTitle(unit: InstallUnit): String {
         val sources = unit.parts.map { it.sourceName }.distinct()
         if (sources.size == 1) {
-            val base = sources[0].substringBeforeLast('.', sources[0]).trim()
+            // Dal nome del file: «Gun_Mod.zip» diventa «Gun Mod».
+            val base = sources[0].substringBeforeLast('.', sources[0]).replace('_', ' ').replace(Regex("\\s+"), " ").trim()
             if (base.isNotEmpty()) return base
         }
         return "Contenuti (${unit.parts.size})"
@@ -384,6 +415,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun failDelivery(entry: InstalledEntry, reason: String) {
+        withContext(Dispatchers.IO) { container.errors.record("Invio a Minecraft", reason) }
         queue.clear()
         batchActive = false
         _state.update { it.copy(awaiting = null, confirmVisible = false, queueRemaining = 0) }
@@ -542,6 +574,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
+                logError("Eliminazione", e)
                 notice("Eliminazione non riuscita: " + ErrorMessages.describe(e))
             }
         }
@@ -564,6 +597,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
+                logError("Ripristino", e)
                 notice("Ripristino non riuscito: " + ErrorMessages.describe(e))
             }
         }
@@ -692,7 +726,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun refreshMinecraft() {
         val app = repo.bridge.installedApps().firstOrNull()
         val status = MinecraftStatus(app != null, app?.label, app?.versionName)
+        Log.i("MMI", "Minecraft Bedrock: " + (app?.packageName ?: "non trovato"))
         _state.update { it.copy(minecraft = status) }
+    }
+
+    /**
+     * Subito dopo aver installato Minecraft Android può impiegare qualche istante a mostrarlo alle altre app.
+     * Se non si trova, si riprova a breve (poche volte, poi basta): così la Home non resta ferma su «non trovato».
+     */
+    private fun recheckMinecraftSoon() {
+        recheckJob?.cancel()
+        if (_state.value.minecraft.installed) return
+        recheckJob = viewModelScope.launch {
+            for (waitMs in RECHECK_DELAYS_MS) {
+                delay(waitMs)
+                refreshMinecraft()
+                if (_state.value.minecraft.installed) break
+            }
+        }
     }
 
     private fun refreshLists() {
@@ -715,6 +766,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Annota un errore nel registro della Diagnostica, senza mai far fallire l'operazione che lo ha causato. */
+    private fun logError(where: String, error: Throwable) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                container.errors.record(where, ErrorMessages.describe(error), error.stackTraceToString())
+            } catch (ignored: Throwable) {
+                // Il registro è accessorio: l'errore è comunque già mostrato all'utente.
+            }
+        }
+    }
+
     /** Esegue [block] mostrando la schermata di avanzamento con Annulla; gli errori diventano messaggi per l'utente. */
     private fun runBusy(title: String, block: suspend (cancel: CancelCheck, progress: ProgressCallback) -> Unit) {
         job = viewModelScope.launch {
@@ -731,10 +793,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Throwable) {
                 queue.clear()
                 batchActive = false
+                logError(title, e)
                 notice(ErrorMessages.describe(e))
             } finally {
                 _state.update { it.copy(busy = null) }
             }
         }
+    }
+
+    private companion object {
+        /** Attese (ms) tra un nuovo controllo e l'altro se Minecraft non risulta installato. */
+        val RECHECK_DELAYS_MS = longArrayOf(1500, 3000, 6000)
     }
 }

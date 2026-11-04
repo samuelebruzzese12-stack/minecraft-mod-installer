@@ -53,11 +53,17 @@ data class HistoryEntry(
 class LibraryStore(
     private val file: File,
     private val clock: () -> Long = { System.currentTimeMillis() }
-) {
+) : DocumentStore {
     private val lock = Any()
     private val recentList = ArrayList<RecentFile>()
     private val installedList = ArrayList<InstalledEntry>()
     private val historyList = ArrayList<HistoryEntry>()
+
+    /**
+     * Sezioni dei motori aggiunti dopo (mod, modpack, mondi, download, impostazioni…). Vengono lette e riscritte
+     * così come sono: una sezione che questa versione non conosce non va mai persa al salvataggio.
+     */
+    private val extraSections = LinkedHashMap<String, Any?>()
 
     /** True se all'avvio il file esisteva ma non era leggibile (è stato rinominato in .corrupt). */
     var recoveredFromCorruption: Boolean = false
@@ -167,6 +173,27 @@ class LibraryStore(
         }
     }
 
+    // ------------------------------------------------------------------ sezioni dei motori (DocumentStore)
+
+    override fun read(section: String): Any? = synchronized(lock) { deepCopyJson(extraSections[section]) }
+
+    override fun write(section: String, value: Any?): Boolean = synchronized(lock) {
+        requireCustomSection(section)
+        if (value == null) extraSections.remove(section) else extraSections[section] = deepCopyJson(value)
+        save()
+    }
+
+    override fun update(section: String, transform: (Any?) -> Any?): Boolean = synchronized(lock) {
+        requireCustomSection(section)
+        val next = transform(deepCopyJson(extraSections[section]))
+        if (next == null) extraSections.remove(section) else extraSections[section] = deepCopyJson(next)
+        save()
+    }
+
+    private fun requireCustomSection(section: String) {
+        require(section.isNotBlank() && section !in RESERVED_SECTIONS) { "Nome di sezione non valido: «$section»" }
+    }
+
     // ------------------------------------------------------------------ persistenza
 
     private fun load() {
@@ -206,10 +233,14 @@ class LibraryStore(
                     )
                 )
             }
+            for ((key, value) in root) {
+                if (key !in RESERVED_SECTIONS) extraSections[key] = deepCopyJson(value)
+            }
         } catch (e: Exception) {
             recentList.clear()
             installedList.clear()
             historyList.clear()
+            extraSections.clear()
             recoveredFromCorruption = true
             val aside = File(file.parentFile, file.name + ".corrupt")
             aside.delete()
@@ -219,7 +250,7 @@ class LibraryStore(
 
     private fun save(): Boolean {
         val root = linkedMapOf<String, Any?>(
-            "version" to 1,
+            "version" to FORMAT_VERSION,
             "recents" to recentList.map {
                 linkedMapOf("uri" to it.uri, "name" to it.name, "size" to it.sizeBytes, "at" to it.openedAt)
             },
@@ -235,6 +266,7 @@ class LibraryStore(
                 linkedMapOf("at" to it.at, "title" to it.title, "action" to it.action, "result" to it.result, "detail" to it.detail)
             }
         )
+        for ((key, value) in extraSections) root[key] = value
         return try {
             file.parentFile?.mkdirs()
             val tmp = File(file.parentFile, file.name + ".tmp")
@@ -253,6 +285,11 @@ class LibraryStore(
         const val MAX_RECENTS = 30
         const val MAX_INSTALLED = 500
         const val MAX_HISTORY = 500
+
+        /** 2 = il file può contenere anche le sezioni dei motori; le versioni precedenti le ignorano. */
+        const val FORMAT_VERSION = 2
+
+        private val RESERVED_SECTIONS = setOf("version", "recents", "installed", "history")
     }
 }
 

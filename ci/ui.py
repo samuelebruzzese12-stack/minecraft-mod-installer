@@ -7,6 +7,10 @@ Comandi:
   has-in PERCORSO TESTO  esce 0 se TESTO compare nel dump
   has TESTO              come sopra ma su una schermata nuova
   tap TESTO              tocca il primo elemento che contiene TESTO (scorre fino a 3 volte per trovarlo)
+  tap-last TESTO         come tap, ma sceglie l'ULTIMO elemento che contiene TESTO (es. la voce del menu laterale)
+  scan TESTO [VOLTE]     esce 0 se TESTO compare scorrendo la pagina verso il basso e poi verso l'alto (non tocca nulla)
+  top                    torna in cima alla pagina
+  actions PERCORSO       elenca le azioni toccabili (testo di ogni elemento cliccabile), una per riga
   wait TESTO [SECONDI]   aspetta che TESTO compaia (default 20 s)
 """
 import re
@@ -36,23 +40,38 @@ def dump(path, tries=4):
     return None
 
 
+def box_of(node):
+    m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", node.get("bounds") or "")
+    return tuple(map(int, m.groups())) if m else None
+
+
+def outside(box, screen):
+    """True se l'elemento è tutto fuori dallo schermo (es. il menu laterale chiuso): all'utente non è visibile."""
+    x1, y1, x2, y2 = box
+    return x2 <= screen[0] or x1 >= screen[2] or y2 <= screen[1] or y1 >= screen[3]
+
+
 def nodes(path):
     out = []
+    screen = None
     for n in ET.parse(path).getroot().iter("node"):
-        m = re.match(r"\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", n.get("bounds") or "")
-        if not m:
+        box = box_of(n)
+        if box is None:
             continue
-        x1, y1, x2, y2 = map(int, m.groups())
+        if screen is None:
+            screen = box  # il primo elemento è la finestra intera
+        elif outside(box, screen):
+            continue
         out.append({
             "text": n.get("text") or "",
             "desc": n.get("content-desc") or "",
             "clickable": n.get("clickable") == "true",
-            "box": (x1, y1, x2, y2),
+            "box": box,
         })
     return out
 
 
-def find(ns, needle):
+def find(ns, needle, last=False):
     nl = needle.lower()
     best = None
     for i, n in enumerate(ns):
@@ -64,7 +83,8 @@ def find(ns, needle):
                 continue
             l = label.lower()
             if nl in l:
-                rank = (0 if l.strip() == nl else 1, 0 if n["clickable"] else 1, i)
+                # last=True: a parità di corrispondenza vince l'elemento che viene dopo nell'albero
+                rank = (0 if l.strip() == nl else 1, 0 if n["clickable"] else 1, -i if last else i)
                 if best is None or rank < best[0]:
                     best = (rank, n)
     return best[1] if best else None
@@ -81,11 +101,11 @@ def swipe_up():
     time.sleep(0.8)
 
 
-def tap(needle, scrolls=3):
+def tap(needle, scrolls=3, last=False):
     for i in range(scrolls + 1):
         p = dump("/tmp/mmi_tap.xml")
         if p:
-            n = find(nodes(p), needle)
+            n = find(nodes(p), needle, last)
             if n:
                 x1, y1, x2, y2 = n["box"]
                 adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
@@ -93,6 +113,68 @@ def tap(needle, scrolls=3):
         if i < scrolls:
             swipe_up()
     return False
+
+
+def swipe_down():
+    w, h = screen_size()
+    adb("shell", "input", "swipe", str(w // 2), str(int(h * 0.30)), str(w // 2), str(int(h * 0.80)), "300")
+    time.sleep(0.6)
+
+
+def scan(needle, scrolls=5):
+    """True se needle compare in qualche punto della pagina: prima scorrendo verso il basso, poi di nuovo verso l'alto
+    (la pagina può essere già scorsa oltre il punto cercato). Non tocca nulla."""
+    for i in range(scrolls + 1):
+        p = dump("/tmp/mmi_scan.xml")
+        if p and find(nodes(p), needle):
+            return True
+        if i < scrolls:
+            swipe_up()
+    for _ in range(scrolls * 2):
+        swipe_down()
+        p = dump("/tmp/mmi_scan.xml")
+        if p and find(nodes(p), needle):
+            return True
+    return False
+
+
+def top():
+    for _ in range(6):
+        swipe_down()
+
+
+def actions(path):
+    """Per ogni elemento cliccabile, i testi (e le descrizioni) che contiene: sono le azioni che l'utente vede."""
+    out = []
+
+    def labels(node):
+        found = []
+        for lab in (node.get("text") or "", node.get("content-desc") or ""):
+            if lab.strip():
+                found.append(lab.strip())
+        for child in node:
+            found.extend(labels(child))
+        return found
+
+    screen = [None]
+
+    def walk(node):
+        if node.tag == "node":
+            box = box_of(node)
+            if box is not None:
+                if screen[0] is None:
+                    screen[0] = box
+                elif outside(box, screen[0]):
+                    return
+            if node.get("clickable") == "true":
+                text = " / ".join(dict.fromkeys(labels(node)))
+                out.append(text if text else "(senza testo)")
+                return
+        for child in node:
+            walk(child)
+
+    walk(ET.parse(path).getroot())
+    return out
 
 
 def wait(needle, seconds=20):
@@ -125,6 +207,16 @@ def main(argv):
         return 0 if p and find(nodes(p), argv[2]) else 1
     if cmd == "tap":
         return 0 if tap(argv[2]) else 1
+    if cmd == "tap-last":
+        return 0 if tap(argv[2], last=True) else 1
+    if cmd == "scan":
+        return 0 if scan(argv[2], int(argv[3]) if len(argv) > 3 else 5) else 1
+    if cmd == "top":
+        top()
+        return 0
+    if cmd == "actions":
+        print("\n".join(actions(argv[2])))
+        return 0
     if cmd == "wait":
         return 0 if wait(argv[2], int(argv[3]) if len(argv) > 3 else 20) else 1
     print(__doc__)

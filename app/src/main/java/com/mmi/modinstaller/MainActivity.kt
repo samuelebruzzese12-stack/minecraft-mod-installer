@@ -7,6 +7,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.core.content.IntentCompat
 import com.mmi.modinstaller.ui.MmiApp
 import com.mmi.modinstaller.ui.MmiTheme
@@ -14,13 +16,15 @@ import com.mmi.modinstaller.ui.MmiTheme
 class MainActivity : ComponentActivity() {
 
     private val vm: MainViewModel by viewModels()
+    private val bridge: BridgeViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MmiTheme {
-                MmiApp(vm)
+            val bridgeState by bridge.state.collectAsState()
+            MmiTheme(bridgeState.settings.theme) {
+                MmiApp(vm, bridge)
             }
         }
         // Dopo una ricreazione (es. processo chiuso da Android) l'intent originale non va rielaborato.

@@ -9,6 +9,27 @@ Minecraft si apre e avvia da solo l'importazione.
 > «installato» da sola**: dopo l'invio ti chiede cosa hai visto nel gioco e registra *la tua* risposta
 > («Inviato – da confermare» → «Importazione confermata da te» / «Non importato»).
 
+## Una sola app, undici sezioni
+
+L'app si apre su una **dashboard** (Minecraft trovato, contenuti gestiti, memoria e spazio liberi, errori registrati) e su un
+**menu laterale** con le sezioni del progetto «Minecraft Universal Bridge». Ogni sezione dichiara il suo **stato reale**:
+
+| Sezione | Stato | Cosa c'è davvero |
+|---|---|---|
+| HOME | Pronto | Dashboard con dati reali del telefono e dell'app |
+| INSTALLER BEDROCK | Pronto | Tutto ciò che è descritto sotto: analisi, rapporto, consegna a Minecraft, elenchi, backup |
+| JAVA EDITION | Parziale | Requisiti del telefono, memoria consigliata per profilo, versione di Java richiesta da ogni Minecraft. **Il gioco Java non si avvia da qui**: nessun runtime Java è integrato |
+| MOD MANAGER, MODPACK MANAGER | In arrivo | Pagina che spiega cosa farà e cosa manca; nessun pulsante finto |
+| WORLD MANAGER, WORLD CONVERTER, JAVA TO BEDROCK | In arrivo | Come sopra. La conversione completa di mondi e mod non sarà promessa senza una verifica reale |
+| DOWNLOAD MANAGER | In arrivo | Oggi l'app non ha il permesso Internet: lo chiederà solo quando questa sezione esisterà |
+| DIAGNOSTICA | Pronto | Telefono (RAM, CPU, spazio, temperatura), controllo dei file preparati, ultimi errori (anche gli arresti inattesi dell'app), rapporto da condividere solo se premi il pulsante |
+| IMPOSTAZIONI | Pronto | Tema (Automatico / Chiaro / Scuro), profilo prestazioni (Risparmio / Bilanciato / Prestazioni / Personalizzato), svuota file temporanei |
+
+Impostazioni, elenchi, cronologia e registro errori stanno in **un solo archivio** (`files/library/library.json`): aggiornare l'app
+non cancella nulla di ciò che c'era. Il piano per le sezioni ancora da costruire è in
+[`docs/PIANO_DI_INTEGRAZIONE.md`](docs/PIANO_DI_INTEGRAZIONE.md); lo stato di partenza è in
+[`docs/ANALISI_PROGETTO.md`](docs/ANALISI_PROGETTO.md).
+
 ## Come ottenere l'APK
 
 Il progetto si compila su GitHub (nessun PC necessario):
@@ -25,6 +46,8 @@ Compilare in locale: apri la cartella con Android Studio (Ladybug o più recente
 
 ## Come si usa
 
+0. Dalla dashboard apri **INSTALLER BEDROCK** (o dal menu ☰). «Indietro» dalla home dell'installer torna alla dashboard;
+   dalla dashboard esce dall'app.
 1. **+ SELEZIONA FILE** (o uno dei quattro pulsanti IMPORTA…): scegli uno o più file. Puoi anche usare «Apri con» / «Condividi»
    da browser e gestore di file.
 2. L'app mostra un **rapporto**: nome, anteprima, tipo, dimensione, autore, versione, dipendenze, compatibilità con la tua
@@ -71,19 +94,34 @@ Altre schermate: **FILE RECENTI**, **MOD INSTALLATI** (rinvia, segna l'esito, el
 
 ```
 core/   Modulo Kotlin puro (si testa sulla JVM): lettura archivi, sicurezza, manifest, NBT, analisi, preparazione pacchetti,
-        backup, elenchi persistenti, piano di lancio verso Minecraft. Compilato a Java 8 per girare su Android 8+.
-app/    App Android: Compose (ui/), ViewModel (MainViewModel), accesso ai file (SAF), FileProvider, lettori 7z/RAR, ponte verso Minecraft.
-.github/workflows/build-apk.yml   Compila, testa e pubblica l'APK.
+        backup, archivio centrale (LibraryStore / DocumentStore), impostazioni, registro errori, controlli di integrità e
+        diagnostica, piano di lancio verso Minecraft. Compilato a Java 8 per girare su Android 8+.
+app/    App Android: Compose (ui/: dashboard, sezioni, installer, diagnostica, impostazioni), ViewModel (MainViewModel per
+        l'installer, BridgeViewModel per le altre sezioni), AppContainer (oggetti condivisi), accesso ai file (SAF),
+        FileProvider, lettori 7z/RAR, ponte verso Minecraft.
+ci/     Prova su emulatore Android (script, lettore delle schermate, finto Minecraft che controlla il file consegnato).
+docs/   Analisi del progetto e piano di integrazione.
+.github/workflows/build-apk.yml   Compila, testa, prova su emulatore e pubblica l'APK.
 signing/release.keystore          Chiave di firma (vedi sotto).
 ```
 
 ## Test
 
-`./gradlew :core:test :app:testDebugUnitTest` — 165 test: archivi (ZIP, CRC, zip bomb, percorsi pericolosi), manifest e versioni,
+`./gradlew :core:test :app:testDebugUnitTest` — 199 test (160 nel modulo `core`, 39 nell'app): archivi (ZIP, CRC, zip bomb, percorsi pericolosi), manifest e versioni,
 analisi di add-on/mondi/skin/dipendenze/duplicati, preparazione e riverifica dei pacchetti (anche più pacchetti uniti in un
 solo `.mcaddon`, con il conteggio di ogni file letto), backup, elenchi persistenti
 (anche file danneggiati), piano di lancio, messaggi d'errore e testi dell'interfaccia, e il percorso completo di un file `.7z`
-(lettura → analisi → `.mcpack`/`.mcaddon` → rilettura, più archivi alterati o troncati).
+(lettura → analisi → `.mcpack`/`.mcaddon` → rilettura, più archivi alterati o troncati), archivio centrale (sezioni
+sconosciute conservate, compatibilità con l'archivio della versione precedente), impostazioni, piano della memoria,
+registro errori, rapporto di un arresto inatteso, controllo di integrità, diagnostica e struttura delle 11 sezioni.
+
+A ogni push GitHub prova anche l'APK su un **emulatore Android** (`ci/emulator_smoke.sh`): apre dashboard, menu e ogni
+sezione, controlla che quelle non costruite non abbiano pulsanti finti, cambia tema e profilo e verifica che restino dopo il
+riavvio, importa i file di prova dal selettore di sistema, li consegna a un **finto Minecraft** che confronta i byte ricevuti
+con l'originale, provoca di proposito un arresto dell'app per vedere che finisca in Diagnostica, e infine installa l'APK nuovo
+**sopra la versione precedente** controllando che file recenti, contenuti gestiti e cronologia siano rimasti identici. Schermate
+e log di ogni prova sono allegati alla Release (`prova-emulatore.zip`). Il finto Minecraft non è Minecraft: se il gioco vero
+importi o no il file non si può provare in CI.
 
 ## Chiave di firma
 

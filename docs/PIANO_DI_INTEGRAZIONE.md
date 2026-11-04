@@ -9,8 +9,8 @@ Regole che guidano tutto il lavoro (dalla direttiva):
 
 ## Backup e ripristino
 
-- Prima di toccare il codice: tag `backup/bedrock-installer-v1` sul commit verificato (build 5) + ramo `backup/bedrock-installer-stable`. Il codice e l'APK di quella build restano scaricabili da GitHub (tag + Release).
-- Dopo ogni fase verificata: tag `fase-N-ok`.
+- Prima di toccare il codice: ramo **`backup/bedrock-installer-stable`** sul commit verificato (`ab9d7f1`, build 5), già su GitHub, e **Release `build-5`** con l'APK di quella versione (è anche la versione di partenza della prova di aggiornamento in CI). Il tag `backup/bedrock-installer-v1` esiste solo nella copia di lavoro: dalla sessione di sviluppo GitHub rifiuta la pubblicazione dei tag, quindi il punto di ripristino sul sito è il ramo.
+- Dopo ogni fase verificata: il ramo `backup/bedrock-installer-stable` viene spostato sull'ultimo commit verificato e la Release `build-N` conserva l'APK.
 - I dati dell'utente (`library.json`, `prepared/`, `backups/`) non vengono migrati né rinominati: il file viene solo **esteso** (nuove sezioni, lettura retrocompatibile, sezioni sconosciute conservate).
 
 ## Mappa dei requisiti: cosa è realizzabile e come lo dichiariamo
@@ -39,11 +39,11 @@ Regole che guidano tutto il lavoro (dalla direttiva):
 `docs/ANALISI_PROGETTO.md`, questo piano, tag di backup. *Uscita:* build 5 verificata (134 test + emulatore).
 
 ### Fase 1 — Dashboard e fondamenta
-- `Section` (11 voci) e menu di navigazione; HOME diventa la dashboard con dati reali (versione Minecraft, loader del profilo attivo, mod, modpack, mondi, spazio usato, RAM libera, stato runtime, ultimi errori).
-- INSTALLER BEDROCK = tutta l'interfaccia di oggi, invariata.
-- `LibraryStore` esteso: sezioni generiche conservate al salvataggio (`DocumentStore`), registro errori, impostazioni.
-- DIAGNOSTICA e IMPOSTAZIONI reali. Le altre sezioni mostrano il loro stato vero.
-- *Accettazione:* tutti i test precedenti verdi; la prova su emulatore ripete l'installazione Bedrock dalla nuova navigazione.
+- `Section` (11 voci) e menu laterale; HOME è la dashboard con dati reali (Minecraft Bedrock trovato, contenuti gestiti, RAM e spazio liberi, spazio usato dall'app, stato del runtime Java, errori registrati). Le voci su mod, modpack e mondi compariranno quando esisteranno i rispettivi motori.
+- INSTALLER BEDROCK = tutta l'interfaccia di prima, invariata (stesse schermate, stessi pulsanti); «Indietro» dalla sua home torna alla dashboard.
+- `LibraryStore` esteso: sezioni generiche conservate al salvataggio (`DocumentStore`), registro errori, impostazioni; il file resta lo stesso e le versioni precedenti dell'app lo leggono ancora.
+- DIAGNOSTICA (telefono, spazio, controllo dei file preparati, ultimi errori, arresti inattesi, rapporto da condividere) e IMPOSTAZIONI (tema, profilo prestazioni, manutenzione) reali. JAVA EDITION: requisiti e memoria consigliata, senza promettere un runtime. Le altre sezioni mostrano il loro stato vero.
+- *Accettazione:* tutti i test precedenti verdi; la prova su emulatore ripete l'installazione Bedrock dalla nuova navigazione, controlla le sezioni, il tema e le impostazioni dopo il riavvio, un arresto provocato di proposito e l'**aggiornamento sopra la build 5** senza perdita di dati.
 
 ### Fase 2 — `:download-engine`
 Coda persistente, ripresa HTTP Range, verifica SHA, limite di dimensione, solo HTTPS e host consentiti (redirect compresi), annulla/pausa/riprova, avanzamento. Permesso `INTERNET` dichiarato e spiegato; nessun file dell'utente viene mai inviato.
