@@ -128,7 +128,8 @@ fun SettingsScreen(
         InfoCard {
             StatRow("Versione", BuildConfig.VERSION_NAME + " (build " + BuildConfig.VERSION_CODE + ")")
             Text(
-                text = "I tuoi file restano sul telefono: l'app non ha accesso a Internet e non invia nulla a nessuno. " +
+                text = "I tuoi file restano sul telefono: l'app usa Internet solo per scaricare, su tua richiesta, i file del DOWNLOAD MANAGER, " +
+                    "e non invia nulla a nessuno. " +
                     "Le impostazioni e gli elenchi sono nello stesso archivio dell'INSTALLER BEDROCK, quindi " +
                     "aggiornare l'app non li cancella.",
                 style = MaterialTheme.typography.bodySmall,

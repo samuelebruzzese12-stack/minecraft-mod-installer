@@ -12,6 +12,9 @@ class AppPaths(context: Context) {
      */
     val prepared: File = File(context.filesDir, "prepared")
 
+    /** File scaricati dal DOWNLOAD MANAGER (e i loro parziali «.part»). Restano nello spazio privato dell'app. */
+    val downloads: File = File(context.filesDir, "downloads")
+
     /** Copie di sicurezza create prima di eliminare un pacchetto. */
     val backups: File = File(context.filesDir, "backups")
 
@@ -26,6 +29,7 @@ class AppPaths(context: Context) {
 
     fun ensure() {
         prepared.mkdirs()
+        downloads.mkdirs()
         backups.mkdirs()
         libraryFile.parentFile?.mkdirs()
         sessions.mkdirs()

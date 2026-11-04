@@ -1,6 +1,6 @@
 #!/bin/bash
-# Prova su emulatore Android dell'app completa: dashboard, menu, INSTALLER BEDROCK, Java Edition, Diagnostica,
-# Impostazioni e sezioni non ancora costruite. Installa l'APK, apre file di prova dal selettore di sistema (come farebbe
+# Prova su emulatore Android dell'app completa: dashboard, menu, INSTALLER BEDROCK, Java Edition, DOWNLOAD MANAGER,
+# Diagnostica, Impostazioni e sezioni non ancora costruite. Installa l'APK, apre file di prova dal selettore di sistema (come farebbe
 # l'utente) e tocca i pulsanti. Con il FINTO Minecraft (ci/fakeminecraft) controlla anche che il file consegnato
 # dall'app contenga tutto, byte per byte. Alla fine installa l'APK nuovo SOPRA quello della versione precedente per
 # controllare che elenchi e cronologia non vadano persi. Salva schermate, dump dell'interfaccia e log in $OUT.
@@ -8,6 +8,10 @@
 #
 # Il finto Minecraft non importa niente: verifica solo che l'app consegni il file giusto con lo stesso Intent.
 # Se Minecraft vero importi o no il file non si può provare qui.
+#
+# Il DOWNLOAD MANAGER si prova con un piccolo server HTTP (ci/dl_server.py) che gira su questo computer: l'emulatore lo
+# raggiunge come 10.0.2.2:8765 (solo la build di prova ammette http verso quell'indirizzo). Si prova la ripresa, il taglio
+# della rete, l'impronta sbagliata e il consenso a un sito nuovo. Internet vero NON si prova (nessun accesso garantito).
 PKG=com.mmi.modinstaller
 FAKE_PKG=com.mojang.minecraftpe
 APK=${APK:-apk/MinecraftModInstaller-debug.apk}
@@ -213,9 +217,27 @@ adb shell ls -l /sdcard/Download > "$OUT/download-dir.txt" 2>&1
 
 phase "Permessi dichiarati dall'app"
 adb shell dumpsys package $PKG > "$OUT/dumpsys-package.txt" 2>&1
-if grep -q "android.permission.INTERNET" "$OUT/dumpsys-package.txt"; then
-  fail "l'app dichiara il permesso INTERNET, ma la schermata Impostazioni dice che non ha accesso a Internet"
-fi
+# L'unico permesso ammesso è INTERNET (serve al DOWNLOAD MANAGER, che fa solo richieste per ricevere file).
+python3 -I - "$OUT/dumpsys-package.txt" > "$OUT/permessi.txt" <<'PY'
+import sys
+lines = open(sys.argv[1], errors="replace").read().splitlines()
+perms = []
+for i, line in enumerate(lines):
+    if line.strip() == "requested permissions:":
+        indent = len(line) - len(line.lstrip())
+        for nxt in lines[i + 1:]:
+            if not nxt.strip() or len(nxt) - len(nxt.lstrip()) <= indent:
+                break
+            perms.append(nxt.strip().split(":")[0])
+        break
+print("PERMESSI: " + (" ".join(perms) if perms else "(nessuno)"))
+bad = [p for p in perms if p.startswith("android.permission.") and p != "android.permission.INTERNET"]
+print("INATTESI: " + (" ".join(bad) if bad else "(nessuno)"))
+print("INTERNET: " + ("sì" if "android.permission.INTERNET" in perms else "no"))
+PY
+cat "$OUT/permessi.txt"
+grep -q "^INTERNET: sì" "$OUT/permessi.txt" || fail "l'app non dichiara il permesso INTERNET: il DOWNLOAD MANAGER non potrebbe scaricare"
+grep -q "^INATTESI: (nessuno)" "$OUT/permessi.txt" || fail "l'app dichiara permessi oltre a INTERNET (vedi permessi.txt)"
 if grep -Eq "android.permission.(READ|WRITE|MANAGE)_EXTERNAL_STORAGE|READ_MEDIA" "$OUT/dumpsys-package.txt"; then
   fail "l'app dichiara permessi sulla memoria del telefono: dovrebbe usare solo il selettore di sistema"
 fi
@@ -249,7 +271,7 @@ fi
 # ======================================================================================================== sezioni non costruite
 
 phase "Sezioni non ancora costruite"
-for s in "MOD MANAGER" "MODPACK MANAGER" "WORLD MANAGER" "WORLD CONVERTER" "JAVA TO BEDROCK" "DOWNLOAD MANAGER"; do
+for s in "MOD MANAGER" "MODPACK MANAGER" "WORLD MANAGER" "WORLD CONVERTER" "JAVA TO BEDROCK"; do
   go_dash || { fail "$s: non trovo la dashboard"; continue; }
   if ! $UI tap "$s"; then fail "$s: scheda non trovata nella dashboard"; continue; fi
   if $UI wait "TORNA ALLA DASHBOARD" 10; then
@@ -409,6 +431,361 @@ if go_dash && open_from_menu "IMPOSTAZIONI"; then
 else
   fail "IMPOSTAZIONI: non si apre dal menu"
 fi
+
+# ======================================================================================================== DOWNLOAD MANAGER
+
+# Il server di prova (ci/dl_server.py) gira su questo computer; l'app lo raggiunge come 10.0.2.2:8765.
+DL_PORT=8765
+DL_LOG="$OUT/dl-server.log"
+DL_PID=""
+DL_BASE="http://10.0.2.2:$DL_PORT"
+
+dl_start_server() {
+  python3 -I ci/dl_server.py --port $DL_PORT --payload "$SAMPLES/Texture_Verde.mcpack" --out "$OUT" > "$OUT/dl-server-stdout.txt" 2>&1 &
+  DL_PID=$!
+  local i
+  for i in $(seq 1 30); do
+    if python3 -I -c "import socket; socket.create_connection(('127.0.0.1', $DL_PORT), 1).close()" 2>/dev/null; then return 0; fi
+    sleep 0.5
+  done
+  return 1
+}
+
+dl_size() { awk -v n="$1" '$1==n {print $2}' "$OUT/dl-expected.txt"; }   # dimensione attesa di un file del server
+dl_sha()  { awk -v n="$1" '$1==n {print $3}' "$OUT/dl-expected.txt"; }   # SHA-256 atteso
+dl_device_ls() { adb shell run-as $PKG ls files/downloads 2>/dev/null | tr -d '\r'; }
+dl_device_sha() { adb exec-out run-as $PKG cat "files/downloads/$1" 2>/dev/null | sha256sum | cut -d' ' -f1; }
+dl_device_part_size() {
+  local p; p=$(dl_device_ls | grep '\.part$' | head -n 1)
+  [ -n "$p" ] && adb shell run-as $PKG stat -c %s "files/downloads/$p" 2>/dev/null | tr -d '\r'
+}
+# Le richieste ricevute dal server per un percorso, una riga ciascuna: «RANGE|IF-RANGE» (vuoti se l'app non li ha mandati).
+dl_starts() {
+  python3 -I - "$DL_LOG" "$1" <<'PY'
+import json, sys
+for line in open(sys.argv[1], errors="replace"):
+    try:
+        e = json.loads(line)
+    except ValueError:
+        continue
+    if e.get("event") == "start" and e.get("path") == sys.argv[2]:
+        print("%s|%s" % (e.get("range") or "", e.get("if_range") or ""))
+PY
+}
+dl_count() { dl_starts "$1" | grep -c .; }
+# I siti che l'utente ha consentito, come li ha salvati l'app nell'archivio centrale.
+lib_hosts() {
+  pull_lib "$OUT/.lib.tmp" || return 1
+  python3 -I -c "import json,sys; print(' '.join(json.load(open(sys.argv[1])).get('download_hosts') or []))" "$OUT/.lib.tmp"
+}
+
+# Porta l'app alla pagina DOWNLOAD MANAGER, in cima. Dalla dashboard si tocca la scheda; altrove si torna indietro.
+dl_open() {
+  local i
+  for i in 1 2 3 4 5 6; do
+    snap
+    if seen "in un'unica app"; then
+      $UI tap "DOWNLOAD MANAGER" > /dev/null; sleep 1.5; snap
+      if seen "in un'unica app"; then return 1; fi
+    fi
+    if seen "DOWNLOAD MANAGER" && ! seen "TORNA ALLA DASHBOARD"; then $UI top; return 0; fi
+    back
+  done
+  return 1
+}
+# Aspetta un testo, scorrendo la pagina se serve (le schede dei download possono finire sotto lo schermo).
+dl_wait() { $UI wait "$1" "$2" || $UI scan "$1" 4; }
+# Svuota i due campi di testo (indirizzo e impronta).
+dl_clear_fields() { $UI clear-field 0 > /dev/null 2>&1; $UI clear-field 1 > /dev/null 2>&1; }
+# Scrive indirizzo (e impronta) e tocca AGGIUNGI ALLA CODA.
+dl_add() { # indirizzo [impronta]
+  dl_open || { fail "DOWNLOAD MANAGER: non riesco ad aprire la pagina per aggiungere $1"; return 1; }
+  dl_clear_fields
+  $UI fill 0 "$1" || { fail "DOWNLOAD MANAGER: il campo dell'indirizzo non si trova o non accetta il testo"; return 1; }
+  if [ -n "$2" ]; then $UI fill 1 "$2" || { fail "DOWNLOAD MANAGER: il campo dell'impronta non si trova o non accetta il testo"; return 1; }; fi
+  $UI tap "AGGIUNGI ALLA CODA" || { fail "DOWNLOAD MANAGER: pulsante AGGIUNGI ALLA CODA non trovato"; return 1; }
+}
+# Elimina dall'app la prima scheda terminata (completata, non riuscita o annullata), con la conferma.
+dl_remove_card() {
+  dl_open || return 1
+  $UI tap "ELIMINA" || return 1
+  $UI wait "Eliminare il file?" 8 || return 1
+  $UI tap-last "ELIMINA"; sleep 1.5
+}
+# Prova che il file scaricato sul telefono sia identico a quello del server.
+dl_check_file() { # nome-sul-telefono nome-sul-server
+  local want got
+  want=$(dl_sha "$2"); got=$(dl_device_sha "$1")
+  if [ -z "$got" ] || [ "$got" != "$want" ]; then
+    fail "DOWNLOAD MANAGER: $1 sul telefono non è identico a quello del server (atteso ${want:0:16}…, trovato ${got:0:16}…)"
+    return 1
+  fi
+  log "download: $1 identico a quello del server (SHA-256 ${want:0:16}…)"
+  if dl_device_ls | grep -q '\.part$'; then fail "DOWNLOAD MANAGER: dopo il completamento di $1 resta un file parziale (.part)"; fi
+}
+
+download_tests() {
+  phase "DOWNLOAD MANAGER"
+  if ! dl_start_server; then
+    fail "DOWNLOAD MANAGER: il server di prova non parte (il download non è stato provato)"
+    cat "$OUT/dl-server-stdout.txt" 2>/dev/null
+    return
+  fi
+  log "server di prova in ascolto su 127.0.0.1:$DL_PORT (per l'emulatore: 10.0.2.2:$DL_PORT)"
+  adb shell settings put secure show_ime_with_hard_keyboard 0 > /dev/null 2>&1
+
+  # ---- la pagina
+  go_dash
+  if ! dl_open; then
+    shot "download manager non aperto"; fail "DOWNLOAD MANAGER: la pagina non si apre dalla dashboard"
+    kill $DL_PID 2>/dev/null; return
+  fi
+  sleep 0.5; shot "download manager vuoto"
+  expect "DOWNLOAD MANAGER" "Scarica un file da Internet" "Nuovo scaricamento" "AGGIUNGI ALLA CODA" "Nessun download"
+  $UI scan "cdn.modrinth.com" 6 || fail "DOWNLOAD MANAGER: l'elenco dei siti consentiti non mostra cdn.modrinth.com"
+  $UI top
+  if [ -n "$(dl_device_ls)" ]; then fail "DOWNLOAD MANAGER: la cartella dei download non è vuota all'inizio"; fi
+
+  # ---- controlli sugli indirizzi
+  dl_add "http://example.com/x.mcpack"
+  if $UI wait "solo indirizzi sicuri" 10; then
+    shot "download: http rifiutato"
+  else
+    shot "download: http non rifiutato"; fail "DOWNLOAD MANAGER: un indirizzo http:// verso un sito qualsiasi non viene rifiutato con un messaggio"
+  fi
+  [ -z "$(dl_device_ls)" ] || fail "DOWNLOAD MANAGER: dopo un indirizzo rifiutato compaiono file nella cartella dei download"
+
+  dl_add "$DL_BASE/ok.mcpack" "1234"
+  if $UI wait "L'impronta non è valida" 10; then
+    shot "download: impronta non valida"
+  else
+    shot "download: impronta non valida senza messaggio"; fail "DOWNLOAD MANAGER: un'impronta di 4 caratteri non viene rifiutata con un messaggio"
+  fi
+
+  # ---- download vero con impronta corretta (l'indirizzo resta nel campo: si cambia solo l'impronta)
+  sha_ok=$(dl_sha ok.mcpack)
+  $UI clear-field 1; $UI fill 1 "$sha_ok"
+  snap; seen "10.0.2.2:$DL_PORT/ok.mcpack" || note "campo indirizzo: il testo scritto non compare nella lettura dell'interfaccia (dipende da come Compose espone il campo)"
+  shot "download: campi compilati"
+  $UI tap "AGGIUNGI ALLA CODA"
+  if dl_wait "Completato" 60; then
+    sleep 1; shot "download: completato"
+    expect "ok.mcpack" "10.0.2.2" "SHA-256:" "verificata" "APRI NELL'INSTALLER BEDROCK" "SALVA UNA COPIA" "ELIMINA"
+    dl_check_file ok.mcpack ok.mcpack
+    lib_has '"state" *: *"COMPLETED"' || fail "DOWNLOAD MANAGER: il download completato non risulta nell'archivio centrale"
+    [ "$(dl_count /ok.mcpack)" = 1 ] || fail "DOWNLOAD MANAGER: per un file piccolo il server ha ricevuto $(dl_count /ok.mcpack) richieste invece di una"
+  else
+    shot "download: non completato"; fail "DOWNLOAD MANAGER: il download di ok.mcpack non si completa entro 60 s"
+  fi
+
+  # ---- il file scaricato passa dal sistema di importazione di sempre (INSTALLER BEDROCK)
+  if $UI tap "APRI NELL'INSTALLER BEDROCK"; then
+    if $UI wait "Rapporto di analisi" 40 && $UI wait "Texture Verde HD" 30; then
+      sleep 1; shot "download: rapporto dell'installer"
+      expect "ok.mcpack" "Resource Pack"
+    else
+      shot "download: nessun rapporto"; fail "DOWNLOAD MANAGER: «APRI NELL'INSTALLER BEDROCK» non mostra il rapporto del file scaricato"
+    fi
+    go_dash
+  else
+    fail "DOWNLOAD MANAGER: pulsante «APRI NELL'INSTALLER BEDROCK» non trovato"
+  fi
+
+  # ---- elimina
+  if dl_remove_card; then
+    sleep 1; shot "download: eliminato"
+    dl_device_ls | grep -q '^ok.mcpack$' && fail "DOWNLOAD MANAGER: dopo ELIMINA il file è ancora sul telefono"
+    $UI has "Nessun download" || fail "DOWNLOAD MANAGER: dopo ELIMINA l'elenco non è vuoto"
+  else
+    shot "download: eliminazione non riuscita"; fail "DOWNLOAD MANAGER: ELIMINA con conferma non funziona"
+  fi
+
+  # ---- impronta sbagliata: il file NON deve essere tenuto
+  dl_add "$DL_BASE/wrong-hash.mcpack" "0000000000000000000000000000000000000000000000000000000000000000"
+  if dl_wait "Non riuscito" 40; then
+    sleep 1; shot "download: impronta sbagliata"
+    expect "non corrisponde" "RIPROVA"
+    if dl_device_ls | grep -q 'wrong-hash'; then fail "DOWNLOAD MANAGER: con l'impronta sbagliata il file è stato tenuto"; fi
+    if dl_device_ls | grep -q '\.part$'; then fail "DOWNLOAD MANAGER: con l'impronta sbagliata resta un file parziale"; fi
+    [ "$(dl_count /wrong-hash.mcpack)" = 1 ] || fail "DOWNLOAD MANAGER: con l'impronta sbagliata l'app ha ripetuto la richiesta (inutile: il file era intero)"
+    dl_remove_card || fail "DOWNLOAD MANAGER: non riesco a togliere il download non riuscito"
+  else
+    shot "download: impronta sbagliata non rilevata"; fail "DOWNLOAD MANAGER: con l'impronta sbagliata il download non risulta «Non riuscito»"
+  fi
+
+  # ---- il file non esiste (404): errore chiaro, nessun nuovo tentativo
+  dl_add "$DL_BASE/gone.bin"
+  if dl_wait "Non riuscito" 40; then
+    sleep 1; shot "download: errore 404"
+    expect "errore 404"
+    [ "$(dl_count /gone.bin)" = 1 ] || fail "DOWNLOAD MANAGER: con l'errore 404 l'app ha ripetuto la richiesta"
+    dl_remove_card || fail "DOWNLOAD MANAGER: non riesco a togliere il download con errore 404"
+  else
+    shot "download: 404 non rilevato"; fail "DOWNLOAD MANAGER: un file inesistente (404) non risulta «Non riuscito»"
+  fi
+
+  # ---- reindirizzamento sullo stesso sito, senza impronta: si scarica e si dice che l'impronta non è stata confrontata
+  dl_add "$DL_BASE/hop.mcpack"
+  if dl_wait "Completato" 60; then
+    sleep 1; shot "download: dopo il reindirizzamento"
+    expect "hop.mcpack" "non confrontata"
+    dl_check_file hop.mcpack ok.mcpack
+    dl_remove_card || fail "DOWNLOAD MANAGER: non riesco a togliere il download del reindirizzamento"
+  else
+    shot "download: reindirizzamento non seguito"; fail "DOWNLOAD MANAGER: il reindirizzamento 302 verso lo stesso sito non viene seguito"
+  fi
+
+  # ---- pausa e ripresa: l'app deve riprendere da dove era arrivata (Range + If-Range), senza riscaricare tutto
+  dl_add "$DL_BASE/slow.bin"
+  if dl_wait "In corso" 20; then
+    if $UI tap "PAUSA"; then
+      if dl_wait "In pausa" 20; then
+        sleep 2; part1=$(dl_device_part_size); sleep 2; part2=$(dl_device_part_size)
+        shot "download: in pausa"
+        expect "RIPRENDI" "ANNULLA"
+        total=$(dl_size slow.bin)
+        log "pausa: file parziale di $part1 byte su $total (dopo altri 2 s: $part2)"
+        if [ -z "$part1" ] || [ "$part1" -le 0 ] || [ "$part1" -ge "$total" ]; then
+          fail "DOWNLOAD MANAGER: in pausa il file parziale non è né vuoto né completo come dovrebbe ($part1 su $total)"
+        fi
+        [ "$part1" = "$part2" ] || fail "DOWNLOAD MANAGER: in pausa il file parziale continua a crescere ($part1 → $part2)"
+        if $UI tap "RIPRENDI"; then
+          if dl_wait "Completato" 90; then
+            sleep 1; shot "download: ripreso e completato"
+            dl_check_file slow.bin slow.bin
+            starts=$(dl_starts /slow.bin); second=$(echo "$starts" | sed -n 2p)
+            log "richieste per slow.bin: $(echo "$starts" | tr '\n' ' ')"
+            case "$second" in
+              "bytes=$part1-|"?*) ;;
+              *) fail "DOWNLOAD MANAGER: la ripresa non ha chiesto «bytes=$part1-» con If-Range (seconda richiesta: «$second»)" ;;
+            esac
+            dl_remove_card || fail "DOWNLOAD MANAGER: non riesco a togliere il download ripreso"
+          else
+            shot "download: ripresa non completata"; fail "DOWNLOAD MANAGER: dopo RIPRENDI il download non si completa entro 90 s"
+          fi
+        else
+          fail "DOWNLOAD MANAGER: pulsante RIPRENDI non trovato"
+        fi
+      else
+        shot "download: pausa non applicata"; fail "DOWNLOAD MANAGER: toccando PAUSA il download non risulta «In pausa»"
+      fi
+    else
+      shot "download: PAUSA non toccabile"; fail "DOWNLOAD MANAGER: pulsante PAUSA non trovato mentre scarica (finito troppo presto?)"
+    fi
+  else
+    shot "download: lento non partito"; fail "DOWNLOAD MANAGER: il download lento non risulta «In corso»"
+  fi
+
+  # ---- la rete cade a metà: l'app riprova da sola e riprende da dove era arrivata
+  dl_add "$DL_BASE/drop.bin"
+  if dl_wait "Completato" 120; then
+    sleep 1; shot "download: completato dopo il taglio"
+    dl_check_file drop.bin drop.bin
+    starts=$(dl_starts /drop.bin); second=$(echo "$starts" | sed -n 2p)
+    log "richieste per drop.bin: $(echo "$starts" | tr '\n' ' ')"
+    first_range=$(echo "$starts" | sed -n 1p | cut -d'|' -f1)
+    [ -z "$first_range" ] || fail "DOWNLOAD MANAGER: la prima richiesta di drop.bin aveva già un Range ($first_range)"
+    start=$(echo "$second" | sed -n 's/^bytes=\([0-9][0-9]*\)-|.\+/\1/p')
+    if [ -z "$start" ] || [ "$start" -le 0 ] || [ "$start" -gt 1048576 ]; then
+      fail "DOWNLOAD MANAGER: dopo il taglio della rete l'app non ha ripreso con Range da un punto valido (seconda richiesta: «$second»)"
+    fi
+    dl_remove_card || fail "DOWNLOAD MANAGER: non riesco a togliere il download del taglio"
+  else
+    shot "download: taglio non recuperato"; fail "DOWNLOAD MANAGER: dopo il taglio della rete il download non si completa da solo entro 120 s"
+  fi
+
+  # ---- sito https non consentito scritto a mano: domanda di consenso, e «ANNULLA» non aggiunge nulla
+  dl_add "https://cdn.altro-sito.invalid/f.mcpack"
+  if $UI wait "Consentire i download da" 12; then
+    shot "download: consenso richiesto"
+    expect "cdn.altro-sito.invalid" "CONSENTI E CONTINUA" "ANNULLA"
+    $UI tap-last "ANNULLA"; sleep 1.5
+    $UI has "Consentire i download da" && fail "DOWNLOAD MANAGER: «ANNULLA» non chiude la domanda di consenso"
+    case " $(lib_hosts) " in *altro-sito*) fail "DOWNLOAD MANAGER: annullando la domanda il sito è stato consentito lo stesso" ;; esac
+    $UI has "Nessun download" || fail "DOWNLOAD MANAGER: annullando la domanda di consenso è comparso un download"
+  else
+    shot "download: nessun consenso richiesto"; fail "DOWNLOAD MANAGER: un sito https non consentito non apre la domanda di consenso"
+  fi
+
+  # ---- il server manda su un sito non consentito: il download aspetta il consenso e riparte solo dopo
+  dl_add "$DL_BASE/away.mcpack"
+  if dl_wait "E RIPRENDI" 40; then
+    sleep 1; shot "download: sito di destinazione da consentire"
+    expect "cdn.consent-test.invalid" "In pausa"
+    case " $(lib_hosts) " in *consent-test*) fail "DOWNLOAD MANAGER: il sito di destinazione risulta consentito prima della risposta dell'utente" ;; esac
+    $UI tap "E RIPRENDI"
+    if $UI wait "Consentire i download da" 10; then
+      shot "download: domanda di consenso (reindirizzamento)"
+      expect "cdn.consent-test.invalid" "CONSENTI E CONTINUA"
+      $UI tap "CONSENTI E CONTINUA"; sleep 2
+      case " $(lib_hosts) " in
+        *cdn.consent-test.invalid*) log "sito consentito e salvato: $(lib_hosts)" ;;
+        *) fail "DOWNLOAD MANAGER: dopo «CONSENTI E CONTINUA» il sito non è nell'archivio centrale" ;;
+      esac
+      # Ora il motore deve provare davvero a contattare quel sito (che non esiste): il pulsante di consenso sparisce.
+      sleep 3; snap
+      seen "E RIPRENDI" && fail "DOWNLOAD MANAGER: dopo il consenso il download resta fermo in attesa del consenso"
+      shot "download: dopo il consenso"
+      if $UI tap "ANNULLA"; then
+        dl_wait "Annullato" 90 || { shot "download: annullamento lento"; fail "DOWNLOAD MANAGER: ANNULLA non porta il download a «Annullato» entro 90 s"; }
+      fi
+      dl_remove_card || fail "DOWNLOAD MANAGER: non riesco a togliere il download annullato"
+    else
+      shot "download: nessuna domanda di consenso"; fail "DOWNLOAD MANAGER: «CONSENTI … E RIPRENDI» non apre la domanda di consenso"
+    fi
+  else
+    shot "download: reindirizzamento non fermato"; fail "DOWNLOAD MANAGER: un reindirizzamento verso un sito non consentito non ferma il download in attesa del consenso"
+  fi
+
+  # ---- indirizzo già in coda + chiusura dell'app a metà: niente riparte da solo, poi RIPRENDI continua dal punto raggiunto
+  dl_add "$DL_BASE/slow2.bin"
+  if dl_wait "In corso" 20; then
+    dl_add "$DL_BASE/slow2.bin"
+    $UI wait "già nella lista" 10 || fail "DOWNLOAD MANAGER: lo stesso indirizzo aggiunto due volte non viene rifiutato"
+    sleep 2
+    adb shell am force-stop $PKG; sleep 2
+    pre=$(dl_device_part_size); n_before=$(dl_count /slow2.bin)
+    log "app chiusa a metà: file parziale di ${pre:-?} byte, richieste ricevute finora: $n_before"
+    adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3
+    if dl_open && dl_wait "In pausa" 25; then
+      shot "download: dopo la chiusura dell'app"
+      expect "Interrotto quando l'app si è chiusa" "RIPRENDI"
+      sleep 6
+      [ "$(dl_count /slow2.bin)" = "$n_before" ] || fail "DOWNLOAD MANAGER: dopo il riavvio dell'app il download è ripartito da solo"
+      if $UI tap "RIPRENDI"; then
+        if dl_wait "Completato" 90; then
+          sleep 1; shot "download: ripreso dopo la chiusura dell'app"
+          dl_check_file slow2.bin slow2.bin
+          starts=$(dl_starts /slow2.bin); second=$(echo "$starts" | sed -n 2p)
+          log "richieste per slow2.bin: $(echo "$starts" | tr '\n' ' ')"
+          case "$second" in
+            "bytes=$pre-|"?*) ;;
+            *) fail "DOWNLOAD MANAGER: dopo la chiusura dell'app la ripresa non ha chiesto «bytes=$pre-» (seconda richiesta: «$second»)" ;;
+          esac
+          dl_remove_card || fail "DOWNLOAD MANAGER: non riesco a togliere il download ripreso dopo la chiusura"
+        else
+          shot "download: ripresa dopo chiusura non completata"; fail "DOWNLOAD MANAGER: dopo la chiusura dell'app e RIPRENDI il download non si completa entro 90 s"
+        fi
+      else
+        fail "DOWNLOAD MANAGER: pulsante RIPRENDI non trovato dopo il riavvio"
+      fi
+    else
+      shot "download: stato dopo la chiusura"; fail "DOWNLOAD MANAGER: dopo la chiusura dell'app il download in corso non risulta «In pausa»"
+    fi
+  else
+    shot "download: slow2 non partito"; fail "DOWNLOAD MANAGER: il secondo download lento non risulta «In corso»"
+  fi
+
+  # ---- niente è rimasto nella cartella dei download, e il server ha visto solo quello che ci si aspetta
+  go_dash
+  rest=$(dl_device_ls)
+  [ -z "$rest" ] || fail "DOWNLOAD MANAGER: alla fine nella cartella dei download restano file: $(echo $rest)"
+  kill $DL_PID 2>/dev/null
+  wait $DL_PID 2>/dev/null
+  DL_PID=""
+}
+
+download_tests
 
 # ======================================================================================================== INSTALLER BEDROCK (Minecraft assente)
 

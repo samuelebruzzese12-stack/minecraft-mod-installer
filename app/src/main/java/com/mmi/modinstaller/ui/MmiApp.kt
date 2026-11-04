@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mmi.modinstaller.Availability
 import com.mmi.modinstaller.BridgeViewModel
+import com.mmi.modinstaller.DownloadsViewModel
 import com.mmi.modinstaller.BusyState
 import com.mmi.modinstaller.MainViewModel
 import com.mmi.modinstaller.PickPurpose
@@ -59,9 +60,10 @@ import kotlinx.coroutines.launch
 
 /** Radice dell'interfaccia: menu delle sezioni, schermata aperta, messaggi, finestre e avanzamento. */
 @Composable
-fun MmiApp(vm: MainViewModel, model: BridgeViewModel) {
+fun MmiApp(vm: MainViewModel, model: BridgeViewModel, downloadsModel: DownloadsViewModel) {
     val state by vm.state.collectAsState()
     val bridge by model.state.collectAsState()
+    val downloads by downloadsModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     var pickPurpose by remember { mutableStateOf(PickPurpose.ANY) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -160,6 +162,7 @@ fun MmiApp(vm: MainViewModel, model: BridgeViewModel) {
                             }
                         )
                         Section.JAVA -> JavaEditionScreen(bridge, vm, openMenu)
+                        Section.DOWNLOADS -> DownloadsScreen(downloads, downloadsModel, vm, openMenu)
                         Section.DIAGNOSTICS -> DiagnosticsScreen(state, bridge, vm, model, openMenu)
                         Section.SETTINGS -> SettingsScreen(state, bridge, vm, model, openMenu)
                         else -> ComingSoonScreen(state.section, vm, openMenu)

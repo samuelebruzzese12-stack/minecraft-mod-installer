@@ -31,7 +31,7 @@ enum class Section(val title: String, val availability: Availability, val summar
     WORLDS("WORLD MANAGER", Availability.SOON, "Importazione di mondi Java e Bedrock, anche enormi"),
     CONVERTER("WORLD CONVERTER", Availability.SOON, "Conversione di mondi tra Java e Bedrock"),
     JAVA_TO_BEDROCK("JAVA TO BEDROCK", Availability.SOON, "Analisi e conversione delle mod Java"),
-    DOWNLOADS("DOWNLOAD MANAGER", Availability.SOON, "Download con ripresa e verifica dei file"),
+    DOWNLOADS("DOWNLOAD MANAGER", Availability.READY, "Scarica file da siti consentiti, con ripresa e verifica"),
     DIAGNOSTICS("DIAGNOSTICA", Availability.READY, "Dispositivo, integrità dei file ed errori recenti"),
     SETTINGS("IMPOSTAZIONI", Availability.READY, "Tema e profilo prestazioni")
 }

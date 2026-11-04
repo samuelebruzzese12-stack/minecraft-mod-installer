@@ -84,7 +84,8 @@ fun AboutScreen(state: UiState, vm: MainViewModel) {
             InfoCard(
                 "Sicurezza e privacy",
                 listOf(
-                    "L'app non ha il permesso Internet: nessun file lascia il telefono.",
+                    "Internet serve solo al DOWNLOAD MANAGER, per RICEVERE il file che indichi (solo https, solo siti consentiti). " +
+                        "L'app non invia nulla dal telefono: nessun file, nessun dato.",
                     "Gli archivi sono letti con limiti su dimensione, numero di file e rapporto di compressione " +
                         "(protezione da zip bomb) e i percorsi pericolosi (ZIP Slip, «../») vengono bloccati.",
                     "Nessun codice contenuto negli archivi viene eseguito. I file eseguibili non vengono copiati nel pacchetto.",

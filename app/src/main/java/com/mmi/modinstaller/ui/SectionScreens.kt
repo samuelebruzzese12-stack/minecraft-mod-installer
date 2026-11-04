@@ -273,14 +273,6 @@ private fun planFor(section: Section): SectionPlan = when (section) {
         "Non è ancora stato costruito. Il codice Java di una mod non si può tradurre automaticamente in un add-on " +
             "Bedrock: l'app non promette conversioni complete."
     )
-    Section.DOWNLOADS -> SectionPlan(
-        listOf(
-            "Scaricare file da fonti ufficiali (come Modrinth) o da link che autorizzi tu",
-            "Riprendere i download interrotti e verificare l'impronta dei file",
-            "Non inviare mai i tuoi file a nessuno"
-        ),
-        "Non è ancora stato costruito. Oggi l'app non ha il permesso Internet: lo chiederà solo quando questa sezione esisterà."
-    )
     else -> SectionPlan(emptyList(), "")
 }
 

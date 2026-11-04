@@ -30,7 +30,7 @@ class SectionTest {
     @Test
     fun onlyTheEnginesThatExistAreMarkedReady() {
         val ready = Section.values().filter { it.availability == Availability.READY }.map { it.name }.toSet()
-        assertEquals(setOf("HOME", "INSTALLER", "DIAGNOSTICS", "SETTINGS"), ready)
+        assertEquals(setOf("HOME", "INSTALLER", "DOWNLOADS", "DIAGNOSTICS", "SETTINGS"), ready)
     }
 
     @Test
@@ -41,7 +41,7 @@ class SectionTest {
     @Test
     fun theEnginesNotBuiltYetAreMarkedComingSoon() {
         val soon = Section.values().filter { it.availability == Availability.SOON }.map { it.name }.toSet()
-        assertEquals(setOf("MODS", "MODPACKS", "WORLDS", "CONVERTER", "JAVA_TO_BEDROCK", "DOWNLOADS"), soon)
+        assertEquals(setOf("MODS", "MODPACKS", "WORLDS", "CONVERTER", "JAVA_TO_BEDROCK"), soon)
     }
 
     @Test

@@ -17,6 +17,7 @@ dependencyResolutionManagement {
 rootProject.name = "MinecraftModInstaller"
 
 include(":core")
+include(":download-engine")
 include(":app")
 
 // Finto Minecraft usato solo dalla prova su emulatore in CI (vedi ci/emulator_smoke.sh). Si include soltanto con

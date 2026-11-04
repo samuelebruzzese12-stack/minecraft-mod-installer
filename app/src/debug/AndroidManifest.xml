@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        Solo nella build di prova (debug): consente l'HTTP in chiaro verso 10.0.2.2, l'indirizzo con cui l'emulatore
+        Android raggiunge il computer che lo ospita. Serve alla prova automatica del DOWNLOAD MANAGER in CI (un server
+        locale sul computer). La build vera (release) non ha questa eccezione: solo https.
+    -->
+    <application android:networkSecurityConfig="@xml/debug_network_security" />
+</manifest>

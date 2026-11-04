@@ -2,10 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!--
-        Nessun permesso richiesto: l'app non ha accesso a Internet e non legge la memoria del telefono in modo
-        generale. I file si scelgono con il selettore di sistema (Storage Access Framework) e vengono consegnati
-        a Minecraft con un Intent e un URI di contenuto (FileProvider).
+        Un solo permesso: INTERNET, usato dal DOWNLOAD MANAGER per scaricare il file che l'utente indica. L'app fa solo
+        richieste per RICEVERE file (nessun upload), solo su https e solo verso siti consentiti. Per il resto nessun
+        permesso: la memoria del telefono non viene letta in modo generale; i file si scelgono con il selettore di sistema
+        (Storage Access Framework) e vengono consegnati a Minecraft con un Intent e un URI di contenuto (FileProvider).
     -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- Necessario da Android 11 per vedere se Minecraft è installato. -->
     <queries>
@@ -93,7 +95,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Espone a Minecraft SOLO la cartella dei pacchetti preparati dall'app. -->
+        <!-- A Minecraft si dà SOLO un pacchetto preparato alla volta (concesso con l'Intent); l'app non espone altro. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

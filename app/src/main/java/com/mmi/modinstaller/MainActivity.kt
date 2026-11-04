@@ -17,6 +17,7 @@ class MainActivity : ComponentActivity() {
 
     private val vm: MainViewModel by viewModels()
     private val bridge: BridgeViewModel by viewModels()
+    private val downloads: DownloadsViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -24,7 +25,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val bridgeState by bridge.state.collectAsState()
             MmiTheme(bridgeState.settings.theme) {
-                MmiApp(vm, bridge)
+                MmiApp(vm, bridge, downloads)
             }
         }
         // Dopo una ricreazione (es. processo chiuso da Android) l'intent originale non va rielaborato.
@@ -35,11 +36,6 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIncoming(intent)
-    }
-
-    override fun onStart() {
-        super.onStart()
-        vm.onAppStarted()
     }
 
     override fun onResume() {

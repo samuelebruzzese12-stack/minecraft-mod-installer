@@ -143,7 +143,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ------------------------------------------------------------------ ciclo di vita dell'app
 
-    fun onAppStarted() {
+    /**
+     * Si rilegge ciò che può essere cambiato fuori dall'app (Minecraft installato o aggiornato, elenchi). Va fatto a ogni
+     * ritorno in primo piano (onResume), non solo all'avvio (onStart): se si esce e si rientra in fretta, o con le finestre
+     * affiancate o mobili, Android non ferma l'attività e onStart non arriva (visto sull'emulatore: Minecraft installato
+     * mentre l'app era appena tornata in primo piano non veniva riconosciuto).
+     */
+    private fun refreshForeground() {
         refreshMinecraft()
         recheckMinecraftSoon()
         refreshLists()
@@ -159,6 +165,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** L'app torna in primo piano: se era stato mandato qualcosa a Minecraft si chiede com'è andata. */
     fun onAppResumed() {
+        refreshForeground()
         val awaiting = _state.value.awaiting != null
         val ask = confirmation.onResume(awaiting)
         if (awaiting) Log.i("MMI", "App di nuovo in primo piano, domanda di conferma: " + (if (ask) "sì" else "no"))

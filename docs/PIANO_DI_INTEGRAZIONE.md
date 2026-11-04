@@ -46,7 +46,24 @@ Regole che guidano tutto il lavoro (dalla direttiva):
 - *Accettazione:* tutti i test precedenti verdi; la prova su emulatore ripete l'installazione Bedrock dalla nuova navigazione, controlla le sezioni, il tema e le impostazioni dopo il riavvio, un arresto provocato di proposito e l'**aggiornamento sopra la build 5** senza perdita di dati.
 
 ### Fase 2 — `:download-engine`
-Coda persistente, ripresa HTTP Range, verifica SHA, limite di dimensione, solo HTTPS e host consentiti (redirect compresi), annulla/pausa/riprova, avanzamento. Permesso `INTERNET` dichiarato e spiegato; nessun file dell'utente viene mai inviato.
+Modulo Kotlin puro (come `:core`, testabile sulla JVM) + sezione DOWNLOAD MANAGER dell'app.
+- *Regole:* solo `https://` sulla porta 443; niente nome utente nell'indirizzo, IP o nomi locali; solo host consentiti (elenco noto
+  + approvati dall'utente, uno per uno); ogni reindirizzamento è ricontrollato e un host non approvato ferma il download **prima**
+  di contattarlo (stato «In pausa» con la domanda di consenso).
+- *Trasferimento:* file parziale `<id>.part`; ripresa con `Range` + `If-Range` solo con ETag forte o `Last-Modified`; se il server
+  ignora l'intervallo o il file è cambiato si riparte da zero; `Accept-Encoding: identity`; limite 2 GiB; controllo dello spazio
+  libero; SHA-256 sempre calcolato e impronta attesa (SHA-1/256/512) verificata: se non corrisponde il file **non** viene tenuto.
+- *Coda:* massimo 2 in parallelo, pausa/riprendi/annulla/riprova/elimina, nuovi tentativi automatici (1 s, 3 s, 8 s) solo per errori
+  passeggeri (rete, 5xx, 408, 429). Niente parte da solo all'avvio dell'app: un download interrotto resta «In pausa».
+- *Dati:* sezioni `downloads` e `download_hosts` dell'archivio centrale (`LibraryStore`); i file in `files/downloads/`.
+- *Permesso:* `INTERNET` dichiarato e spiegato (Impostazioni, Informazioni, README); nessun file dell'utente viene mai inviato.
+  La versione normale non ammette traffico non cifrato (controllo del manifest in CI); solo la versione di prova ammette `http`
+  verso `10.0.2.2:8765` per la prova su emulatore.
+- *Limiti dichiarati:* scarica solo finché il processo vive (nessun servizio in primo piano: da aggiungere se serve); la ripresa
+  richiede ETag/Last-Modified; **Internet vero non è verificabile dalla CI** (si prova contro un server locale).
+- *Accettazione:* 62 test JVM contro un vero server HTTP locale; prova su emulatore con `ci/dl_server.py` (download con impronta
+  giusta e sbagliata, 404, reindirizzamento, pausa/ripresa con controllo del `Range` richiesto, rete che cade, consenso a un sito
+  nuovo, chiusura dell'app a metà, apertura del file scaricato nell'INSTALLER BEDROCK) e tutte le prove precedenti invariate.
 
 ### Fase 3 — `:jar-analyzer` e `:mod-manager`
 Profili Java indipendenti (`files/java/profiles/<id>/`), importazione `.jar`/`.zip`/multipla, riconoscimento di versione Minecraft e loader dai metadati, dipendenze mancanti e conflitti noti, SHA-256, backup prima di ogni modifica, annulla, attiva/disattiva, ricerca Modrinth.

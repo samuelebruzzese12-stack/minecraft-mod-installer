@@ -12,6 +12,9 @@ Comandi:
   top                    torna in cima alla pagina
   actions PERCORSO       elenca le azioni toccabili (testo di ogni elemento cliccabile), una per riga
   wait TESTO [SECONDI]   aspetta che TESTO compaia (default 20 s)
+  fields PERCORSO        elenca i campi di testo visibili (dall'alto in basso): indice e contenuto
+  fill N TESTO           tocca il campo di testo numero N (da 0, dall'alto) e ci scrive TESTO (solo caratteri semplici)
+  clear-field N          svuota il campo di testo numero N
 """
 import re
 import subprocess
@@ -177,6 +180,65 @@ def actions(path):
     return out
 
 
+def edit_fields(path):
+    """I campi di testo visibili (android.widget.EditText), dall'alto in basso e da sinistra a destra."""
+    out = []
+    screen = None
+    for n in ET.parse(path).getroot().iter("node"):
+        box = box_of(n)
+        if box is None:
+            continue
+        if screen is None:
+            screen = box
+            continue
+        if outside(box, screen):
+            continue
+        if n.get("class") == "android.widget.EditText" and box[2] > box[0] and box[3] > box[1]:
+            out.append({"text": n.get("text") or "", "box": box})
+    out.sort(key=lambda f: (f["box"][1], f["box"][0]))
+    return out
+
+
+SAFE_TEXT = re.compile(r"^[A-Za-z0-9:/._?=-]*$")
+
+
+def tap_field(index):
+    """Tocca il campo di testo numero index (porta il cursore lì). Restituisce il campo, o None se non c'è."""
+    p = dump("/tmp/mmi_field.xml")
+    if not p:
+        return None
+    fields = edit_fields(p)
+    if index >= len(fields):
+        return None
+    x1, y1, x2, y2 = fields[index]["box"]
+    adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
+    time.sleep(0.8)
+    return fields[index]
+
+
+def fill(index, text):
+    if not SAFE_TEXT.match(text):
+        print("caratteri non ammessi nel testo da scrivere", file=sys.stderr)
+        return 2
+    if tap_field(index) is None:
+        return 1
+    if text:
+        # il testo sta tra apici: nessun carattere ammesso ha un significato speciale per la shell del telefono
+        adb("shell", "input", "text", "'" + text + "'")
+        time.sleep(0.6)
+    return 0
+
+
+def clear_field(index):
+    field = tap_field(index)
+    if field is None:
+        return 1
+    adb("shell", "input", "keyevent", "KEYCODE_MOVE_END")
+    adb("shell", "input", "keyevent", *(["KEYCODE_DEL"] * (len(field["text"]) + 3)))
+    time.sleep(0.5)
+    return 0
+
+
 def wait(needle, seconds=20):
     end = time.time() + seconds
     while time.time() < end:
@@ -219,6 +281,14 @@ def main(argv):
         return 0
     if cmd == "wait":
         return 0 if wait(argv[2], int(argv[3]) if len(argv) > 3 else 20) else 1
+    if cmd == "fields":
+        for i, f in enumerate(edit_fields(argv[2])):
+            print("%d\t%s" % (i, f["text"]))
+        return 0
+    if cmd == "fill":
+        return fill(int(argv[2]), argv[3] if len(argv) > 3 else "")
+    if cmd == "clear-field":
+        return clear_field(int(argv[2]))
     print(__doc__)
     return 2
 

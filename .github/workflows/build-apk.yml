@@ -43,10 +43,10 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null 2>&1 || true
           ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools" || true
 
-      - name: Esegui i test (motore di analisi e testi dell'app)
+      - name: Esegui i test (analisi, download e testi dell'app)
         id: coretests
         continue-on-error: true
-        run: gradle :core:test :app:testDebugUnitTest --continue --stacktrace
+        run: gradle :core:test :download-engine:test :app:testDebugUnitTest --continue --stacktrace
 
       - name: Compila l'APK
         run: gradle :app:assembleDebug :app:assembleRelease --stacktrace
@@ -73,11 +73,38 @@ jobs:
             echo '```'
             "$BT/apksigner" verify --print-certs dist/MinecraftModInstaller.apk 2>&1 | head -n 8
             echo '```'
-            echo "### Permessi (atteso: solo il permesso interno di AndroidX, a livello firma)"
+            echo "### Permessi (atteso: solo INTERNET, per il DOWNLOAD MANAGER, e il permesso interno di AndroidX a livello firma)"
             echo '```'
             "$BT/aapt2" dump permissions dist/MinecraftModInstaller.apk 2>&1 | head -n 20
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # La versione normale scarica solo con https. L'eccezione per l'HTTP verso 10.0.2.2 (prova su emulatore) esiste solo
+      # nella versione di prova (debug): se compare nella versione normale, la compilazione si ferma.
+      - name: Controlla che la versione normale non ammetta traffico non cifrato
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml dist/MinecraftModInstaller.apk > manifest-release.txt 2>&1 || true
+          "$BT/aapt2" dump xmltree --file AndroidManifest.xml dist/MinecraftModInstaller-debug.apk > manifest-debug.txt 2>&1 || true
+          if ! grep -q "uses-permission" manifest-release.txt; then
+            echo "Non riesco a leggere il manifest della versione normale: controllo saltato"; head -n 20 manifest-release.txt; exit 0
+          fi
+          {
+            echo "### Traffico di rete"
+            if grep -Eqi "networkSecurityConfig|usesCleartextTraffic" manifest-release.txt; then
+              echo "- **ERRORE**: la versione normale ha una configurazione di rete che può ammettere il traffico non cifrato"
+            else
+              echo "- Versione normale: nessuna eccezione, solo https (il sistema blocca l'HTTP in chiaro)"
+            fi
+            if grep -Eqi "networkSecurityConfig" manifest-debug.txt; then
+              echo "- Versione di prova (debug): ammette HTTP solo verso 10.0.2.2, per la prova su emulatore"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if grep -Eqi "networkSecurityConfig|usesCleartextTraffic" manifest-release.txt; then
+            grep -Ei "networkSecurityConfig|usesCleartextTraffic" manifest-release.txt
+            echo "ERRORE: la versione normale può ammettere traffico non cifrato"; exit 1
+          fi
+          echo "OK: la versione normale non ammette traffico non cifrato"
 
       - name: Pubblica gli APK come artifact
         uses: actions/upload-artifact@v4
@@ -93,6 +120,7 @@ jobs:
           name: rapporti-test
           path: |
             core/build/reports/tests/test
+            download-engine/build/reports/tests/test
             app/build/reports/tests/testDebugUnitTest
           if-no-files-found: ignore
 
@@ -131,7 +159,7 @@ jobs:
     name: Prova su emulatore Android
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 70
     continue-on-error: true
 
     steps:

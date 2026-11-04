@@ -32,7 +32,7 @@ import com.mmi.modinstaller.core.InstalledEntry
 
 /** Finestra con testo e pulsanti incolonnati a tutta larghezza (più leggibile su telefono dei pulsanti affiancati). */
 @Composable
-private fun StackedDialog(
+internal fun StackedDialog(
     title: String,
     onDismiss: () -> Unit,
     cancelable: Boolean,
@@ -73,12 +73,12 @@ private fun StackedDialog(
 }
 
 @Composable
-private fun BodyText(text: String) {
+internal fun BodyText(text: String) {
     Text(text = text, style = MaterialTheme.typography.bodyMedium)
 }
 
 @Composable
-private fun GreenDialogButton(text: String, onClick: () -> Unit) {
+internal fun GreenDialogButton(text: String, onClick: () -> Unit) {
     Button(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -87,7 +87,7 @@ private fun GreenDialogButton(text: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun DangerDialogButton(text: String, onClick: () -> Unit) {
+internal fun DangerDialogButton(text: String, onClick: () -> Unit) {
     Button(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -99,12 +99,12 @@ private fun DangerDialogButton(text: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun PlainDialogButton(text: String, onClick: () -> Unit) {
+internal fun PlainDialogButton(text: String, onClick: () -> Unit) {
     OutlinedButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) { Text(text) }
 }
 
 @Composable
-private fun CloseDialogButton(text: String, onClick: () -> Unit) {
+internal fun CloseDialogButton(text: String, onClick: () -> Unit) {
     TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth()) { Text(text) }
 }
 
