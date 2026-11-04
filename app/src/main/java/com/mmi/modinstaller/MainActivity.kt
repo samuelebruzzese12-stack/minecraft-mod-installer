@@ -42,9 +42,14 @@ class MainActivity : ComponentActivity() {
         vm.onAppStarted()
     }
 
-    override fun onStop() {
-        vm.onAppStopped()
-        super.onStop()
+    override fun onResume() {
+        super.onResume()
+        vm.onAppResumed()
+    }
+
+    override fun onPause() {
+        vm.onAppPaused()
+        super.onPause()
     }
 
     /** File aperti o condivisi con l'app da un gestore di file, dal browser o da un'altra app. */

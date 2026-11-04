@@ -31,7 +31,8 @@ phase() { echo; log "=================== $* ==================="; }
 
 shot() {
   STEP=$((STEP+1))
-  local n; n=$(printf "%03d-%s" "$STEP" "$(echo "$1" | tr ' /' '__')")
+  # Nome file sicuro: GitHub rifiuta nei file caricati : " < > | * ? \ / e gli a capo, quindi si tiene solo ASCII semplice.
+  local n; n=$(printf "%03d-%s" "$STEP" "$(echo "$1" | LC_ALL=C sed -e 's/[^A-Za-z0-9._-]/_/g' -e 's/__*/_/g' -e 's/_$//')")
   adb exec-out screencap -p > "$OUT/shots/$n.png" 2>/dev/null
   LAST_SHOT="$OUT/shots/$n.png"
   if $UI dump "$OUT/ui/$n.xml" >/dev/null 2>&1; then
@@ -332,7 +333,8 @@ if go_dash && open_from_menu "DIAGNOSTICA"; then
     $UI scan "Nessun errore registrato" 6 || fail "Diagnostica: all'inizio dovrebbe dire «Nessun errore registrato»"
     if $UI tap "CONDIVIDI IL RAPPORTO"; then
       sleep 3; shot "condivisione del rapporto"
-      $UI has "Condividi il rapporto" || fail "Diagnostica: «CONDIVIDI IL RAPPORTO» non apre la finestra di condivisione"
+      # Il foglio di condivisione di Android 14 mostra «Sharing text» e l'anteprima del testo: deve esserci il nostro rapporto.
+      $UI has "Rapporto di diagnostica" || fail "Diagnostica: «CONDIVIDI IL RAPPORTO» non apre la finestra di condivisione con il rapporto"
       back; sleep 1
       $UI wait "CONDIVIDI IL RAPPORTO" 10 || $UI scan "CONDIVIDI IL RAPPORTO" 4 || fail "Diagnostica: dopo la condivisione non si torna alla pagina"
     else
@@ -859,6 +861,13 @@ if grep -q "ANR in $PKG" "$OUT/logcat.txt"; then
   grep -n -A12 "ANR in $PKG" "$OUT/logcat.txt" | head -n 60 >> "$OUT/crash.txt"
 fi
 grep -E "modinstaller|MMI|AndroidRuntime|FAKE_MC" "$OUT/logcat.txt" | head -n 600 > "$OUT/logcat-app.txt"
+
+# Rete di sicurezza: GitHub rifiuta il caricamento se un nome di file contiene : " < > | * ? \ o un a capo.
+find "$OUT" -depth -name '*[:"<>|*?\\]*' 2>/dev/null | while IFS= read -r bad; do
+  dir=$(dirname "$bad"); base=$(basename "$bad")
+  good=$(printf '%s' "$base" | LC_ALL=C sed -e 's/[:"<>|*?\\]/_/g')
+  mv "$bad" "$dir/$good" && log "NOTA: rinominato per il caricamento: $base"
+done
 
 echo
 log "=== RIEPILOGO ==="

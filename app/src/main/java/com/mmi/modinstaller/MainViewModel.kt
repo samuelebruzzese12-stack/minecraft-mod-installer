@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.mmi.modinstaller.core.AnalysisReport
 import com.mmi.modinstaller.core.BackupInfo
 import com.mmi.modinstaller.core.CancelCheck
+import com.mmi.modinstaller.core.ConfirmationTrigger
 import com.mmi.modinstaller.core.ContentItem
 import com.mmi.modinstaller.core.InstallState
 import com.mmi.modinstaller.core.InstalledEntry
@@ -65,7 +66,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var confirmedCount = 0
     private var failedCount = 0
     private var unknownCount = 0
-    private var leftForMinecraft = false
+    private val confirmation = ConfirmationTrigger()
     private var lastDelete: DeleteResult? = null
     private var noticeCounter = 0L
     private var lastProgressNanos = 0L
@@ -147,15 +148,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         recheckMinecraftSoon()
         refreshLists()
         refreshBackups()
-        val s = _state.value
-        if (s.awaiting != null && leftForMinecraft) {
-            leftForMinecraft = false
-            _state.update { it.copy(confirmVisible = true) }
-        }
     }
 
-    fun onAppStopped() {
-        if (_state.value.awaiting != null) leftForMinecraft = true
+    /** L'app perde il primo piano (Minecraft si apre sopra, anche in una finestra affiancata, o si va altrove). */
+    fun onAppPaused() {
+        val awaiting = _state.value.awaiting != null
+        confirmation.onPause(awaiting)
+        if (awaiting) Log.i("MMI", "App in pausa con un invio a Minecraft senza risposta")
+    }
+
+    /** L'app torna in primo piano: se era stato mandato qualcosa a Minecraft si chiede com'è andata. */
+    fun onAppResumed() {
+        val awaiting = _state.value.awaiting != null
+        val ask = confirmation.onResume(awaiting)
+        if (awaiting) Log.i("MMI", "App di nuovo in primo piano, domanda di conferma: " + (if (ask) "sì" else "no"))
+        if (ask) _state.update { it.copy(confirmVisible = true) }
     }
 
     // ------------------------------------------------------------------ scelta e analisi dei file
@@ -401,7 +408,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun deliver(entry: InstalledEntry, info: DeliveryInfo? = null) {
         val delivery = info ?: DeliveryInfo(entry.packs.map { it.name }, 0, 0, 1)
         _state.update { it.copy(awaiting = entry, delivery = delivery, queueRemaining = queue.size, confirmVisible = false) }
-        leftForMinecraft = false
+        confirmation.sent()
         when (val result = repo.bridge.send(repo.preparedFile(entry))) {
             is SendResult.Started -> {
                 val detail = "Metodo: " + result.attempt.mode.name
