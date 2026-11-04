@@ -38,6 +38,8 @@ import com.mmi.modinstaller.core.ItemStatus
 import com.mmi.modinstaller.core.Severity
 import com.mmi.modinstaller.core.formatBytes
 import com.mmi.modinstaller.itemKey
+import com.mmi.modinstaller.missingCompanions
+import com.mmi.modinstaller.notSelectedReason
 
 /** Chiavi dei contenuti che si possono installare adesso (installabili e, se serve, forzati). */
 private fun selectableKeys(state: UiState): Set<String> {
@@ -68,7 +70,7 @@ fun ReportScreen(state: UiState, vm: MainViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             for (file in state.files) {
-                item(key = "file-${file.index}") { FileHeaderCard(file) }
+                item(key = "file-${file.index}") { FileHeaderCard(file, state) }
                 val report = file.report
                 if (report != null) {
                     items(report.items, key = { itemKey(file.index, it) }) { item ->
@@ -82,7 +84,7 @@ fun ReportScreen(state: UiState, vm: MainViewModel) {
 }
 
 @Composable
-private fun FileHeaderCard(file: FileReport) {
+private fun FileHeaderCard(file: FileReport, state: UiState) {
     val report = file.report
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -104,6 +106,26 @@ private fun FileHeaderCard(file: FileReport) {
             if (error != null) ToneRow(Tone.BAD, "Impossibile leggere il file", error)
             val note = file.purposeNote
             if (note != null) ToneRow(Tone.INFO, note)
+            if (report != null && report.items.isNotEmpty()) {
+                val total = report.items.size
+                ToneRow(Tone.INFO, if (total == 1) "Nel file c'è 1 contenuto" else "Nel file ci sono $total contenuti")
+                val skipped = report.items.mapNotNull { item ->
+                    val key = itemKey(file.index, item)
+                    if (key in state.selected) {
+                        null
+                    } else {
+                        val reason = notSelectedReason(item, key in state.forced)
+                        "«" + Format.clean(item.title) + "»" + (if (reason != null) " ($reason)" else "")
+                    }
+                }
+                if (skipped.isNotEmpty()) {
+                    ToneRow(
+                        Tone.WARN,
+                        "Non selezionati: " + skipped.joinToString(", "),
+                        "Se ti servono, spunta la casella del contenuto: quelli spuntati partono insieme."
+                    )
+                }
+            }
             if (report != null) {
                 for (f in report.findings.sortedByDescending { it.severity.ordinal }) {
                     ToneRow(Format.severityTone(f.severity), f.message, f.detail)
@@ -244,6 +266,7 @@ private fun ItemCard(fileIndex: Int, item: ContentItem, state: UiState, vm: Main
 
 @Composable
 private fun InstallBar(state: UiState, vm: MainViewModel, selectedCount: Int, selectableCount: Int) {
+    val missing = missingCompanions(state)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         tonalElevation = 3.dp,
@@ -255,6 +278,9 @@ private fun InstallBar(state: UiState, vm: MainViewModel, selectedCount: Int, se
         ) {
             if (!state.minecraft.installed) {
                 ToneRow(Tone.BAD, "Minecraft non è installato su questo telefono")
+            }
+            for (line in missing) {
+                ToneRow(Tone.WARN, line, "Senza l'altro pacchetto il contenuto può risultare incompleto (texture o oggetti mancanti).")
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -275,8 +301,13 @@ private fun InstallBar(state: UiState, vm: MainViewModel, selectedCount: Int, se
                 enabled = selectedCount > 0 && state.busy == null
             )
             Text(
-                text = "Preparo il pacchetto, apro Minecraft e gli consegno il file: l'importazione la esegue Minecraft. " +
-                    "Alla fine ti chiederò di confermare cosa hai visto nel gioco.",
+                text = if (selectedCount > 1) {
+                    "Unisco i contenuti selezionati in un solo file, apro Minecraft e glielo consegno: l'importazione la " +
+                        "esegue Minecraft. Alla fine ti chiederò di confermare cosa hai visto nel gioco."
+                } else {
+                    "Preparo il pacchetto, apro Minecraft e gli consegno il file: l'importazione la esegue Minecraft. " +
+                        "Alla fine ti chiederò di confermare cosa hai visto nel gioco."
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

@@ -146,13 +146,48 @@ class PreparerTest {
     }
 
     @Test
-    fun duplicateFilesAreKeptOnce() {
+    fun filesDifferingOnlyByCaseAreAllKept() {
         val entries = LinkedHashMap<String, ByteArray>()
         entries.putAll(T.packEntries("", "Dup", T.uuidOf("p6")))
         entries["textures/blocks/Stone.png"] = T.png() // stesso nome a meno delle maiuscole
         val p = prepare(item("d.mcpack", entries))
         val stones = T.entriesOf(p.file).keys.filter { n -> n.lowercase() == "textures/blocks/stone.png" }
-        assertEquals(1, stones.size)
+        // Prima uno dei due veniva scartato in silenzio e la texture poteva mancare: ora restano entrambi.
+        assertEquals(2, stones.size)
+        assertTrue(p.notes.any { n -> n.contains("maiuscole") })
+    }
+
+    @Test
+    fun identicalPathsAreKeptOnceAndReported() {
+        val entries = LinkedHashMap<String, ByteArray>()
+        entries.putAll(T.packEntries("", "Same", T.uuidOf("p6b")))
+        entries["textures/blocks/dupA.png"] = T.png()
+        entries["textures/blocks/dupB.png"] = T.png()
+        val zip = T.zip(File(dir, "dup_${counter++}.bin"), entries)
+        // Stessa lunghezza: sostituendo il nome nei byte dello ZIP si ottengono due voci con lo stesso percorso.
+        val raw = String(zip.readBytes(), Charsets.ISO_8859_1).replace("dupB.png", "dupA.png")
+        zip.writeBytes(raw.toByteArray(Charsets.ISO_8859_1))
+        val report = ContentAnalyzer(AnalyzeContext(File(dir, "work"))).analyze(zip, "dup.mcpack")
+        val p = prepare(report.items.single())
+        val names = T.entriesOf(p.file).keys
+        assertEquals(1, names.count { n -> n == "textures/blocks/dupA.png" })
+        assertTrue(p.notes.any { n -> n.contains("stesso identico percorso") })
+    }
+
+    @Test
+    fun everyFileReadIsAccountedFor() {
+        val entries = LinkedHashMap<String, ByteArray>()
+        entries.putAll(T.packEntries("Pack/", "Conti", T.uuidOf("p6c")))
+        entries["Pack/tool.exe"] = ByteArray(10)
+        entries["LEGGIMI.txt"] = T.bytes("fuori dal pacchetto")
+        val it = item("conti.zip", entries)
+        val p = prepare(it)
+        val inScope = entries.keys.count { n -> n.startsWith("Pack/") }
+        assertEquals(inScope, p.sourceFileCount)
+        assertEquals(inScope - 1, p.entryCount)
+        assertTrue(p.notes.any { n -> n == "Inclusi ${inScope - 1} file su $inScope dei contenuti scelti" })
+        assertTrue(p.notes.any { n -> n.contains("1 file dell'archivio non fanno parte") })
+        assertEquals(listOf("Conti"), p.packNames)
     }
 
     @Test

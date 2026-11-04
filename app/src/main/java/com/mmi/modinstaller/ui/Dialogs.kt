@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.mmi.modinstaller.DeliveryInfo
 import com.mmi.modinstaller.DialogState
 import com.mmi.modinstaller.MainViewModel
 import com.mmi.modinstaller.UiState
@@ -113,7 +114,7 @@ fun AppDialogs(state: UiState, vm: MainViewModel) {
     val awaiting = state.awaiting
     val dialog = state.dialog
     if (state.confirmVisible && awaiting != null) {
-        ConfirmImportDialog(awaiting, state.queueRemaining, vm)
+        ConfirmImportDialog(awaiting, state.delivery, state.queueRemaining, vm)
     } else if (dialog != null) {
         when (dialog) {
             is DialogState.MinecraftMissing -> MinecraftMissingDialog(vm)
@@ -164,7 +165,7 @@ fun AppDialogs(state: UiState, vm: MainViewModel) {
 }
 
 @Composable
-private fun ConfirmImportDialog(entry: InstalledEntry, remaining: Int, vm: MainViewModel) {
+private fun ConfirmImportDialog(entry: InstalledEntry, info: DeliveryInfo?, remaining: Int, vm: MainViewModel) {
     StackedDialog(
         title = "Minecraft ha importato il contenuto?",
         // Si risponde sempre: ignorare la domanda lascerebbe lo stato incerto senza che l'utente lo scelga.
@@ -176,10 +177,33 @@ private fun ConfirmImportDialog(entry: InstalledEntry, remaining: Int, vm: MainV
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
+            val names = info?.packNames.orEmpty().map { Format.clean(it) }.filter { it.isNotEmpty() }
+            if (names.isNotEmpty()) {
+                BodyText(
+                    if (names.size == 1) "Ho consegnato a Minecraft questo pacchetto:"
+                    else "Ho consegnato a Minecraft questi ${names.size} pacchetti in un solo file:"
+                )
+                for (name in names.take(MAX_LISTED_PACKS)) BodyText("• $name")
+                if (names.size > MAX_LISTED_PACKS) BodyText("…e altri ${names.size - MAX_LISTED_PACKS}")
+            }
+            if (info != null && info.sourceFiles > 0) {
+                BodyText(
+                    if (info.includedFiles == info.sourceFiles) {
+                        "File inclusi: ${info.includedFiles}, nessuno escluso."
+                    } else {
+                        "File inclusi: ${info.includedFiles} su ${info.sourceFiles}; i " +
+                            "${info.sourceFiles - info.includedFiles} esclusi sono eseguibili o doppioni."
+                    }
+                )
+            }
             BodyText(
                 "Minecraft non comunica all'app se l'importazione è riuscita, quindi devi dirmelo tu in base a ciò che " +
-                    "hai visto nel gioco. Se l'importazione è andata a buon fine rispondi Sì; se è comparso un errore " +
-                    "(o non è successo niente) rispondi No."
+                    "hai visto nel gioco. Controlla che compaiano TUTTI i pacchetti elencati. Se l'importazione è andata " +
+                    "a buon fine rispondi Sì; se è comparso un errore (o non è successo niente) rispondi No."
+            )
+            BodyText(
+                "Importare non basta: nelle impostazioni del mondo (matita accanto al mondo) devi ATTIVARE sia i pacchetti " +
+                    "delle risorse sia quelli del comportamento. Se ne attivi solo uno mancano gli oggetti o le texture."
             )
             if (remaining > 0) {
                 BodyText(
@@ -193,9 +217,12 @@ private fun ConfirmImportDialog(entry: InstalledEntry, remaining: Int, vm: MainV
             PlainDialogButton("No, ha dato errore") { vm.answerConfirmation(InstallState.FAILED) }
             CloseDialogButton("Non lo so · decido più tardi") { vm.answerConfirmation(null) }
             CloseDialogButton("Riapri Minecraft") { vm.openMinecraft() }
+            if (remaining > 0) CloseDialogButton("Non inviare gli altri") { vm.dropRemaining() }
         }
     )
 }
+
+private const val MAX_LISTED_PACKS = 10
 
 @Composable
 private fun MinecraftMissingDialog(vm: MainViewModel) {
@@ -228,6 +255,13 @@ private fun EntryActionsDialog(entry: InstalledEntry, vm: MainViewModel) {
                 title = Format.installState(entry.state),
                 detail = "Inviato il " + Format.dateTime(entry.sentAt)
             )
+            if (entry.packs.isNotEmpty()) {
+                BodyText("Contiene " + Format.plural(entry.packs.size, "pacchetto", "pacchetti") + ":")
+                for (pack in entry.packs.take(MAX_LISTED_PACKS)) {
+                    BodyText("• " + Format.clean(pack.name) + " (v" + pack.versionText + ")")
+                }
+                if (entry.packs.size > MAX_LISTED_PACKS) BodyText("…e altri ${entry.packs.size - MAX_LISTED_PACKS}")
+            }
             BodyText(
                 "Minecraft non dice all'app se ha importato il contenuto: lo stato lo decidi tu, in base a ciò che " +
                     "vedi nel gioco."

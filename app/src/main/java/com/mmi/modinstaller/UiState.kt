@@ -7,6 +7,7 @@ import com.mmi.modinstaller.core.ContentKind
 import com.mmi.modinstaller.core.HistoryEntry
 import com.mmi.modinstaller.core.InstallState
 import com.mmi.modinstaller.core.InstalledEntry
+import com.mmi.modinstaller.core.ItemStatus
 import com.mmi.modinstaller.core.RecentFile
 import java.io.File
 
@@ -43,6 +44,17 @@ class FileReport(
     val purposeNote: String?
 )
 
+/**
+ * Che cosa è stato consegnato a Minecraft, per dire all'utente quali pacchetti deve ritrovare nel gioco.
+ * [includedFiles] e [sourceFiles] sono 0 quando non sono noti (ad esempio per un nuovo invio dall'elenco).
+ */
+class DeliveryInfo(
+    val packNames: List<String>,
+    val includedFiles: Int,
+    val sourceFiles: Int,
+    val itemCount: Int
+)
+
 /** Messaggio temporaneo in basso, con un'eventuale azione (es. ANNULLA dopo un'eliminazione). */
 class Notice(val id: Long, val text: String, val actionLabel: String?)
 
@@ -74,6 +86,8 @@ data class UiState(
     val confirmVisible: Boolean = false,
     /** Contenuti ancora da inviare dopo quello in attesa di conferma. */
     val queueRemaining: Int = 0,
+    /** Che cosa contiene il file consegnato di cui si attende la conferma. */
+    val delivery: DeliveryInfo? = null,
     val dialog: DialogState? = null,
     val notice: Notice? = null
 ) {
@@ -84,3 +98,47 @@ data class UiState(
 
 /** Identificativo di un contenuto nell'elenco dei rapporti (gli id interni si ripetono tra file diversi). */
 fun itemKey(fileIndex: Int, item: ContentItem): String = "$fileIndex/${item.id}"
+
+/** Un contenuto spuntato nel rapporto, pronto per essere consegnato. */
+class PlannedItem(val file: FileReport, val sessionDir: File, val item: ContentItem)
+
+/** I contenuti che «INSTALLA» consegnerebbe adesso: spuntati, installabili e, se serve, forzati. */
+fun plannedItems(state: UiState): List<PlannedItem> {
+    val planned = ArrayList<PlannedItem>()
+    for (file in state.files) {
+        val report = file.report ?: continue
+        val dir = file.sessionDir ?: continue
+        for (item in report.items) {
+            val key = itemKey(file.index, item)
+            if (key !in state.selected || !item.installable) continue
+            if (item.status == ItemStatus.OVERRIDE && key !in state.forced) continue
+            planned.add(PlannedItem(file, dir, item))
+        }
+    }
+    return planned
+}
+
+/** Contenuti spuntati che hanno bisogno di un altro contenuto dello stesso file che non è spuntato. */
+fun missingCompanions(state: UiState): List<String> {
+    val planned = plannedItems(state)
+    val keys = planned.map { itemKey(it.file.index, it.item) }.toSet()
+    val result = ArrayList<String>()
+    for (p in planned) {
+        val report = p.file.report ?: continue
+        for (id in p.item.requires) {
+            val other = report.items.firstOrNull { it.id == id } ?: continue
+            if (itemKey(p.file.index, other) !in keys) {
+                result.add("«${p.item.title}» ha bisogno di «${other.title}», che non è selezionato")
+            }
+        }
+    }
+    return result
+}
+
+/** Perché un contenuto non è spuntato in automatico (null se lo è, o se l'utente lo ha tolto di sua scelta). */
+fun notSelectedReason(item: ContentItem, forced: Boolean): String? = when {
+    !item.installable -> "non installabile"
+    item.status == ItemStatus.OVERRIDE && !forced -> "serve forzare l'installazione"
+    item.sameUuidAs != null -> "ha lo stesso UUID di «${item.sameUuidAs}»"
+    else -> null
+}

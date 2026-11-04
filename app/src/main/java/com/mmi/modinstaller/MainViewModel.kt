@@ -11,6 +11,7 @@ import com.mmi.modinstaller.core.ContentItem
 import com.mmi.modinstaller.core.InstallState
 import com.mmi.modinstaller.core.InstalledEntry
 import com.mmi.modinstaller.core.ItemStatus
+import com.mmi.modinstaller.core.OutputFormat
 import com.mmi.modinstaller.core.ProgressCallback
 import com.mmi.modinstaller.core.RecentFile
 import com.mmi.modinstaller.core.Severity
@@ -46,8 +47,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private class QueuedInstall(val sessionDir: File, val sourceName: String, val item: ContentItem)
 
+    /**
+     * Un invio a Minecraft: un solo file, che può unire più contenuti. Un add-on è quasi sempre fatto da più pacchetti
+     * (comportamento + risorse) che da soli non funzionano, quindi vengono consegnati insieme.
+     */
+    private class InstallUnit(val parts: List<QueuedInstall>)
+
     private var job: Job? = null
-    private val queue = ArrayList<QueuedInstall>()
+    private val queue = ArrayList<InstallUnit>()
     private var queueTotal = 0
     private var batchActive = false
     private var confirmedCount = 0
@@ -208,9 +215,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         for (f in results) {
             val report = f.report ?: continue
             for (item in report.items) {
-                if (item.status == ItemStatus.READY || item.status == ItemStatus.WARNINGS) {
-                    selected.add(itemKey(f.index, item))
-                }
+                // Due contenuti con lo stesso UUID non possono convivere in Minecraft: si spunta solo il primo.
+                val ready = item.status == ItemStatus.READY || item.status == ItemStatus.WARNINGS
+                if (ready && item.sameUuidAs == null) selected.add(itemKey(f.index, item))
             }
         }
         _state.update {
@@ -288,24 +295,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(dialog = DialogState.MinecraftMissing) }
             return
         }
-        val queued = ArrayList<QueuedInstall>()
-        for (file in s.files) {
-            val report = file.report ?: continue
-            val dir = file.sessionDir ?: continue
-            for (item in report.items) {
-                val key = itemKey(file.index, item)
-                if (key !in s.selected || !item.installable) continue
-                if (item.status == ItemStatus.OVERRIDE && key !in s.forced) continue
-                queued.add(QueuedInstall(dir, file.name, item))
-            }
-        }
-        if (queued.isEmpty()) {
+        val planned = plannedItems(s)
+        if (planned.isEmpty()) {
             notice("Seleziona almeno un contenuto installabile.")
             return
         }
+        val queued = planned.map { QueuedInstall(it.sessionDir, it.file.name, it.item) }
+        // Tutti i pacchetti spuntati partono in un solo file; mappe e template (che non si possono unire) uno per volta.
+        val (packs, others) = queued.partition {
+            it.item.output == OutputFormat.MCPACK || it.item.output == OutputFormat.MCADDON
+        }
+        val units = ArrayList<InstallUnit>()
+        if (packs.isNotEmpty()) units.add(InstallUnit(packs))
+        for (q in others) units.add(InstallUnit(listOf(q)))
         queue.clear()
-        queue.addAll(queued)
-        queueTotal = queued.size
+        queue.addAll(units)
+        queueTotal = units.size
         batchActive = true
         confirmedCount = 0
         failedCount = 0
@@ -313,17 +318,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         sendNext()
     }
 
+    private fun bundleTitle(unit: InstallUnit): String {
+        val sources = unit.parts.map { it.sourceName }.distinct()
+        if (sources.size == 1) {
+            val base = sources[0].substringBeforeLast('.', sources[0]).trim()
+            if (base.isNotEmpty()) return base
+        }
+        return "Contenuti (${unit.parts.size})"
+    }
+
     private fun sendNext() {
         if (queue.isEmpty()) {
             finishBatch()
             return
         }
-        val next = queue.removeAt(0)
+        val unit = queue.removeAt(0)
         val position = queueTotal - queue.size
-        val title = if (queueTotal > 1) "Preparazione $position di $queueTotal" else "Preparazione del pacchetto"
+        val title = when {
+            queueTotal > 1 -> "Preparazione $position di $queueTotal"
+            unit.parts.size > 1 -> "Preparazione di ${unit.parts.size} contenuti"
+            else -> "Preparazione del pacchetto"
+        }
         runBusy(title) { cancel, progress ->
             val prepared = withContext(Dispatchers.IO) {
-                val p = repo.prepare(next.item, next.sourceName, next.sessionDir, cancel, progress)
+                val first = unit.parts.first()
+                val p = if (unit.parts.size == 1) {
+                    repo.prepare(first.item, first.sourceName, first.sessionDir, cancel, progress)
+                } else {
+                    repo.prepareBundle(
+                        unit.parts.map { it.item }, bundleTitle(unit),
+                        unit.parts.map { it.sourceName }.distinct().joinToString(", "),
+                        first.sessionDir, cancel, progress
+                    )
+                }
                 repo.store.putInstalled(p.entry)
                 repo.store.addHistory(
                     p.entry.title,
@@ -334,13 +361,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 p
             }
             refreshLists()
-            deliver(prepared.entry)
+            val pk = prepared.prepared
+            deliver(prepared.entry, DeliveryInfo(pk.packNames, pk.entryCount, pk.sourceFileCount, pk.itemCount))
         }
     }
 
     /** Apre Minecraft con il file. Da qui in poi lo stato è "inviato": la conferma spetta all'utente. */
-    private suspend fun deliver(entry: InstalledEntry) {
-        _state.update { it.copy(awaiting = entry, queueRemaining = queue.size, confirmVisible = false) }
+    private suspend fun deliver(entry: InstalledEntry, info: DeliveryInfo? = null) {
+        val delivery = info ?: DeliveryInfo(entry.packs.map { it.name }, 0, 0, 1)
+        _state.update { it.copy(awaiting = entry, delivery = delivery, queueRemaining = queue.size, confirmVisible = false) }
         leftForMinecraft = false
         when (val result = repo.bridge.send(repo.preparedFile(entry))) {
             is SendResult.Started -> {
@@ -380,8 +409,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 notice(answerText(entry, result))
                 return@launch
             }
-            if (result != null && queue.isNotEmpty()) sendNext() else finishBatch()
+            // Anche con «Non lo so» si prosegue: l'utente può fermare gli invii rimasti con «Non inviare gli altri».
+            if (queue.isNotEmpty()) sendNext() else finishBatch()
         }
+    }
+
+    /** L'utente non vuole più che partano gli invii rimasti in coda (quello in attesa di risposta resta). */
+    fun dropRemaining() {
+        if (queue.isEmpty()) return
+        queue.clear()
+        _state.update { it.copy(queueRemaining = 0) }
     }
 
     private fun recordAnswer(entry: InstalledEntry, result: InstallState?) {

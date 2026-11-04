@@ -19,7 +19,13 @@ class PreparedPackage(
     val passThrough: Boolean,
     /** File esclusi perché eseguibili o di codice nativo. */
     val excluded: List<String>,
-    val notes: List<String>
+    val notes: List<String>,
+    /** Nomi dei pacchetti (o del mondo) contenuti nel file consegnato a Minecraft. */
+    val packNames: List<String> = emptyList(),
+    /** File che appartengono ai contenuti scelti, trovati nell'archivio (prima di escludere eseguibili e doppioni). */
+    val sourceFileCount: Int = entryCount,
+    /** Quanti contenuti del rapporto sono stati uniti in questo file. */
+    val itemCount: Int = 1
 )
 
 /**
@@ -28,6 +34,9 @@ class PreparedPackage(
  * Non si limita a rinominare l'archivio: porta il contenuto alla radice, separa gli add-on in cartelle
  * `<nome>_BP` / `<nome>_RP`, scarta file inutili ed eseguibili, normalizza i nomi dei file chiave e infine
  * rilegge il risultato per verificarne struttura, checksum e manifest prima di consegnarlo.
+ *
+ * Nulla viene scartato in silenzio: ogni file letto è contato (incluso, eseguibile escluso, doppione, fuori dai
+ * contenuti scelti) e il numero di file scritti deve coincidere con quello trovato rileggendo il risultato.
  */
 class PackagePreparer(
     private val limits: SafetyLimits = SafetyLimits(),
@@ -35,6 +44,22 @@ class PackagePreparer(
 ) {
 
     private class Target(val root: String, val prefix: String, val role: PartRole)
+
+    /** Un archivio sorgente e i contenuti da prelevarne. */
+    private class ArchivePlan(val file: File, val format: ArchiveFormat, val targets: MutableList<Target>)
+
+    /** Contabilità di ogni file letto: la somma delle voci deve sempre tornare. */
+    private class Tally {
+        /** File che appartengono ai contenuti scelti. */
+        var inScope = 0
+        var written = 0
+        var excluded = 0
+        var duplicates = 0
+        var caseVariants = 0
+
+        /** File dell'archivio che non fanno parte dei contenuti scelti (LEGGIMI, altri pacchetti non scelti). */
+        var outside = 0
+    }
 
     fun prepare(
         item: ContentItem,
@@ -62,17 +87,94 @@ class PackagePreparer(
 
         val excluded = ArrayList<String>()
         val notes = ArrayList<String>()
+        val tally = Tally()
         try {
             if (passThrough) {
                 copyFile(item.archiveFile, tmp, cancel, progress)
                 notes.add("Il file era già nel formato corretto: copiato senza modifiche")
             } else {
-                repack(item, format, tmp, opener, cancel, progress, excluded, notes)
+                val plan = ArchivePlan(item.archiveFile, item.archiveFormat, planTargets(item, format, HashSet()).toMutableList())
+                repack(listOf(plan), tmp, opener, cancel, progress, item.sizeBytes, excluded, tally)
+                addRepackNotes(tally, notes)
+                if (item.parts.any { it.rootPath.isNotEmpty() }) {
+                    notes.add("Contenuto portato dalla cartella interna alla radice del pacchetto")
+                }
+                if (format == OutputFormat.MCADDON) {
+                    notes.add("Add-on suddiviso in ${item.parts.size} cartelle (una per pacchetto)")
+                }
             }
             val verified = PackageVerifier.verify(tmp, item, format, limits, cancel)
+            if (!passThrough) checkWritten(verified, tally)
             finalize(tmp, finalFile)
             return PreparedPackage(
-                finalFile, fileName, format, finalFile.length(), verified.entryCount, passThrough, excluded, notes
+                finalFile, fileName, format, finalFile.length(), verified.entryCount, passThrough, excluded, notes,
+                packNames = item.parts.map { it.displayName },
+                sourceFileCount = if (passThrough) verified.entryCount else tally.inScope,
+                itemCount = 1
+            )
+        } catch (e: Throwable) {
+            tmp.delete()
+            throw e
+        }
+    }
+
+    /**
+     * Unisce più contenuti (pacchetti) in un solo file `.mcaddon`, così Minecraft li importa tutti insieme:
+     * un add-on è spesso composto da behavior pack e resource pack che da soli non funzionano.
+     * Mappe e template non si possono unire: vanno consegnati ciascuno col proprio file.
+     */
+    fun prepareBundle(
+        items: List<ContentItem>,
+        title: String,
+        outDir: File,
+        opener: ArchiveOpener = ZipOnlyOpener(limits),
+        cancel: CancelCheck = {},
+        progress: ProgressCallback? = null
+    ): PreparedPackage {
+        if (items.isEmpty()) throw PreparationException("Nessun contenuto da preparare")
+        if (items.size == 1) return prepare(items[0], outDir, opener, cancel, progress)
+        for (item in items) {
+            if (!item.installable) throw PreparationException("«${item.title}» ha errori che ne impediscono l'installazione")
+            if (item.parts.isEmpty()) throw PreparationException("«${item.title}» non contiene pacchetti da preparare")
+            if (item.output != OutputFormat.MCPACK && item.output != OutputFormat.MCADDON) {
+                throw PreparationException("«${item.title}» è una mappa o un template: va importato da solo")
+            }
+        }
+        if (!outDir.isDirectory && !outDir.mkdirs()) throw PreparationException("Impossibile creare la cartella di lavoro")
+        val estimate = items.sumOf { it.sizeBytes }
+        checkSpace(outDir, estimate + SPACE_MARGIN)
+
+        val fileName = uniqueName(outDir, PathSafety.sanitizeFileName(title, "contenuti"), OutputFormat.MCADDON.extension)
+        val finalFile = File(outDir, fileName)
+        val tmp = File(outDir, ".$fileName.part")
+        tmp.delete()
+
+        val used = HashSet<String>()
+        val plans = LinkedHashMap<String, ArchivePlan>()
+        for (item in items) {
+            val plan = plans.getOrPut(item.archiveFile.absolutePath) {
+                ArchivePlan(item.archiveFile, item.archiveFormat, ArrayList())
+            }
+            plan.targets.addAll(planTargets(item, OutputFormat.MCADDON, used, stripPackSuffix = item.parts.size == 1))
+        }
+        val packCount = items.sumOf { it.parts.size }
+        val uuids = items.flatMap { it.uuids }.distinct()
+
+        val excluded = ArrayList<String>()
+        val notes = ArrayList<String>()
+        val tally = Tally()
+        try {
+            repack(plans.values.toList(), tmp, opener, cancel, progress, estimate, excluded, tally)
+            notes.add("Uniti ${items.size} contenuti ($packCount pacchetti) in un solo file .mcaddon")
+            addRepackNotes(tally, notes)
+            val verified = PackageVerifier.verifyAddon(tmp, packCount, uuids, limits, cancel)
+            checkWritten(verified, tally)
+            finalize(tmp, finalFile)
+            return PreparedPackage(
+                finalFile, fileName, OutputFormat.MCADDON, finalFile.length(), verified.entryCount, false, excluded, notes,
+                packNames = items.flatMap { item -> item.parts.map { it.displayName } },
+                sourceFileCount = tally.inScope,
+                itemCount = items.size
             )
         } catch (e: Throwable) {
             tmp.delete()
@@ -83,101 +185,127 @@ class PackagePreparer(
     // ------------------------------------------------------------------ ricostruzione
 
     private fun repack(
-        item: ContentItem,
-        format: OutputFormat,
+        plans: List<ArchivePlan>,
         tmp: File,
         opener: ArchiveOpener,
         cancel: CancelCheck,
         progress: ProgressCallback?,
+        estimateBytes: Long,
         excluded: MutableList<String>,
-        notes: MutableList<String>
+        tally: Tally
     ) {
-        val targets = planTargets(item, format)
         val seen = HashSet<String>()
+        val seenLower = HashSet<String>()
         val buf = ByteArray(64 * 1024)
         val now = System.currentTimeMillis()
         var total = 0L
-        var written = 0
         var lastProgress = 0L
-        var excludedCount = 0
-        var duplicates = 0
-        val estimate = maxOf(item.sizeBytes, 1L)
+        val estimate = maxOf(estimateBytes, 1L)
 
         ZipOutputStream(BufferedOutputStream(tmp.outputStream(), 128 * 1024)).use { zos ->
-            opener.open(item.archiveFile, item.archiveFormat).use { reader ->
-                reader.forEachEntry { entry, content ->
-                    cancel()
-                    val path = when (val n = PathSafety.normalize(entry.rawName, limits.maxPathLength)) {
-                        is PathSafety.Normalized.Ok -> n.path
-                        is PathSafety.Normalized.Unsafe -> throw ArchiveUnsafeException(listOf(entry.rawName))
-                    }
-                    if (path.isEmpty() || entry.isDirectory || content == null) return@forEachEntry
-                    if (PathSafety.isJunk(path)) return@forEachEntry
-                    val target = locate(path, targets) ?: return@forEachEntry
-                    if (PathSafety.isExecutable(path)) {
-                        excludedCount++
-                        if (excluded.size < MAX_EXCLUDED_LISTED) excluded.add(path)
-                        return@forEachEntry
-                    }
-                    val outPath = PathSafety.join(target.first.prefix, target.second)
-                    if (!seen.add(outPath.lowercase())) {
-                        duplicates++
-                        return@forEachEntry
-                    }
-                    if (written >= limits.maxEntries) {
-                        throw LimitExceededException(
-                            FindingCode.TOO_MANY_ENTRIES, "Troppi file nel pacchetto (oltre ${limits.maxEntries})"
-                        )
-                    }
-
-                    val ze = ZipEntry(outPath)
-                    ze.time = now
-                    zos.setLevel(levelFor(outPath))
-                    zos.putNextEntry(ze)
-                    val remaining = limits.maxTotalUncompressedBytes - total
-                    val bounded = BoundedInputStream(
-                        content, minOf(limits.maxEntryBytes, remaining), FindingCode.ENTRY_TOO_LARGE, "Il file '$path'"
-                    )
-                    while (true) {
-                        val n = bounded.read(buf)
-                        if (n < 0) break
-                        zos.write(buf, 0, n)
+            for (plan in plans) {
+                opener.open(plan.file, plan.format).use { reader ->
+                    reader.forEachEntry { entry, content ->
                         cancel()
-                    }
-                    zos.closeEntry()
-                    total += bounded.count
-                    written++
-                    if (progress != null && total - lastProgress >= 4L * 1024 * 1024) {
-                        lastProgress = total
-                        progress(total, maxOf(estimate, total), path)
+                        val path = when (val n = PathSafety.normalize(entry.rawName, limits.maxPathLength)) {
+                            is PathSafety.Normalized.Ok -> n.path
+                            is PathSafety.Normalized.Unsafe -> throw ArchiveUnsafeException(listOf(entry.rawName))
+                        }
+                        if (path.isEmpty() || entry.isDirectory || content == null) return@forEachEntry
+                        if (PathSafety.isJunk(path)) return@forEachEntry
+                        val target = locate(path, plan.targets)
+                        if (target == null) {
+                            tally.outside++
+                            return@forEachEntry
+                        }
+                        tally.inScope++
+                        if (PathSafety.isExecutable(path)) {
+                            tally.excluded++
+                            if (excluded.size < MAX_EXCLUDED_LISTED) excluded.add(path)
+                            return@forEachEntry
+                        }
+                        val outPath = PathSafety.join(target.first.prefix, target.second)
+                        // Lo stesso percorso identico non può comparire due volte in uno ZIP: si tiene il primo.
+                        if (!seen.add(outPath)) {
+                            tally.duplicates++
+                            return@forEachEntry
+                        }
+                        // Nomi che differiscono solo per le maiuscole si tengono entrambi: non si perde nulla e,
+                        // dove il disco non distingue le maiuscole, vince l'ultimo come in un'estrazione normale.
+                        if (!seenLower.add(outPath.lowercase())) tally.caseVariants++
+                        if (tally.written >= limits.maxEntries) {
+                            throw LimitExceededException(
+                                FindingCode.TOO_MANY_ENTRIES, "Troppi file nel pacchetto (oltre ${limits.maxEntries})"
+                            )
+                        }
+
+                        val ze = ZipEntry(outPath)
+                        ze.time = now
+                        zos.setLevel(levelFor(outPath))
+                        zos.putNextEntry(ze)
+                        val remaining = limits.maxTotalUncompressedBytes - total
+                        val bounded = BoundedInputStream(
+                            content, minOf(limits.maxEntryBytes, remaining), FindingCode.ENTRY_TOO_LARGE, "Il file '$path'"
+                        )
+                        while (true) {
+                            val n = bounded.read(buf)
+                            if (n < 0) break
+                            zos.write(buf, 0, n)
+                            cancel()
+                        }
+                        zos.closeEntry()
+                        total += bounded.count
+                        tally.written++
+                        if (progress != null && total - lastProgress >= 4L * 1024 * 1024) {
+                            lastProgress = total
+                            progress(total, maxOf(estimate, total), path)
+                        }
                     }
                 }
             }
-            if (written == 0) throw PreparationException("Nessun file da includere nel pacchetto")
+            if (tally.written == 0) throw PreparationException("Nessun file da includere nel pacchetto")
         }
         progress?.invoke(total, maxOf(estimate, total), "Pacchetto creato")
-        if (excludedCount > 0) {
-            notes.add("Esclusi $excludedCount file eseguibili o di codice nativo")
+    }
+
+    private fun addRepackNotes(tally: Tally, notes: MutableList<String>) {
+        notes.add("Inclusi ${tally.written} file su ${tally.inScope} dei contenuti scelti")
+        if (tally.excluded > 0) {
+            notes.add("Esclusi ${tally.excluded} file eseguibili o di codice nativo")
         }
-        if (duplicates > 0) {
-            notes.add("Ignorati $duplicates file duplicati (stesso percorso)")
+        if (tally.duplicates > 0) {
+            notes.add("Ignorati ${tally.duplicates} file con lo stesso identico percorso (tenuto il primo)")
         }
-        val moved = item.parts.filter { it.rootPath.isNotEmpty() }
-        if (moved.isNotEmpty()) {
-            notes.add("Contenuto portato dalla cartella interna alla radice del pacchetto")
+        if (tally.caseVariants > 0) {
+            notes.add("${tally.caseVariants} file hanno lo stesso nome di altri a meno delle maiuscole: inclusi tutti")
         }
-        if (format == OutputFormat.MCADDON) {
-            notes.add("Add-on suddiviso in ${item.parts.size} cartelle (una per pacchetto)")
+        if (tally.outside > 0) {
+            notes.add("${tally.outside} file dell'archivio non fanno parte dei contenuti scelti (es. LEGGIMI, altri pacchetti)")
         }
     }
 
-    private fun planTargets(item: ContentItem, format: OutputFormat): List<Target> {
+    /** Il numero di file scritti deve coincidere con quello che si trova rileggendo il risultato. */
+    private fun checkWritten(verified: PackageVerifier.Result, tally: Tally) {
+        if (verified.entryCount != tally.written) {
+            throw PreparationException(
+                "Verifica del pacchetto preparato fallita: contiene ${verified.entryCount} file invece di ${tally.written}"
+            )
+        }
+    }
+
+    private fun planTargets(
+        item: ContentItem,
+        format: OutputFormat,
+        used: MutableSet<String>,
+        stripPackSuffix: Boolean = false
+    ): List<Target> {
         if (format != OutputFormat.MCADDON) {
             val p = item.parts.first()
             return listOf(Target(p.rootPath, "", p.role))
         }
-        val used = HashSet<String>()
-        val base = PathSafety.sanitizeFileName(item.title, "addon", 40)
+        // Un pacchetto singolo chiamato «Nome BP» diventerebbe «Nome_BP_BP»: si toglie il suffisso già presente.
+        val stripped = if (stripPackSuffix) item.title.replace(PACK_SUFFIX, "").trim() else item.title
+        val base = PathSafety.sanitizeFileName(stripped.ifEmpty { item.title }, "addon", 40)
         return item.parts.map { p ->
             val suffix = when (p.packKind) {
                 PackKind.BEHAVIOR -> "BP"
@@ -285,6 +413,10 @@ class PackagePreparer(
         private const val SPACE_MARGIN = 16L * 1024 * 1024
         private const val MAX_EXCLUDED_LISTED = 200
 
+        private val PACK_SUFFIX = Regex(
+            "(?i)[\\s_\\-\\[(]*(bp|rp|behou?r\\s*pack|behavior\\s*pack|behaviour\\s*pack|resource\\s*pack|resources|data)[\\])]*\\s*$"
+        )
+
         private val ALREADY_COMPRESSED: Set<String> = setOf(
             "png", "jpg", "jpeg", "webp", "ogg", "mp3", "mp4", "fsb", "zip", "mcpack", "mcaddon", "mcworld",
             "mctemplate", "ldb", "gz", "7z", "rar"
@@ -297,10 +429,41 @@ internal object PackageVerifier {
 
     class Result(val entryCount: Int, val totalBytes: Long)
 
+    private class Listing(val names: List<String>, val manifests: Map<String, ByteArray>, val total: Long)
+
     private fun fail(message: String): Nothing =
         throw PreparationException("Verifica del pacchetto preparato fallita: $message")
 
     fun verify(file: File, item: ContentItem, format: OutputFormat, limits: SafetyLimits, cancel: CancelCheck): Result {
+        val listing = list(file, limits, cancel)
+        val names = listing.names
+        val manifests = listing.manifests
+        when (format) {
+            OutputFormat.MCPACK -> {
+                val m = manifests["manifest.json"] ?: fail("manca manifest.json alla radice")
+                checkManifest(m, item.uuids)
+            }
+            OutputFormat.MCADDON -> checkAddon(listing, item.parts.size, item.uuids)
+            OutputFormat.MCWORLD, OutputFormat.MCTEMPLATE -> {
+                if ("level.dat" !in names) fail("manca level.dat alla radice")
+                if (names.none { it.startsWith("db/") }) fail("manca la cartella db del mondo")
+                if (format == OutputFormat.MCTEMPLATE) {
+                    val m = manifests["manifest.json"] ?: fail("manca manifest.json del template")
+                    checkManifest(m, item.uuids)
+                }
+            }
+        }
+        return Result(names.size, listing.total)
+    }
+
+    /** Verifica un `.mcaddon` che unisce più contenuti: devono esserci tutti i pacchetti attesi. */
+    fun verifyAddon(file: File, packCount: Int, uuids: List<String>, limits: SafetyLimits, cancel: CancelCheck): Result {
+        val listing = list(file, limits, cancel)
+        checkAddon(listing, packCount, uuids)
+        return Result(listing.names.size, listing.total)
+    }
+
+    private fun list(file: File, limits: SafetyLimits, cancel: CancelCheck): Listing {
         val names = ArrayList<String>()
         val manifests = LinkedHashMap<String, ByteArray>()
         var total = 0L
@@ -328,41 +491,32 @@ internal object PackageVerifier {
             fail(e.message ?: "archivio non leggibile")
         }
         if (names.isEmpty()) fail("il pacchetto è vuoto")
-
-        when (format) {
-            OutputFormat.MCPACK -> {
-                val m = manifests["manifest.json"] ?: fail("manca manifest.json alla radice")
-                checkManifest(m, item.uuids)
-            }
-            OutputFormat.MCADDON -> {
-                if (names.any { !it.contains('/') }) fail("ci sono file fuori dalle cartelle dei pacchetti")
-                val packManifests = manifests.filterKeys {
-                    val parent = PathSafety.parentOf(it)
-                    parent.isNotEmpty() && !parent.contains('/')
-                }
-                if (packManifests.size != item.parts.size) {
-                    fail("trovati ${packManifests.size} pacchetti invece di ${item.parts.size}")
-                }
-                for (bytes in packManifests.values) checkManifest(bytes, item.uuids)
-            }
-            OutputFormat.MCWORLD, OutputFormat.MCTEMPLATE -> {
-                if ("level.dat" !in names) fail("manca level.dat alla radice")
-                if (names.none { it.startsWith("db/") }) fail("manca la cartella db del mondo")
-                if (format == OutputFormat.MCTEMPLATE) {
-                    val m = manifests["manifest.json"] ?: fail("manca manifest.json del template")
-                    checkManifest(m, item.uuids)
-                }
-            }
-        }
-        return Result(names.size, total)
+        return Listing(names, manifests, total)
     }
 
-    private fun checkManifest(bytes: ByteArray, expectedUuids: List<String>) {
+    private fun checkAddon(listing: Listing, packCount: Int, expectedUuids: List<String>) {
+        if (listing.names.any { !it.contains('/') }) fail("ci sono file fuori dalle cartelle dei pacchetti")
+        val packManifests = listing.manifests.filterKeys {
+            val parent = PathSafety.parentOf(it)
+            parent.isNotEmpty() && !parent.contains('/')
+        }
+        if (packManifests.size != packCount) {
+            fail("trovati ${packManifests.size} pacchetti invece di $packCount")
+        }
+        val found = HashSet<String>()
+        for (bytes in packManifests.values) found.add(checkManifest(bytes, expectedUuids))
+        val missing = expectedUuids.filter { it !in found }
+        if (missing.isNotEmpty()) fail("mancano i pacchetti con UUID ${missing.joinToString(", ")}")
+    }
+
+    /** Controlla un manifest e restituisce il suo UUID (minuscolo). */
+    private fun checkManifest(bytes: ByteArray, expectedUuids: List<String>): String {
         val result = ManifestParser.parse(String(bytes, Charsets.UTF_8), "manifest.json")
         val manifest = result.manifest
         if (!result.looksLikeBedrock || manifest == null) fail("manifest.json non leggibile")
         val uuid = manifest.uuid?.lowercase() ?: fail("manifest.json senza UUID")
         if (expectedUuids.isNotEmpty() && uuid !in expectedUuids) fail("l'UUID $uuid non corrisponde a quello analizzato")
+        return uuid
     }
 
     private fun readCapped(input: java.io.InputStream, cap: Int): ByteArray? {

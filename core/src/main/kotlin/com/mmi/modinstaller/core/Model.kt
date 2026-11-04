@@ -59,7 +59,7 @@ class ContentItem(
     val parts: List<PartInfo>,
     val sizeBytes: Long,
     val fileCount: Int,
-    val dependencies: List<DependencyStatus>,
+    dependencies: List<DependencyStatus>,
     initialFindings: List<Finding>,
     val output: OutputFormat?,
     val iconBytes: ByteArray?,
@@ -84,6 +84,28 @@ class ContentItem(
     internal fun addFinding(f: Finding) {
         mutableFindings.add(f)
     }
+
+    internal fun removeFindings(predicate: (Finding) -> Boolean) {
+        mutableFindings.removeAll(predicate)
+    }
+
+    /** Dipendenze dichiarate dai pacchetti e dove sono state trovate. */
+    var dependencies: List<DependencyStatus> = dependencies
+        internal set
+
+    /**
+     * Id dei contenuti dello stesso file da cui questo dipende (ad esempio il resource pack di un behavior pack
+     * distribuiti come due .mcpack separati): vanno importati insieme, altrimenti il contenuto resta incompleto.
+     */
+    var requires: List<String> = emptyList()
+        internal set
+
+    /**
+     * Titolo del contenuto che ha lo stesso UUID e compare prima nel rapporto: Minecraft ne importerebbe uno solo,
+     * quindi questo non viene selezionato in automatico.
+     */
+    var sameUuidAs: String? = null
+        internal set
 
     val status: ItemStatus
         get() {

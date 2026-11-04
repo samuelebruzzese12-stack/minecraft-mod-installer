@@ -10,6 +10,7 @@ import com.mmi.modinstaller.core.BackupManager
 import com.mmi.modinstaller.core.CancelCheck
 import com.mmi.modinstaller.core.ContentAnalyzer
 import com.mmi.modinstaller.core.ContentItem
+import com.mmi.modinstaller.core.ContentKind
 import com.mmi.modinstaller.core.InstallState
 import com.mmi.modinstaller.core.InstalledEntry
 import com.mmi.modinstaller.core.LibraryStore
@@ -137,6 +138,39 @@ class InstallerRepository(context: Context) {
             version = item.version,
             author = item.author,
             packs = packRefs(item),
+            fileName = prepared.fileName,
+            sizeBytes = prepared.sizeBytes,
+            source = sourceName,
+            sentAt = now,
+            state = InstallState.SENT,
+            stateAt = now
+        )
+        return PreparedEntry(entry, prepared)
+    }
+
+    /**
+     * Unisce più contenuti in un solo `.mcaddon` verificato, così Minecraft li importa tutti insieme.
+     * [sessionDir] serve solo come cartella temporanea per gli archivi RAR.
+     */
+    fun prepareBundle(
+        items: List<ContentItem>,
+        title: String,
+        sourceName: String,
+        sessionDir: File,
+        cancel: CancelCheck,
+        progress: ProgressCallback?
+    ): PreparedEntry {
+        val opener = AndroidArchiveOpener(limits, File(sessionDir, "rar"))
+        val prepared = preparer.prepareBundle(items, title, paths.prepared, opener, cancel, progress)
+        val now = System.currentTimeMillis()
+        val authors = items.mapNotNull { it.author }.flatMap { a -> a.split(", ") }.filter { it.isNotBlank() }.distinct()
+        val entry = InstalledEntry(
+            id = UUID.randomUUID().toString(),
+            title = title,
+            kind = (if (items.size > 1) ContentKind.ADDON else items[0].kind).name,
+            version = items.singleOrNull()?.version,
+            author = authors.joinToString(", ").takeIf { it.isNotBlank() },
+            packs = items.flatMap { packRefs(it) },
             fileName = prepared.fileName,
             sizeBytes = prepared.sizeBytes,
             source = sourceName,

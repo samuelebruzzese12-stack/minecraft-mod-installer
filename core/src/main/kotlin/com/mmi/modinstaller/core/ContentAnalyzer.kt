@@ -80,6 +80,7 @@ class ContentAnalyzer(private val ctx: AnalyzeContext) {
                 }
             )
         }
+        resolveAcrossItems(items)
         markDuplicates(items)
         return AnalysisReport(source, items, global)
     }
@@ -276,9 +277,15 @@ class ContentAnalyzer(private val ctx: AnalyzeContext) {
             if (PathSafety.fileName(p).equals("manifest.json", ignoreCase = true)) manifestByRoot[PathSafety.parentOf(p)] = p
         }
         val packRoots = ArrayList<String>()
+        // Altri manifest.json dentro un pacchetto già riconosciuto: restano nei suoi file ma non diventano pacchetti.
+        val nestedManifests = LinkedHashMap<String, MutableList<String>>()
         for (r in manifestByRoot.keys.sortedBy { PathSafety.depthOf(it) }) {
             if (worldRoots.any { PathSafety.isUnderOrEqual(r, it) }) continue
-            if (packRoots.any { PathSafety.isUnderOrEqual(r, it) }) continue
+            val outer = packRoots.firstOrNull { PathSafety.isUnderOrEqual(r, it) }
+            if (outer != null) {
+                if (r != outer) nestedManifests.getOrPut(outer) { ArrayList() }.add(manifestByRoot.getValue(r))
+                continue
+            }
             packRoots.add(r)
         }
 
@@ -294,7 +301,9 @@ class ContentAnalyzer(private val ctx: AnalyzeContext) {
             if (pp != null) parsed.add(pp)
         }
         for (group in groupPacks(env, parsed)) {
-            items.add(buildPackItem(env, group, parsed))
+            val item = buildPackItem(env, group, parsed)
+            items.add(item)
+            warnNestedManifests(item, group, nestedManifests)
         }
 
         val produced = items.size - startCount
@@ -907,6 +916,60 @@ class ContentAnalyzer(private val ctx: AnalyzeContext) {
         )
     }
 
+    // ------------------------------------------------------------------ tra contenuti dello stesso file
+
+    /** Segnala i manifest.json trovati dentro un pacchetto: Minecraft non li importa come pacchetti a sé. */
+    private fun warnNestedManifests(
+        item: ContentItem,
+        group: List<ParsedPack>,
+        nestedManifests: Map<String, List<String>>
+    ) {
+        val found = group.flatMap { nestedManifests[it.root] ?: emptyList() }
+        if (found.isEmpty()) return
+        item.addFinding(
+            Finding(
+                Severity.WARNING, FindingCode.NESTED_ARCHIVE,
+                "Dentro il pacchetto ci sono altri ${found.size} manifest.json: restano tra i suoi file ma NON vengono importati come pacchetti separati",
+                "Se sono add-on distinti, estraili dalla cartella e riprova.\n" + found.take(5).joinToString("\n")
+            )
+        )
+    }
+
+    /**
+     * Le dipendenze di un pacchetto possono stare in un altro contenuto dello stesso file (per esempio due .mcpack
+     * annidati, uno di behavior e uno di resource pack): non sono «mancanti» e vanno importate insieme.
+     */
+    private fun resolveAcrossItems(items: List<ContentItem>) {
+        val providers = HashMap<String, ContentItem>()
+        for (item in items) for (u in item.uuids) providers.putIfAbsent(u, item)
+        for (item in items) {
+            if (item.dependencies.none { it.state == DependencyState.MISSING && it.uuid != null }) continue
+            val resolved = HashSet<String>()
+            val needs = LinkedHashMap<String, ContentItem>()
+            val updated = item.dependencies.map { d ->
+                val u = d.uuid?.lowercase()
+                val provider = if (d.state == DependencyState.MISSING && u != null) providers[u] else null
+                if (provider != null && provider !== item) {
+                    resolved.add(u!!)
+                    needs[provider.id] = provider
+                    DependencyStatus(d.uuid, null, d.versionText, DependencyState.IN_ARCHIVE, provider.title)
+                } else {
+                    d
+                }
+            }
+            if (resolved.isEmpty()) continue
+            item.dependencies = updated
+            item.removeFindings { f -> f.code == FindingCode.DEPENDENCY_MISSING && resolved.any { u -> f.message.contains(u) } }
+            item.requires = needs.keys.toList()
+            item.addFinding(
+                Finding(
+                    Severity.INFO, FindingCode.GENERIC,
+                    "Ha bisogno di ${needs.values.joinToString(", ") { "«${it.title}»" }}, che si trova nello stesso file: importali insieme"
+                )
+            )
+        }
+    }
+
     // ------------------------------------------------------------------ duplicati tra contenuti
 
     private fun markDuplicates(items: List<ContentItem>) {
@@ -921,6 +984,7 @@ class ContentAnalyzer(private val ctx: AnalyzeContext) {
                             "Ha lo stesso UUID di «${prev.title}»: Minecraft ne importerà uno solo", u
                         )
                     )
+                    if (item.sameUuidAs == null) item.sameUuidAs = prev.title
                 } else if (prev == null) {
                     seen[u] = item
                 }
