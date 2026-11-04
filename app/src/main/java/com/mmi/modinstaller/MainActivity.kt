@@ -1,0 +1,83 @@
+package com.mmi.modinstaller
+
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
+import androidx.core.content.IntentCompat
+import com.mmi.modinstaller.ui.MmiApp
+import com.mmi.modinstaller.ui.MmiTheme
+
+class MainActivity : ComponentActivity() {
+
+    private val vm: MainViewModel by viewModels()
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        setContent {
+            MmiTheme {
+                MmiApp(vm)
+            }
+        }
+        // Dopo una ricreazione (es. processo chiuso da Android) l'intent originale non va rielaborato.
+        if (savedInstanceState == null) handleIncoming(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncoming(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        vm.onAppStarted()
+    }
+
+    override fun onStop() {
+        vm.onAppStopped()
+        super.onStop()
+    }
+
+    /** File aperti o condivisi con l'app da un gestore di file, dal browser o da un'altra app. */
+    private fun handleIncoming(intent: Intent?) {
+        if (intent == null) return
+        val action = intent.action
+        if (action != Intent.ACTION_VIEW && action != Intent.ACTION_SEND && action != Intent.ACTION_SEND_MULTIPLE) return
+
+        val uris = ArrayList<Uri>()
+        when (action) {
+            Intent.ACTION_VIEW -> intent.data?.let { uris.add(it) }
+            Intent.ACTION_SEND -> {
+                val stream = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                if (stream != null) uris.add(stream)
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                val streams = IntentCompat.getParcelableArrayListExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                if (streams != null) uris.addAll(streams)
+            }
+        }
+        if (uris.isEmpty()) {
+            val clip = intent.clipData
+            if (clip != null) {
+                for (i in 0 until clip.itemCount) {
+                    val uri = clip.getItemAt(i).uri
+                    if (uri != null) uris.add(uri)
+                }
+            }
+        }
+
+        // L'intent è stato consumato: se l'activity viene ricreata non deve essere riaperto lo stesso file.
+        intent.action = null
+
+        if (uris.isEmpty()) {
+            vm.showMessage("Quello che hai condiviso non è un file: scegli un file Minecraft con «+ SELEZIONA FILE».")
+            return
+        }
+        vm.openFiles(uris, PickPurpose.ANY)
+    }
+}

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- L'URI consegnato a Minecraft finisce con il nome del file (es. .../prepared/Mappa.mcworld),
+     così i filtri di Minecraft basati sull'estensione lo riconoscono. -->
+<paths>
+    <files-path
+        name="prepared"
+        path="prepared/" />
+</paths>

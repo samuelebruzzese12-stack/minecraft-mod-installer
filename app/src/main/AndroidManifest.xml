@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!--
+        Nessun permesso richiesto: l'app non ha accesso a Internet e non legge la memoria del telefono in modo
+        generale. I file si scelgono con il selettore di sistema (Storage Access Framework) e vengono consegnati
+        a Minecraft con un Intent e un URI di contenuto (FileProvider).
+    -->
+
+    <!-- Necessario da Android 11 per vedere se Minecraft è installato. -->
+    <queries>
+        <package android:name="com.mojang.minecraftpe" />
+        <package android:name="com.mojang.minecraftpe.preview" />
+        <package android:name="com.mojang.minecrafttrialpe" />
+    </queries>
+
+    <application
+        android:allowBackup="false"
+        android:enableOnBackInvokedCallback="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.MinecraftModInstaller">
+
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode|density|fontScale|layoutDirection"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- "Apri con" per i file di Minecraft (riconosciuti dall'estensione). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:host="*" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.mcpack" />
+                <data android:pathPattern=".*\\..*\\.mcpack" />
+                <data android:pathPattern=".*\\..*\\..*\\.mcpack" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.mcpack" />
+                <data android:pathPattern=".*\\.mcaddon" />
+                <data android:pathPattern=".*\\..*\\.mcaddon" />
+                <data android:pathPattern=".*\\..*\\..*\\.mcaddon" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.mcaddon" />
+                <data android:pathPattern=".*\\.mcworld" />
+                <data android:pathPattern=".*\\..*\\.mcworld" />
+                <data android:pathPattern=".*\\..*\\..*\\.mcworld" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.mcworld" />
+                <data android:pathPattern=".*\\.mctemplate" />
+                <data android:pathPattern=".*\\..*\\.mctemplate" />
+                <data android:pathPattern=".*\\..*\\..*\\.mctemplate" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.mctemplate" />
+                <data android:pathPattern=".*\\.7z" />
+                <data android:pathPattern=".*\\..*\\.7z" />
+                <data android:pathPattern=".*\\..*\\..*\\.7z" />
+                <data android:pathPattern=".*\\.rar" />
+                <data android:pathPattern=".*\\..*\\.rar" />
+                <data android:pathPattern=".*\\..*\\..*\\.rar" />
+            </intent-filter>
+
+            <!-- "Apri con" per gli archivi scaricati con tipo MIME noto (zip, rar, 7z). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-zip-compressed" />
+                <data android:mimeType="application/vnd.rar" />
+                <data android:mimeType="application/x-rar-compressed" />
+                <data android:mimeType="application/x-7z-compressed" />
+            </intent-filter>
+
+            <!-- "Condividi" da browser e gestori di file. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+
+        <!-- Espone a Minecraft SOLO la cartella dei pacchetti preparati dall'app. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>
