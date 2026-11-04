@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.mmi.modinstaller.DownloadsState
 import com.mmi.modinstaller.DownloadsViewModel
 import com.mmi.modinstaller.MainViewModel
+import com.mmi.modinstaller.ModsViewModel
 import com.mmi.modinstaller.PickPurpose
 import com.mmi.modinstaller.Section
 import com.mmi.modinstaller.core.formatBytes
@@ -33,7 +34,7 @@ import com.mmi.modinstaller.download.DownloadState
 
 /** DOWNLOAD MANAGER: scarica un file da un sito consentito, con ripresa e verifica dell'impronta. */
 @Composable
-fun DownloadsScreen(dl: DownloadsState, model: DownloadsViewModel, vm: MainViewModel, onMenu: () -> Unit) {
+fun DownloadsScreen(dl: DownloadsState, model: DownloadsViewModel, vm: MainViewModel, mods: ModsViewModel, onMenu: () -> Unit) {
     var toDelete by remember { mutableStateOf<DownloadRecord?>(null) }
     var toSave by remember { mutableStateOf<DownloadRecord?>(null) }
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
@@ -119,6 +120,13 @@ fun DownloadsScreen(dl: DownloadsState, model: DownloadsViewModel, vm: MainViewM
                     val uri = model.contentUri(item)
                     if (uri != null) vm.openFiles(listOf(uri), PickPurpose.ANY)
                 },
+                onOpenMods = {
+                    val uri = model.contentUri(item)
+                    if (uri != null) {
+                        vm.openSection(Section.MODS)
+                        mods.addFiles(listOf(uri), "download")
+                    }
+                },
                 onSave = {
                     toSave = item
                     saver.launch(item.fileName)
@@ -182,6 +190,7 @@ private fun DownloadCard(
     record: DownloadRecord,
     model: DownloadsViewModel,
     onOpenInstaller: () -> Unit,
+    onOpenMods: () -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -264,11 +273,28 @@ private fun DownloadCard(
                 RowButton("ELIMINA", onClick = onDelete)
             }
             DownloadState.COMPLETED -> {
-                if (DownloadsViewModel.isBedrockCandidate(record.fileName)) {
+                val bedrock = DownloadsViewModel.isBedrockCandidate(record.fileName)
+                val java = DownloadsViewModel.isJavaCandidate(record.fileName)
+                if (bedrock && java) {
+                    // Un .zip può essere un pacchetto Bedrock oppure un resource pack, uno shader o una raccolta di mod Java.
+                    Text(
+                        text = "Un file ZIP può essere per Bedrock o per Java: scegli dove aprirlo.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    FullButton("APRI NELL'INSTALLER BEDROCK", onOpenInstaller)
+                    FullButton("AGGIUNGI AL MOD MANAGER (JAVA)", onOpenMods)
+                } else if (bedrock) {
                     GreenButton(text = "APRI NELL'INSTALLER BEDROCK", onClick = onOpenInstaller, height = 52.dp)
+                } else if (java) {
+                    GreenButton(text = "AGGIUNGI AL MOD MANAGER", onClick = onOpenMods, height = 52.dp)
                 } else {
                     Text(
-                        text = "File per Java Edition: lo useranno MOD MANAGER e MODPACK MANAGER (in arrivo). Intanto puoi salvarne una copia.",
+                        text = if (DownloadsViewModel.isModpack(record.fileName)) {
+                            "Modpack: lo leggerà il MODPACK MANAGER (in arrivo). Intanto puoi salvarne una copia."
+                        } else {
+                            "Tipo di file non riconosciuto dall'app. Puoi salvarne una copia."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

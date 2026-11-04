@@ -42,9 +42,9 @@ class SmallThingsTest {
             "1.7.10" to 8, "1.12.2" to 8, "1.16.5" to 8, "1.17" to 16, "1.17.1" to 16, "1.18" to 17, "1.18.2" to 17, "1.19.4" to 17,
             "1.20" to 17, "1.20.1" to 17, "1.20.4" to 17, "1.20.5" to 21, "1.20.6" to 21, "1.21" to 21, "1.21.1" to 21
         )
-        for ((mc, java) in expected) assertEquals(mc, java, JavaRequirements.forMinecraft(mc))
-        for (unknown in listOf("1.22", "1.30.1", "24w14a", "", "boh", "2.0")) assertNull(unknown, JavaRequirements.forMinecraft(unknown))
-        assertNull(JavaRequirements.forMinecraft(null))
+        for ((mc, java) in expected) assertEquals(mc, java, ProfileJava.forMinecraft(mc))
+        for (unknown in listOf("1.22", "1.30.1", "24w14a", "", "boh", "2.0")) assertNull(unknown, ProfileJava.forMinecraft(unknown))
+        assertNull(ProfileJava.forMinecraft(null))
     }
 
     @Test fun profileJavaCanBeOverridden() {

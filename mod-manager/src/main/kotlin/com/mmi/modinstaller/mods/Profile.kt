@@ -1,9 +1,10 @@
 package com.mmi.modinstaller.mods
 
+import com.mmi.modinstaller.core.McVersion
+import com.mmi.modinstaller.core.JavaRequirements as CoreJavaRequirements
 import com.mmi.modinstaller.jar.ContentKind
 import com.mmi.modinstaller.jar.ModLoader
 import com.mmi.modinstaller.jar.ModMetadata
-import com.mmi.modinstaller.jar.ModVersion
 
 /** Cartelle di un profilo, nella stessa disposizione usata dai programmi di avvio di Minecraft Java. */
 enum class ItemCategory(val folder: String, val label: String, val extension: String) {
@@ -42,26 +43,21 @@ data class Profile(
     val javaMajor: Int? = null,
     val createdAt: Long = 0L
 ) {
-    val effectiveJava: Int? get() = javaMajor ?: JavaRequirements.forMinecraft(minecraft)
+    val effectiveJava: Int? get() = javaMajor ?: ProfileJava.forMinecraft(minecraft)
 
     val title: String get() = "$name · ${loader.label} · Minecraft $minecraft"
 }
 
-object JavaRequirements {
-    /** Versione di Java che Minecraft richiede; null se la versione è sconosciuta o troppo nuova per saperlo. */
+/** Java richiesto da una versione di Minecraft Java Edition: usa la stessa tabella della schermata JAVA EDITION. */
+object ProfileJava {
+    /** La prima versione di Minecraft per cui questa app non sa dire quale Java serve (invece di indovinare). */
+    private val UNKNOWN_FROM = McVersion(listOf(1, 22))
+
+    /** Versione di Java per [minecraft]; null se la versione non è una 1.x conosciuta, così non si indovina. */
     fun forMinecraft(minecraft: String?): Int? {
-        val v = ModVersion.parse(minecraft)?.takeIf { it.comparable } ?: return null
-        if (v.component(0) != 1L) return null
-        val minor = v.component(1)
-        val patch = v.component(2)
-        return when {
-            minor <= 16L -> 8
-            minor == 17L -> 16
-            minor in 18L..19L -> 17
-            minor == 20L -> if (patch >= 5L) 21 else 17
-            minor == 21L -> 21
-            else -> null
-        }
+        val v = McVersion.parse(minecraft) ?: return null
+        if (v.parts.first() != 1 || v >= UNKNOWN_FROM) return null
+        return CoreJavaRequirements.javaFor(v)
     }
 }
 

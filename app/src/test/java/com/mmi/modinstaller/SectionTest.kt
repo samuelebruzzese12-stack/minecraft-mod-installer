@@ -39,9 +39,15 @@ class SectionTest {
     }
 
     @Test
+    fun modManagerIsPartialBecauseItOnlyManagesFiles() {
+        // Gestisce profili e file, ma non ha Modrinth/CurseForge e non avvia il gioco: non può dirsi «Pronto».
+        assertEquals(Availability.PARTIAL, Section.MODS.availability)
+    }
+
+    @Test
     fun theEnginesNotBuiltYetAreMarkedComingSoon() {
         val soon = Section.values().filter { it.availability == Availability.SOON }.map { it.name }.toSet()
-        assertEquals(setOf("MODS", "MODPACKS", "WORLDS", "CONVERTER", "JAVA_TO_BEDROCK"), soon)
+        assertEquals(setOf("MODPACKS", "WORLDS", "CONVERTER", "JAVA_TO_BEDROCK"), soon)
     }
 
     @Test

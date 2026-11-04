@@ -37,7 +37,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- "Apri con" per i file di Minecraft (riconosciuti dall'estensione). -->
+            <!-- "Apri con" per i file di Minecraft (riconosciuti dall'estensione): Bedrock (.mcpack…) e Java (.jar, .mrpack). -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -67,6 +67,14 @@
                 <data android:pathPattern=".*\\.rar" />
                 <data android:pathPattern=".*\\..*\\.rar" />
                 <data android:pathPattern=".*\\..*\\..*\\.rar" />
+                <!-- File Java (mod e modpack): li prende il MOD MANAGER. -->
+                <data android:pathPattern=".*\\.jar" />
+                <data android:pathPattern=".*\\..*\\.jar" />
+                <data android:pathPattern=".*\\..*\\..*\\.jar" />
+                <data android:pathPattern=".*\\..*\\..*\\..*\\.jar" />
+                <data android:pathPattern=".*\\.mrpack" />
+                <data android:pathPattern=".*\\..*\\.mrpack" />
+                <data android:pathPattern=".*\\..*\\..*\\.mrpack" />
             </intent-filter>
 
             <!-- "Apri con" per gli archivi scaricati con tipo MIME noto (zip, rar, 7z). -->

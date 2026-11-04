@@ -85,6 +85,8 @@ kotlin {
 dependencies {
     implementation(project(":core"))
     implementation(project(":download-engine"))
+    implementation(project(":jar-analyzer"))
+    implementation(project(":mod-manager"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

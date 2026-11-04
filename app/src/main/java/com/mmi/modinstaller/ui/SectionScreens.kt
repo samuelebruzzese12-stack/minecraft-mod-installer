@@ -233,14 +233,6 @@ private fun SectionCard(section: Section, onClick: () -> Unit) {
 private class SectionPlan(val what: List<String>, val missing: String)
 
 private fun planFor(section: Section): SectionPlan = when (section) {
-    Section.MODS -> SectionPlan(
-        listOf(
-            "Leggere le mod Java (.jar, .zip, .mrpack) senza mai eseguirne il codice",
-            "Riconoscere loader (Fabric, Quilt, Forge, NeoForge), versioni di Minecraft e dipendenze",
-            "Calcolare l'impronta SHA-256 e tenere le mod in profili indipendenti, con backup e annullamento"
-        ),
-        "Non è ancora stato costruito. Le mod Java servono a Minecraft Java Edition e non funzionano in Bedrock."
-    )
     Section.MODPACKS -> SectionPlan(
         listOf(
             "Leggere i modpack Modrinth (.mrpack) e CurseForge (manifest.json)",

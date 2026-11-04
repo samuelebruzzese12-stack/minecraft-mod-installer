@@ -8,6 +8,8 @@ import com.mmi.modinstaller.core.SettingsRepository
 import com.mmi.modinstaller.download.DownloadEngine
 import com.mmi.modinstaller.download.DownloadOptions
 import com.mmi.modinstaller.download.UrlPolicy
+import com.mmi.modinstaller.mods.ModManager
+import com.mmi.modinstaller.mods.ProfileRepository
 
 /**
  * Oggetti condivisi da tutte le sezioni dell'app: cartelle, archivio centrale, impostazioni e registro errori.
@@ -40,6 +42,9 @@ class AppContainer private constructor(context: Context) {
             options = DownloadOptions(userAgent = "MinecraftModInstaller/" + BuildConfig.VERSION_NAME)
         )
     }
+
+    /** Profili Java e file al loro interno (MOD MANAGER). Usa la sezione `java_profiles` dell'archivio centrale. */
+    val modManager: ModManager by lazy { ModManager(ProfileRepository(store), paths.javaProfiles) }
 
     init {
         // Un arresto avvenuto nell'esecuzione precedente entra nel registro errori; da ora in poi si registrano i nuovi.

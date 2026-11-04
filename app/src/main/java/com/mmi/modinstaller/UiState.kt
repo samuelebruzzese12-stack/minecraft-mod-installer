@@ -26,7 +26,7 @@ enum class Section(val title: String, val availability: Availability, val summar
     HOME("HOME", Availability.READY, "Panoramica dell'app"),
     INSTALLER("INSTALLER BEDROCK", Availability.READY, "Controlla e installa mod, mappe, texture e add-on in Minecraft Bedrock"),
     JAVA("JAVA EDITION", Availability.PARTIAL, "Requisiti del telefono, memoria consigliata e versioni di Java"),
-    MODS("MOD MANAGER", Availability.SOON, "Mod Java in profili indipendenti"),
+    MODS("MOD MANAGER", Availability.PARTIAL, "Mod, resource pack e shader Java in profili indipendenti, con controlli e annullamento"),
     MODPACKS("MODPACK MANAGER", Availability.SOON, "Modpack Modrinth e CurseForge"),
     WORLDS("WORLD MANAGER", Availability.SOON, "Importazione di mondi Java e Bedrock, anche enormi"),
     CONVERTER("WORLD CONVERTER", Availability.SOON, "Conversione di mondi tra Java e Bedrock"),

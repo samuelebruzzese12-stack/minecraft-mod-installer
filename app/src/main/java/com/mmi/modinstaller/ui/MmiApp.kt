@@ -53,6 +53,7 @@ import com.mmi.modinstaller.BridgeViewModel
 import com.mmi.modinstaller.DownloadsViewModel
 import com.mmi.modinstaller.BusyState
 import com.mmi.modinstaller.MainViewModel
+import com.mmi.modinstaller.ModsViewModel
 import com.mmi.modinstaller.PickPurpose
 import com.mmi.modinstaller.Screen
 import com.mmi.modinstaller.Section
@@ -60,10 +61,11 @@ import kotlinx.coroutines.launch
 
 /** Radice dell'interfaccia: menu delle sezioni, schermata aperta, messaggi, finestre e avanzamento. */
 @Composable
-fun MmiApp(vm: MainViewModel, model: BridgeViewModel, downloadsModel: DownloadsViewModel) {
+fun MmiApp(vm: MainViewModel, model: BridgeViewModel, downloadsModel: DownloadsViewModel, modsModel: ModsViewModel) {
     val state by vm.state.collectAsState()
     val bridge by model.state.collectAsState()
     val downloads by downloadsModel.state.collectAsState()
+    val mods by modsModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     var pickPurpose by remember { mutableStateOf(PickPurpose.ANY) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -92,12 +94,14 @@ fun MmiApp(vm: MainViewModel, model: BridgeViewModel, downloadsModel: DownloadsV
     // I dati del telefono, lo spazio e gli errori si rileggono ogni volta che si apre una sezione che li mostra.
     LaunchedEffect(state.section) {
         if (state.section != Section.INSTALLER) model.refresh()
+        if (state.section == Section.MODS) modsModel.onSectionOpened()
     }
 
     val openMenu: () -> Unit = { scope.launch { drawerState.open() } }
 
     BackHandler(enabled = state.section != Section.HOME || state.busy != null || state.dialog != null) {
-        vm.back()
+        // Durante un'operazione sui file Java «indietro» non lascia la schermata: l'operazione si interrompe con Annulla.
+        if (mods.busy == null) vm.back()
     }
     // Dichiarato dopo l'altro: con il menu aperto, «indietro» chiude prima il menu.
     BackHandler(enabled = drawerState.isOpen) {
@@ -162,13 +166,16 @@ fun MmiApp(vm: MainViewModel, model: BridgeViewModel, downloadsModel: DownloadsV
                             }
                         )
                         Section.JAVA -> JavaEditionScreen(bridge, vm, openMenu)
-                        Section.DOWNLOADS -> DownloadsScreen(downloads, downloadsModel, vm, openMenu)
+                        Section.MODS -> ModsScreen(mods, modsModel, vm, openMenu)
+                        Section.DOWNLOADS -> DownloadsScreen(downloads, downloadsModel, vm, modsModel, openMenu)
                         Section.DIAGNOSTICS -> DiagnosticsScreen(state, bridge, vm, model, openMenu)
                         Section.SETTINGS -> SettingsScreen(state, bridge, vm, model, openMenu)
                         else -> ComingSoonScreen(state.section, vm, openMenu)
                     }
                     val busy = state.busy
+                    val modsBusy = mods.busy
                     if (busy != null) BusyOverlay(busy) { vm.cancelBusy() }
+                    else if (modsBusy != null) BusyOverlay(modsBusy) { modsModel.cancelBusy() }
                 }
             }
         }

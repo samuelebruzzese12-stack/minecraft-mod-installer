@@ -194,6 +194,17 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
         fun isBedrockCandidate(fileName: String): Boolean =
             fileName.substringAfterLast('.', "").lowercase(Locale.ROOT) in BEDROCK
 
+        /** Estensioni che il MOD MANAGER sa leggere: mod (.jar) e raccolte o pacchetti (.zip). */
+        private val JAVA = setOf("jar", "zip")
+
+        /** Il file si può aggiungere al MOD MANAGER. */
+        fun isJavaCandidate(fileName: String): Boolean =
+            fileName.substringAfterLast('.', "").lowercase(Locale.ROOT) in JAVA
+
+        /** Modpack Modrinth: lo leggerà il MODPACK MANAGER, che non esiste ancora. */
+        fun isModpack(fileName: String): Boolean =
+            fileName.substringAfterLast('.', "").lowercase(Locale.ROOT) == "mrpack"
+
         /** Siti consentiti in partenza (elenco fisso), da mostrare all'utente. */
         val defaultHosts: List<String> = UrlPolicy.DEFAULT_HOSTS
     }
