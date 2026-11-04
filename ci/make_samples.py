@@ -159,6 +159,13 @@ def main(out):
         "LEGGIMI.txt": b"Installa prima il pacchetto risorse.\n",
     })
 
+    # 9) ZIP «alla Windows» (PowerShell 5 «Compress-Archive»): separatori con la barra rovesciata e cartelle scritte
+    #    come voci vuote che finiscono con «\\». Prima diventavano file vuoti accanto alle cartelle omonime.
+    win = {"Texture Windows\\": b"", "Texture Windows\\textures\\": b"", "Texture Windows\\textures\\blocks\\": b""}
+    for name, data in pack_entries("", "Texture Windows", uid("texture-windows"), "resources").items():
+        win["Texture Windows\\" + name.replace("/", "\\")] = data
+    write_zip(os.path.join(out, "Texture_Windows.zip"), win)
+
     # 8) file che non è un pacchetto
     with open(os.path.join(out, "Appunti.txt"), "wb") as f:
         f.write(b"Questo non e' un pacchetto Minecraft.\n")

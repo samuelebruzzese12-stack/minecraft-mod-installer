@@ -24,7 +24,9 @@ class ScanResult(
     /** Voci il cui nome grezzo differisce da quello normalizzato (backslash, "./", ecc.). */
     val nonCanonicalNames: Int = 0,
     /** File con lo stesso percorso (senza distinguere maiuscole/minuscole) comparsi più volte. */
-    val duplicateNames: Int = 0
+    val duplicateNames: Int = 0,
+    /** File il cui percorso è anche una cartella di altri file (es. «textures» vuoto accanto a «textures/a.png»). */
+    val folderConflicts: Int = 0
 )
 
 /**
@@ -83,8 +85,18 @@ class ArchiveScanner(private val limits: SafetyLimits) {
 
         return ScanResult(
             st.entries, st.keyFiles, st.oversized, st.textures, st.nested, st.skippedNested,
-            st.executables, st.junk, st.total, st.nonCanonical, st.duplicates
+            st.executables, st.junk, st.total, st.nonCanonical, st.duplicates, countFolderConflicts(st.entries)
         )
+    }
+
+    /** Quanti file hanno lo stesso percorso di una cartella che contiene altri file. */
+    private fun countFolderConflicts(entries: List<EntryMeta>): Int {
+        val folders = HashSet<String>()
+        for (e in entries) {
+            var p = PathSafety.parentOf(e.path)
+            while (p.isNotEmpty() && folders.add(p)) p = PathSafety.parentOf(p)
+        }
+        return entries.count { !it.directory && it.path in folders }
     }
 
     private fun checkRatio(uncompressed: Long, archiveBytes: Long) {

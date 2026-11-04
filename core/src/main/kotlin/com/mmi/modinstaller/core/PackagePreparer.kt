@@ -57,6 +57,9 @@ class PackagePreparer(
         var duplicates = 0
         var caseVariants = 0
 
+        /** Voci vuote il cui nome è anche una cartella di altri file: indicatori di cartella, non file veri. */
+        var folderMarkers = 0
+
         /** File dell'archivio che non fanno parte dei contenuti scelti (LEGGIMI, altri pacchetti non scelti). */
         var outside = 0
     }
@@ -196,6 +199,11 @@ class PackagePreparer(
     ) {
         val seen = HashSet<String>()
         val seenLower = HashSet<String>()
+        // Cartelle dei file scritti e voci vuote in attesa: una voce vuota che è anche una cartella (es. «textures»
+        // accanto a «textures/a.png», come scrivono alcuni programmi di Windows) non va scritta come file, perché
+        // impedirebbe di creare la cartella e Minecraft perderebbe tutto ciò che contiene.
+        val folders = HashSet<String>()
+        val emptyPending = ArrayList<String>()
         val buf = ByteArray(64 * 1024)
         val now = System.currentTimeMillis()
         var total = 0L
@@ -239,6 +247,13 @@ class PackagePreparer(
                             )
                         }
 
+                        addParents(outPath, folders)
+                        if (entry.size == 0L) {
+                            // Il lettore controlla comunque la voce (dimensione e CRC) quando il visitor ritorna.
+                            emptyPending.add(outPath)
+                            return@forEachEntry
+                        }
+
                         val ze = ZipEntry(outPath)
                         ze.time = now
                         zos.setLevel(levelFor(outPath))
@@ -263,9 +278,31 @@ class PackagePreparer(
                     }
                 }
             }
+            for (path in emptyPending) {
+                if (path in folders) {
+                    tally.folderMarkers++
+                    tally.inScope--
+                    continue
+                }
+                if (tally.written >= limits.maxEntries) {
+                    throw LimitExceededException(
+                        FindingCode.TOO_MANY_ENTRIES, "Troppi file nel pacchetto (oltre ${limits.maxEntries})"
+                    )
+                }
+                val ze = ZipEntry(path)
+                ze.time = now
+                zos.putNextEntry(ze)
+                zos.closeEntry()
+                tally.written++
+            }
             if (tally.written == 0) throw PreparationException("Nessun file da includere nel pacchetto")
         }
         progress?.invoke(total, maxOf(estimate, total), "Pacchetto creato")
+    }
+
+    private fun addParents(path: String, folders: MutableSet<String>) {
+        var p = PathSafety.parentOf(path)
+        while (p.isNotEmpty() && folders.add(p)) p = PathSafety.parentOf(p)
     }
 
     private fun addRepackNotes(tally: Tally, notes: MutableList<String>) {
@@ -280,6 +317,12 @@ class PackagePreparer(
             notes.add(
                 (if (tally.caseVariants == 1) "1 file ha lo stesso nome di un altro" else "${tally.caseVariants} file hanno lo stesso nome di altri") +
                     " a meno delle maiuscole: inclusi tutti"
+            )
+        }
+        if (tally.folderMarkers > 0) {
+            notes.add(
+                (if (tally.folderMarkers == 1) "1 voce vuota era in realtà una cartella" else "${tally.folderMarkers} voci vuote erano in realtà cartelle") +
+                    ": non copiata come file"
             )
         }
         if (tally.outside > 0) {
@@ -497,6 +540,14 @@ internal object PackageVerifier {
             fail(e.message ?: "archivio non leggibile")
         }
         if (names.isEmpty()) fail("il pacchetto è vuoto")
+        val folders = HashSet<String>()
+        for (n in names) {
+            var p = PathSafety.parentOf(n)
+            while (p.isNotEmpty() && folders.add(p)) p = PathSafety.parentOf(p)
+        }
+        names.firstOrNull { it in folders }?.let {
+            fail("«$it» è sia un file sia una cartella: Minecraft non potrebbe importare tutto il contenuto")
+        }
         return Listing(names, manifests, total)
     }
 

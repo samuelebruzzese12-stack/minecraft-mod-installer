@@ -99,8 +99,36 @@ if ! grep -q Success "$OUT/install.txt"; then
   kill $LOGCAT_PID 2>/dev/null; exit 1
 fi
 
-# File di prova: nella cartella Download, dove li trova il selettore di sistema.
-adb push "$SAMPLES"/. /sdcard/Download/ > "$OUT/push.txt" 2>&1
+# La memoria condivisa (/sdcard) si monta qualche secondo DOPO la fine dell'avvio: copiare i file troppo presto
+# fallisce con «Operation not permitted» e il selettore di sistema resta vuoto. Si aspetta, si copia un file
+# alla volta e si controlla la dimensione di ciascuno.
+wait_storage() {
+  local i
+  for i in $(seq 1 90); do
+    if adb shell 'mkdir -p /sdcard/Download && echo x > /sdcard/Download/.pronto && rm -f /sdcard/Download/.pronto && echo PRONTO' 2>/dev/null | grep -q PRONTO; then
+      log "memoria condivisa pronta (tentativo $i)"
+      return 0
+    fi
+    sleep 2
+  done
+  return 1
+}
+: > "$OUT/push.txt"
+if wait_storage; then
+  for f in "$SAMPLES"/*; do
+    n=$(basename "$f"); want=$(stat -c %s "$f"); ok=0
+    for attempt in 1 2 3 4 5; do
+      adb push "$f" "/sdcard/Download/$n" >> "$OUT/push.txt" 2>&1
+      got=$(adb shell "stat -c %s '/sdcard/Download/$n'" 2>/dev/null | tr -d '\r')
+      if [ "$got" = "$want" ]; then ok=1; break; fi
+      log "copia di $n non riuscita (tentativo $attempt): atteso $want byte, trovati '$got'"
+      sleep 3
+    done
+    [ $ok = 1 ] || fail "non riesco a copiare $n nella memoria dell'emulatore"
+  done
+else
+  fail "la memoria condivisa dell'emulatore non è diventata disponibile"
+fi
 adb shell ls -l /sdcard/Download > "$OUT/download-dir.txt" 2>&1
 
 # ---------- Home ----------
@@ -192,6 +220,8 @@ else
   log "Installo il finto Minecraft: $FAKE_APK"
   adb install -r -t "$FAKE_APK" 2>&1 | tee "$OUT/install-fake.txt"
   grep -q Success "$OUT/install-fake.txt" || fail "installazione del finto Minecraft non riuscita"
+  # Come per un utente che installa Minecraft dal Play Store e poi torna nell'app: prima la si manda in secondo piano.
+  adb shell input keyevent KEYCODE_HOME; sleep 2
   app_front
   go_home
   shot "home con finto minecraft"
@@ -272,8 +302,36 @@ else
     fi
   fi
   go_home
+
+  # D) ZIP creato su Windows (cartelle scritte con la barra rovesciata): nel file consegnato non devono esserci
+  #    «file» che sono in realtà cartelle, e ogni file del sorgente deve esserci con lo stesso contenuto.
+  if open_sample "Texture_Windows.zip" && $UI wait "INSTALLA IN MINECRAFT" 40; then
+    sleep 1; shot "rapporto zip windows"; expect "Texture Windows"
+    if $UI tap "INSTALLA IN MINECRAFT"; then
+      if wait_received "Texture_Windows.mcpack" > /dev/null; then
+        if pull_received "Texture_Windows.mcpack"; then
+          python3 -I ci/verify_windows.py "$OUT/received/Texture_Windows.mcpack" "$SAMPLES/Texture_Windows.zip" | tee "$OUT/verifica-zip-windows.txt"
+          [ "${PIPESTATUS[0]}" = 0 ] || fail "Texture_Windows: il file ricevuto non è corretto (vedi verifica-zip-windows.txt)"
+        else
+          fail "Texture_Windows: non riesco a leggere il file ricevuto"
+        fi
+      else
+        shot "zip windows non ricevuto"; fail "Texture_Windows: il finto Minecraft non ha ricevuto nulla"
+      fi
+      app_front
+      if $UI wait "Minecraft ha importato il contenuto?" 20; then
+        $UI tap "Sì, Minecraft l'ha importato" || fail "Texture_Windows: pulsante «Sì, Minecraft l'ha importato» non trovato"
+        sleep 2; shot "dopo conferma zip windows"
+      else
+        shot "conferma zip windows mancante"; fail "Texture_Windows: non compare la domanda di conferma"
+      fi
+    fi
+  else
+    shot "rapporto zip windows mancante"; fail "il rapporto di Texture_Windows.zip non compare"
+  fi
+  go_home
   if $UI tap "MOD INSTALLATI"; then
-    sleep 1.5; shot "contenuti gestiti dopo texture"; expect "Gun Mod" "Texture Verde HD"
+    sleep 1.5; shot "contenuti gestiti dopo texture"; expect "Gun Mod" "Texture Verde HD" "Texture Windows"
     back; go_home
   fi
 fi

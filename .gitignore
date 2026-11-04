@@ -13,3 +13,5 @@ build/
 !gradle/wrapper/gradle-wrapper.jar
 # La chiave di firma di questo progetto personale è volutamente versionata (vedi README).
 !signing/release.keystore
+__pycache__/
+*.pyc

@@ -79,7 +79,7 @@ signing/release.keystore          Chiave di firma (vedi sotto).
 
 ## Test
 
-`./gradlew :core:test :app:testDebugUnitTest` — 160 test: archivi (ZIP, CRC, zip bomb, percorsi pericolosi), manifest e versioni,
+`./gradlew :core:test :app:testDebugUnitTest` — 165 test: archivi (ZIP, CRC, zip bomb, percorsi pericolosi), manifest e versioni,
 analisi di add-on/mondi/skin/dipendenze/duplicati, preparazione e riverifica dei pacchetti (anche più pacchetti uniti in un
 solo `.mcaddon`, con il conteggio di ogni file letto), backup, elenchi persistenti
 (anche file danneggiati), piano di lancio, messaggi d'errore e testi dell'interfaccia, e il percorso completo di un file `.7z`

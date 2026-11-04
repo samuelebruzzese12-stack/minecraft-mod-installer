@@ -222,8 +222,11 @@ class ZipArchiveReader private constructor(
         val entries = zip.entries()
         while (entries.hasMoreElements()) {
             val e = entries.nextElement()
-            val meta = ArchiveEntry(e.name, e.isDirectory, e.size, e.compressedSize)
-            if (e.isDirectory) {
+            // Alcuni programmi di Windows (PowerShell 5 «Compress-Archive», .NET Framework) scrivono le cartelle
+            // con la barra rovesciata finale: per Java non sono cartelle, ma lo sono per chi ha creato l'archivio.
+            val isDir = e.isDirectory || e.name.endsWith("\\")
+            val meta = ArchiveEntry(e.name, isDir, e.size, e.compressedSize)
+            if (isDir) {
                 visitor(meta, null)
                 continue
             }

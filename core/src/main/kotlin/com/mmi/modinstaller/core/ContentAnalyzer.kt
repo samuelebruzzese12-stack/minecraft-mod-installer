@@ -29,7 +29,7 @@ class ContentAnalyzer(private val ctx: AnalyzeContext) {
         /** ZIP senza file inutili, eseguibili, nomi anomali o duplicati: può essere passato a Minecraft com'è. */
         val archiveClean: Boolean
             get() = format == ArchiveFormat.ZIP && scan.junkCount == 0 && scan.nonCanonicalNames == 0 &&
-                scan.duplicateNames == 0 && scan.executables.isEmpty()
+                scan.duplicateNames == 0 && scan.folderConflicts == 0 && scan.executables.isEmpty()
     }
 
     private class ParsedPack(
