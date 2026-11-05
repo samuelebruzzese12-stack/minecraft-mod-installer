@@ -106,7 +106,8 @@ internal class BlockOut(
     val sound: String,
     val toolTags: List<String>,
     val lightEmission: Int,
-    val lootPath: String?
+    val lootPath: String?,
+    val orientation: Orientation = Orientation.NONE
 )
 
 /**
@@ -305,8 +306,9 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 val props = blockProperties(b.id, tags, look.look!!)
                 if (props.estimated) estimates.add("Durezza dei blocchi stimata (in Java è nel codice)")
                 look.simplified?.let { shapeNotes.getOrPut(it) { ArrayList() }.add(name) }
-                if (b.stateCount > 1 && b.facing) simplified.add("I blocchi orientabili si piazzano sempre rivolti nello stesso verso")
-                else if (b.stateCount > 1) simplified.add("I blocchi con più stati in Java (es. colture, interruttori) hanno un solo aspetto")
+                val orientedStates = when (b.orientation) { Orientation.FACING -> 4; Orientation.AXIS -> 3; Orientation.NONE -> 1 }
+                if (b.facing && b.orientation == Orientation.NONE) simplified.add("Alcuni blocchi orientabili si piazzano sempre rivolti nello stesso verso")
+                else if (b.stateCount > orientedStates) simplified.add("I blocchi con più stati in Java (es. colture, interruttori) hanno un solo aspetto")
                 var lootPath: String? = null
                 mod.blockLoot[b.id]?.let { table ->
                     val r = lootConv.convert(table)
@@ -315,7 +317,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                     lootCount++
                     if (r.simplified) simplified.add("Bottini dei blocchi senza tocco di velluto, fortuna e condizioni speciali")
                 }
-                blocksOut.add(BlockOut(mod, b.id, id, key, look.look, props.hardness, props.resistance, props.sound, props.toolTags, props.light, lootPath))
+                blocksOut.add(BlockOut(mod, b.id, id, key, look.look, props.hardness, props.resistance, props.sound, props.toolTags, props.light, lootPath, b.orientation))
                 blockEntries.add(ConvertedEntry(b.id.toString(), id, mod.lang["it_it"]?.get(key) ?: name, describe(look.look)))
             }
             for ((why, list) in shapeNotes) {
@@ -1012,13 +1014,38 @@ internal class AddonWriter(
         b.lootPath?.let { c["minecraft:loot"] = it }
         for (t in b.toolTags) c["tag:$t"] = linkedMapOf<String, Any?>()
         val category = if (b.look is BlockLook.Cross) "nature" else "construction"
-        return linkedMapOf(
-            "format_version" to ModConverter.FORMAT,
-            "minecraft:block" to linkedMapOf(
-                "description" to linkedMapOf("identifier" to b.bedrockId, "menu_category" to linkedMapOf("category" to category)),
-                "components" to c
-            )
-        )
+        val description = linkedMapOf<String, Any?>("identifier" to b.bedrockId, "menu_category" to linkedMapOf("category" to category))
+        val block = linkedMapOf<String, Any?>("description" to description, "components" to c)
+        when (b.orientation) {
+            // Come la fornace: il lato «davanti» (nord nel modello Java) guarda il giocatore che piazza il blocco.
+            Orientation.FACING -> {
+                description["traits"] = linkedMapOf(
+                    "minecraft:placement_direction" to linkedMapOf("enabled_states" to listOf("minecraft:cardinal_direction"), "y_rotation_offset" to 180L)
+                )
+                block["permutations"] = listOf("north" to 0L, "west" to 90L, "south" to 180L, "east" to -90L).map { (dir, rot) ->
+                    linkedMapOf(
+                        "condition" to "q.block_state('minecraft:cardinal_direction') == '$dir'",
+                        "components" to linkedMapOf("minecraft:transformation" to linkedMapOf("rotation" to listOf(0L, rot, 0L)))
+                    )
+                }
+            }
+            // Come i tronchi: l'asse segue la faccia su cui lo appoggi.
+            Orientation.AXIS -> {
+                description["traits"] = linkedMapOf("minecraft:placement_position" to linkedMapOf("enabled_states" to listOf("minecraft:block_face")))
+                block["permutations"] = listOf(
+                    linkedMapOf(
+                        "condition" to "q.block_state('minecraft:block_face') == 'north' || q.block_state('minecraft:block_face') == 'south'",
+                        "components" to linkedMapOf("minecraft:transformation" to linkedMapOf("rotation" to listOf(90L, 0L, 0L)))
+                    ),
+                    linkedMapOf(
+                        "condition" to "q.block_state('minecraft:block_face') == 'east' || q.block_state('minecraft:block_face') == 'west'",
+                        "components" to linkedMapOf("minecraft:transformation" to linkedMapOf("rotation" to listOf(0L, 0L, 90L)))
+                    )
+                )
+            }
+            Orientation.NONE -> {}
+        }
+        return linkedMapOf("format_version" to ModConverter.FORMAT, "minecraft:block" to block)
     }
 }
 

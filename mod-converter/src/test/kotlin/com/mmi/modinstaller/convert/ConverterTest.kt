@@ -57,7 +57,7 @@ class ConverterTest {
             r.items.map { it.javaId.substringAfter(':') }.sorted()
         )
         assertEquals(
-            listOf("pedestal", "ruby_block", "ruby_crystal", "ruby_lamp", "ruby_leaves", "ruby_ore", "ruby_slab", "ruby_trapdoor", "tall_lamp", "tomatoes"),
+            listOf("pedestal", "ruby_block", "ruby_crystal", "ruby_lamp", "ruby_leaves", "ruby_log", "ruby_ore", "ruby_slab", "ruby_trapdoor", "tall_lamp", "tomatoes"),
             r.blocks.map { it.javaId.substringAfter(':') }.sorted()
         )
         assertEquals(listOf("Critter"), r.entities.map { it.name.replace("Bestiolina", "Critter") })
@@ -153,6 +153,21 @@ class ConverterTest {
         assertEquals("testmod_block_lamp_top", (lamp["up"] as Map<*, *>)["texture"])
         assertEquals("testmod_block_lamp_top", (lamp["down"] as Map<*, *>)["texture"])
         assertEquals("testmod_block_lamp_side", (lamp["south"] as Map<*, *>)["texture"])
+
+        // Orientabile come una fornace: guarda chi lo piazza
+        val lampBlock = json("Test Mod BP/blocks/testmod/ruby_lamp.json").o("minecraft:block")
+        assertEquals(180L, lampBlock.o("description").o("traits").o("minecraft:placement_direction")["y_rotation_offset"])
+        val perms = lampBlock.l("permutations").map { it as Map<*, *> }
+        assertEquals(4, perms.size)
+        assertEquals(
+            listOf(0L, -90L, 0L),
+            ((perms.single { (it["condition"] as String).contains("'east'") }["components"] as Map<*, *>)["minecraft:transformation"] as Map<*, *>)["rotation"]
+        )
+        // Tronco: asse dalla faccia d'appoggio
+        val log = json("Test Mod BP/blocks/testmod/ruby_log.json").o("minecraft:block")
+        assertEquals(listOf("minecraft:block_face"), log.o("description").o("traits").o("minecraft:placement_position")["enabled_states"])
+        assertEquals(2, log.l("permutations").size)
+        assertNull(json("Test Mod BP/blocks/testmod/ruby_slab.json").o("minecraft:block")["permutations"])
 
         val crop = json("Test Mod BP/blocks/testmod/tomatoes.json").o("minecraft:block").o("components")
         assertEquals("minecraft:geometry.cross", crop["minecraft:geometry"])

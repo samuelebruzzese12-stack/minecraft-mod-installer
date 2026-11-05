@@ -84,6 +84,9 @@ object TestMod {
             "facing=north,half=top,open=false":{"model":"testmod:block/ruby_trapdoor_top"}}}""")
         model("block/ruby_trapdoor_bottom", """{"parent":"minecraft:block/template_orientable_trapdoor_bottom","textures":{"texture":"testmod:block/ruby_block"}}""")
         model("block/ruby_trapdoor_top", """{"parent":"minecraft:block/template_orientable_trapdoor_top","textures":{"texture":"testmod:block/ruby_block"}}""")
+        // Tronco: asse x/y/z → si orienta come i tronchi di Bedrock
+        state("ruby_log", """{"variants":{"axis=x":{"model":"testmod:block/ruby_log","x":90,"y":90},"axis=y":{"model":"testmod:block/ruby_log"},"axis=z":{"model":"testmod:block/ruby_log","x":90}}}""")
+        model("block/ruby_log", """{"parent":"minecraft:block/cube_column","textures":{"end":"testmod:block/lamp_top","side":"testmod:block/lamp_side"}}""")
         // Foglie grigie da colorare con il bioma
         state("ruby_leaves", """{"variants":{"":{"model":"testmod:block/ruby_leaves"}}}""")
         model("block/ruby_leaves", """{"parent":"minecraft:block/leaves","textures":{"all":"testmod:block/ruby_leaves"}}""")

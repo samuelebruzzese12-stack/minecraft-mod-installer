@@ -15,7 +15,10 @@ enum class KindSource { TAG, NAME, NONE }
 
 class JavaItemDef(val id: Rl, val model: Rl?, val info: ItemModelInfo?, val kind: ItemKind, val kindSource: KindSource)
 
-class JavaBlockDef(val id: Rl, val model: Rl?, val stateCount: Int, val facing: Boolean)
+/** Come si orienta il blocco quando lo piazzi, se la variante scelta permette di riprodurlo in Bedrock. */
+enum class Orientation { NONE, FACING, AXIS }
+
+class JavaBlockDef(val id: Rl, val model: Rl?, val stateCount: Int, val facing: Boolean, val orientation: Orientation = Orientation.NONE)
 
 /** Una mod letta: i suoi file utili già divisi per tipo. */
 class JavaModContent(
@@ -96,7 +99,7 @@ object JavaContentReader {
             if (id.ns == "minecraft") continue
             val o = jar.json(n, limits.maxJsonBytes)?.asJsonObject()
             val pick = o?.let { pickModel(it) }
-            blocks.add(JavaBlockDef(id, pick?.first, pick?.second ?: 1, pick?.third ?: false))
+            blocks.add(JavaBlockDef(id, pick?.model, pick?.states ?: 1, pick?.facing ?: false, pick?.orientation ?: Orientation.NONE))
         }
         val blockIds = blocks.map { it.id }.toSet()
 
@@ -206,18 +209,35 @@ object JavaContentReader {
         "occupied=false", "shape=straight", "attached=false", "hanging=false", "part=foot", "triggered=false", "enabled=true"
     )
 
-    /** Il modello da usare e quanti stati ha il blocco in Java; il terzo valore dice se il blocco si orienta (facing). */
-    private fun pickModel(o: Map<String, Any?>): Triple<Rl?, Int, Boolean>? {
+    private class Pick(val model: Rl?, val states: Int, val facing: Boolean, val orientation: Orientation)
+
+    /**
+     * Il modello da usare e quanti stati ha il blocco in Java. Se la variante scelta è quella rivolta a nord (o con l'asse
+     * verticale) e il modello non è già ruotato, Bedrock può orientare il blocco come Java quando lo piazzi.
+     */
+    private fun pickModel(o: Map<String, Any?>): Pick? {
         val variants = o["variants"].asJsonObject()
         if (variants != null && variants.isNotEmpty()) {
             val best = variants.entries.maxByOrNull { (key, _) -> key.split(',').count { it in PREFERRED } * 10 - key.length / 100 }!!
-            val m = when (val v = best.value) {
-                is Map<*, *> -> v["model"] as? String
-                is List<*> -> (v.firstOrNull() as? Map<*, *>)?.get("model") as? String
+            val v = when (val x = best.value) {
+                is Map<*, *> -> x
+                is List<*> -> x.firstOrNull() as? Map<*, *>
                 else -> null
             }
-            val facing = variants.keys.any { it.contains("facing=") || it.contains("horizontal_facing=") }
-            return Triple(Rl.parse(m), variants.size, facing)
+            val m = v?.get("model") as? String
+            val rotated = ((v?.get("x") as? Number)?.toInt() ?: 0) != 0 || ((v?.get("y") as? Number)?.toInt() ?: 0) != 0
+            val props = best.key.split(',').toSet()
+            val keys = variants.keys
+            val facing = keys.any { it.contains("facing=") || it.contains("horizontal_facing=") }
+            val horizontal = keys.none { it.contains("facing=up") || it.contains("facing=down") }
+            val orientation = when {
+                rotated -> Orientation.NONE
+                facing && horizontal && ("facing=north" in props || "horizontal_facing=north" in props) &&
+                    keys.count { it.contains("facing=") } >= 4 -> Orientation.FACING
+                "axis=y" in props && keys.any { it.contains("axis=x") } && keys.any { it.contains("axis=z") } -> Orientation.AXIS
+                else -> Orientation.NONE
+            }
+            return Pick(Rl.parse(m), variants.size, facing, orientation)
         }
         val parts = o["multipart"].asJsonList() ?: return null
         val always = parts.firstOrNull { (it as? Map<*, *>)?.get("when") == null } ?: parts.firstOrNull()
@@ -227,7 +247,7 @@ object JavaContentReader {
             is List<*> -> (apply.firstOrNull() as? Map<*, *>)?.get("model") as? String
             else -> null
         }
-        return Triple(Rl.parse(m), parts.size, false)
+        return Pick(Rl.parse(m), parts.size, false, Orientation.NONE)
     }
 
     /** Il primo modello citato in una definizione di oggetto 1.21.4+ (`{"model": {"type": "minecraft:model", "model": "…"}}`). */
