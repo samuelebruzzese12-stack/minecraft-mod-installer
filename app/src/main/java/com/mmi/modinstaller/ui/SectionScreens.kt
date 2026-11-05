@@ -233,14 +233,6 @@ private fun SectionCard(section: Section, onClick: () -> Unit) {
 private class SectionPlan(val what: List<String>, val missing: String)
 
 private fun planFor(section: Section): SectionPlan = when (section) {
-    Section.WORLDS -> SectionPlan(
-        listOf(
-            "Importare mondi Java e Bedrock (ZIP, .mcworld, .mctemplate) anche molto grandi, a flusso",
-            "Lavorare sempre su una copia, lasciando intatto l'originale, con ripresa se si interrompe",
-            "Contare e controllare i file del mondo prima di importarlo"
-        ),
-        "Non è ancora stato costruito. I mondi Bedrock (.mcworld) si possono già importare dall'INSTALLER BEDROCK."
-    )
     Section.CONVERTER -> SectionPlan(
         listOf(
             "Analizzare un mondo e dire quali blocchi hanno un equivalente nell'altra edizione",

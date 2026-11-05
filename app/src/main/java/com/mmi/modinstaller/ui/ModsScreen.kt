@@ -468,7 +468,7 @@ private fun ModsDialogs(mods: ModsState, model: ModsViewModel) {
             body = {
                 BodyText(
                     "«" + dialog.profile.name + "» viene cancellato con tutti i suoi file (" + dialog.itemCount +
-                        "). Questa operazione non si può annullare."
+                        "), comprese le impostazioni e i mondi nella sua cartella. Questa operazione non si può annullare."
                 )
             },
             buttons = {

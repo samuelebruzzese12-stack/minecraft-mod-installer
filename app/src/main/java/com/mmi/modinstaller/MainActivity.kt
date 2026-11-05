@@ -21,6 +21,7 @@ class MainActivity : ComponentActivity() {
     private val mods: ModsViewModel by viewModels()
     private val catalog: CatalogViewModel by viewModels()
     private val modpacks: ModpackViewModel by viewModels()
+    private val worlds: WorldsViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -28,7 +29,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val bridgeState by bridge.state.collectAsState()
             MmiTheme(bridgeState.settings.theme) {
-                MmiApp(vm, bridge, downloads, mods, catalog, modpacks)
+                MmiApp(vm, bridge, downloads, mods, catalog, modpacks, worlds)
             }
         }
         // Dopo una ricreazione (es. processo chiuso da Android) l'intent originale non va rielaborato.

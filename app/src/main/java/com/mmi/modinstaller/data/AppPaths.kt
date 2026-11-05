@@ -21,6 +21,12 @@ class AppPaths(context: Context) {
     /** Copie dei modpack installati (.mrpack): servono a completare un'installazione rimasta a metà. */
     val modpacks: File = File(context.filesDir, "modpacks")
 
+    /**
+     * Copie degli archivi di mondi scelti nel WORLD MANAGER: l'importazione legge queste, mai il file dell'utente, e se l'app si
+     * chiude a metà servono a riprendere. Si cancellano a importazione finita o annullata.
+     */
+    val worldsIncoming: File = File(context.filesDir, "worlds/incoming")
+
     /** Copie di sicurezza create prima di eliminare un pacchetto. */
     val backups: File = File(context.filesDir, "backups")
 
@@ -38,6 +44,7 @@ class AppPaths(context: Context) {
         downloads.mkdirs()
         javaProfiles.mkdirs()
         modpacks.mkdirs()
+        worldsIncoming.mkdirs()
         backups.mkdirs()
         libraryFile.parentFile?.mkdirs()
         sessions.mkdirs()

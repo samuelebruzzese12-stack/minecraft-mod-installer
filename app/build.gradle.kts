@@ -89,6 +89,7 @@ dependencies {
     implementation(project(":mod-manager"))
     implementation(project(":catalog"))
     implementation(project(":modpack-engine"))
+    implementation(project(":world-engine"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

@@ -433,7 +433,7 @@ fi
 # ======================================================================================================== sezioni non costruite
 
 phase "Sezioni non ancora costruite"
-for s in "WORLD MANAGER" "WORLD CONVERTER" "JAVA TO BEDROCK"; do
+for s in "WORLD CONVERTER" "JAVA TO BEDROCK"; do
   go_dash || { fail "$s: non trovo la dashboard"; continue; }
   if ! $UI tap "$s"; then fail "$s: scheda non trovata nella dashboard"; continue; fi
   if $UI wait "TORNA ALLA DASHBOARD" 10; then
@@ -460,7 +460,7 @@ else
   fail "il menu laterale non apre WORLD CONVERTER"
 fi
 # Dal menu laterale di una sezione: la voce HOME riporta alla dashboard; «Indietro» col menu aperto chiude solo il menu.
-if go_dash && $UI tap "WORLD MANAGER" && $UI wait "TORNA ALLA DASHBOARD" 10; then
+if go_dash && $UI tap "JAVA TO BEDROCK" && $UI wait "TORNA ALLA DASHBOARD" 10; then
   $UI tap "Apri il menu"; sleep 1.5
   back; snap
   if seen "IMPOSTAZIONI"; then fail "menu: aperto da una sezione, Indietro non lo chiude"; fi

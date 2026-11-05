@@ -28,7 +28,7 @@ enum class Section(val title: String, val availability: Availability, val summar
     JAVA("JAVA EDITION", Availability.PARTIAL, "Requisiti del telefono, memoria consigliata e versioni di Java"),
     MODS("MOD MANAGER", Availability.PARTIAL, "Mod, resource pack e shader Java in profili indipendenti, con controlli e annullamento"),
     MODPACKS("MODPACK MANAGER", Availability.PARTIAL, "Installa modpack Modrinth (.mrpack) in un profilo, con verifica dei file e ripresa"),
-    WORLDS("WORLD MANAGER", Availability.SOON, "Importazione di mondi Java e Bedrock, anche enormi"),
+    WORLDS("WORLD MANAGER", Availability.PARTIAL, "Mondi Java in un profilo (un file alla volta, con ripresa); i Bedrock all'INSTALLER BEDROCK"),
     CONVERTER("WORLD CONVERTER", Availability.SOON, "Conversione di mondi tra Java e Bedrock"),
     JAVA_TO_BEDROCK("JAVA TO BEDROCK", Availability.SOON, "Analisi e conversione delle mod Java"),
     DOWNLOADS("DOWNLOAD MANAGER", Availability.READY, "Scarica file da siti consentiti, con ripresa e verifica"),

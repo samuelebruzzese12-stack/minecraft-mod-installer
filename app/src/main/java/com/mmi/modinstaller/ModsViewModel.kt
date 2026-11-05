@@ -735,7 +735,7 @@ class ModsViewModel(application: Application) : AndroidViewModel(application) {
     private fun exportMessage(s: ExportSummary): String {
         if (s.files == 0 && s.missing.isEmpty()) return "Il profilo non ha file attivi: lo ZIP è vuoto."
         val sb = StringBuilder("Esportati " + s.files + " file (" + formatBytes(s.bytes) + ").")
-        if (s.extras > 0) sb.append(" Tra questi ci sono " + s.extras + " impostazioni e altri file del modpack, nelle loro cartelle.")
+        if (s.extras > 0) sb.append(" Tra questi ci sono " + s.extras + " altri file del profilo (impostazioni, mondi…), nelle loro cartelle.")
         if (s.missing.isNotEmpty()) sb.append(" Non c'erano più sul telefono e non sono nello ZIP: " + s.missing.joinToString(", ") + ".")
         if (s.changed.isNotEmpty()) {
             sb.append(" Risultano diversi da quando li hai installati (modificati fuori dall'app): " + s.changed.joinToString(", ") + ".")

@@ -51,9 +51,15 @@ class SectionTest {
     }
 
     @Test
+    fun worldManagerIsPartialBecauseItDoesNotConvertWorlds() {
+        // Importa i mondi Java in un profilo e passa i Bedrock all'INSTALLER BEDROCK; non converte tra le edizioni.
+        assertEquals(Availability.PARTIAL, Section.WORLDS.availability)
+    }
+
+    @Test
     fun theEnginesNotBuiltYetAreMarkedComingSoon() {
         val soon = Section.values().filter { it.availability == Availability.SOON }.map { it.name }.toSet()
-        assertEquals(setOf("WORLDS", "CONVERTER", "JAVA_TO_BEDROCK"), soon)
+        assertEquals(setOf("CONVERTER", "JAVA_TO_BEDROCK"), soon)
     }
 
     @Test
