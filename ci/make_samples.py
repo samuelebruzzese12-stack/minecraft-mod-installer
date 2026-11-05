@@ -5,9 +5,11 @@ Uso: python3 ci/make_samples.py CARTELLA_DI_DESTINAZIONE
 Solo libreria standard. Riproduce le stesse strutture usate dai test del motore di analisi.
 """
 import base64
+import gzip
 import hashlib
 import json
 import os
+import random
 import struct
 import sys
 import uuid
@@ -316,6 +318,59 @@ def modpack_samples(out):
         json.dump({"files": serve}, f, indent=2)
 
 
+# ---------------------------------------------------------------------------------------------------- mondi Java (WORLD MANAGER)
+
+
+def _nbt_str(text):
+    b = text.encode("utf-8")
+    return struct.pack(">H", len(b)) + b
+
+
+def _nbt_tag(tag_type, name):
+    return bytes([tag_type]) + _nbt_str(name)
+
+
+def java_level_dat(name, version="1.20.1", data_version=3465, game_type=0):
+    """Un level.dat di Minecraft Java: NBT big-endian compresso con gzip, con tutto dentro il compound «Data»."""
+    body = _nbt_tag(10, "") + _nbt_tag(10, "Data")
+    body += _nbt_tag(8, "LevelName") + _nbt_str(name)
+    body += _nbt_tag(3, "DataVersion") + struct.pack(">i", data_version)
+    body += _nbt_tag(10, "Version") + _nbt_tag(8, "Name") + _nbt_str(version) + _nbt_tag(3, "Id") + struct.pack(">i", data_version)
+    body += _nbt_tag(1, "Snapshot") + b"\x00" + b"\x00"
+    body += _nbt_tag(3, "GameType") + struct.pack(">i", game_type)
+    body += _nbt_tag(1, "hardcore") + b"\x00"
+    body += b"\x00" + b"\x00"   # fine di «Data» e della radice
+    return gzip.compress(body, mtime=0)
+
+
+def java_world_entries(prefix, name, version="1.20.1", regions=2, region_bytes=8192, seed=1):
+    """I file di un mondo Java: regioni del mondo principale, Nether ed End, un giocatore, un data pack, icona e session.lock.
+    Le «regioni» sono byte casuali: per l'app conta che si copino identiche, non il loro contenuto."""
+    rnd = random.Random(seed)
+    p = prefix + "/"
+    e = {p + "level.dat": java_level_dat(name, version), p + "session.lock": b"\x00\x00\x00\x00", p + "icon.png": png()}
+    for i in range(regions):
+        e[p + "region/r.%d.0.mca" % i] = rnd.randbytes(region_bytes)
+    e[p + "DIM-1/region/r.0.0.mca"] = rnd.randbytes(4096)
+    e[p + "DIM1/region/r.0.0.mca"] = rnd.randbytes(4096)
+    e[p + "playerdata/1b2c3d4e-0000-1111-2222-333344445555.dat"] = gzip.compress(b"giocatore di prova", mtime=0)
+    e[p + "datapacks/pacchetto_di_prova.zip"] = zip_bytes({"pack.mcmeta": b'{"pack":{"pack_format":15,"description":"prova"}}'})
+    return e
+
+
+def world_samples(out):
+    """Mondi per provare il WORLD MANAGER. Il test «EmulatorWorldSamplesTest» li legge con il motore vero (in CI, prima
+    dell'emulatore), così le attese dello script ci/worlds_phase.sh non dipendono da come li scrivo qui."""
+    # 1) un mondo Java nella sua cartella, con un file fuori dal mondo
+    e = java_world_entries("Mondo Java di Prova", "Mondo Java di Prova")
+    e["LEGGIMI.txt"] = b"Estrai la cartella in saves.\n"
+    write_zip(os.path.join(out, "Mondo_Java.zip"), e)
+    # 2) salvato con una versione più recente del profilo di prova (Fabric 1.20.1): l'app deve avvisare
+    write_zip(os.path.join(out, "Mondo_Java_Recente.zip"), java_world_entries("Mondo Recente", "Mondo Recente", version="1.21.1", seed=2))
+    # 3) abbastanza grande (circa 20 MB in 160 regioni) da poter chiudere l'app a metà dell'importazione
+    write_zip(os.path.join(out, "Mondo_Java_Grande.zip"),
+              java_world_entries("Mondo Grande", "Mondo Grande", regions=160, region_bytes=128 * 1024, seed=3))
+
 def main(out):
     os.makedirs(out, exist_ok=True)
 
@@ -384,6 +439,7 @@ def main(out):
 
     java_samples(out)
     modpack_samples(out)
+    world_samples(out)
 
     for n in sorted(os.listdir(out)):
         print("%-40s %8d byte" % (n, os.path.getsize(os.path.join(out, n))))

@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       parts:
-        description: "Parti della prova su emulatore da eseguire, separate da virgola (base, mods, catalog, modpack). Vuoto = tutte"
+        description: "Parti della prova su emulatore da eseguire, separate da virgola (base, mods, catalog, modpack, worlds). Vuoto = tutte"
         required: false
         default: ""
 
@@ -41,7 +41,7 @@ jobs:
         run: |
           python3 -I - "$WANT" >> "$GITHUB_OUTPUT" <<'PY'
           import json, sys
-          allowed = ["base", "mods", "catalog", "modpack"]
+          allowed = ["base", "mods", "catalog", "modpack", "worlds"]
           want = [p.strip() for p in (sys.argv[1] if len(sys.argv) > 1 else "").split(",")]
           print("parts=" + json.dumps([p for p in allowed if p in want] or allowed))
           PY
@@ -93,7 +93,7 @@ jobs:
           # Per EmulatorModpackSamplesTest (modpack di prova della parte «modpack» dell'emulatore). Il server va appena avviato: un file
           # dei modpack di prova risponde 404 solo alla prima richiesta.
           MMI_FAKE_SERVER: http://127.0.0.1:8765
-        run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :catalog:test :modpack-engine:test :app:testDebugUnitTest --continue --stacktrace
+        run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :catalog:test :modpack-engine:test :world-engine:test :app:testDebugUnitTest --continue --stacktrace
 
       # Prova COL SERVIZIO VERO: le richieste e le risposte reali di Modrinth (ricerca con i filtri, versioni, dipendenze), un
       # download vero dal suo CDN con verifica dell'impronta, la lettura del .jar scaricato e l'installazione in un profilo; poi
@@ -214,6 +214,7 @@ jobs:
             mod-manager/build/reports/tests/test
             catalog/build/reports/tests/test
             modpack-engine/build/reports/tests/test
+            world-engine/build/reports/tests/test
             catalog-online-report.txt
             modpack-online-report.txt
             fake-modrinth-out
@@ -260,7 +261,8 @@ jobs:
   #   base    = installer Bedrock, sezioni, impostazioni, download, finto Minecraft, arresto provocato, aggiornamento sopra la versione 5;
   #   mods    = MOD MANAGER (profili, installazione, interruttore, annulla, verifica, raccolte, esportazione);
   #   catalog = CERCA ONLINE (catalogo Modrinth, con il finto servizio di ci/dl_server.py); si prepara da sé il profilo di partenza;
-  #   modpack = MODPACK MANAGER (modpack .mrpack di prova: completo, incompleto e ripresa, annullamento, consenso, DOWNLOAD MANAGER).
+  #   modpack = MODPACK MANAGER (modpack .mrpack di prova: completo, incompleto e ripresa, annullamento, consenso, DOWNLOAD MANAGER);
+  #   worlds  = WORLD MANAGER (mondo Java importato ed esportato, avviso di versione, app chiusa a metà e RIPRENDI, mondo Bedrock).
   emulator:
     name: Prova su emulatore Android (${{ matrix.part }})
     needs: build

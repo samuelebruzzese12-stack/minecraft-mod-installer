@@ -26,7 +26,7 @@ Regole che guidano tutto il lavoro (dalla direttiva):
 | Ricerca e installazione da Modrinth (API ufficiale) | **Collegato (fase 3d), verificato solo in parte**: ricerca con filtri (tipo, caricatore, versione di Minecraft), versione adatta al profilo (stabile prima, mai un file senza impronta), dipendenze obbligatorie a catena, scarico con impronta verificata, passaggio al MOD MANAGER. Non aggiorna da sola le mod, non cerca modpack | test JVM con risposte registrate, con un vero server HTTP locale e con un finto Modrinth (`ci/dl_server.py`); emulatore (parte «catalog»); contro il **servizio vero** solo il passaggio «Prova col servizio vero (Modrinth)» della CI. Il server di sviluppo non raggiunge Internet: l'esito di quel passaggio sta nel rapporto di ogni build e non va dato per scontato |
 | CurseForge (ricerca/scarico mod) | **Non attivo**: l'API richiede una chiave personale. I modpack CurseForge (`manifest.json`) vengono riconosciuti dall'analisi ma **non installati**: i loro file si scaricano solo attraverso quell'API | dichiarato nell'app |
 | Modpack Modrinth `.mrpack`: lettura, struttura, overrides, download con verifica, ripresa, profilo indipendente | **Parziale (fase 4)**: fatto per i `.mrpack` (anteprima prima di scaricare, consenso ai siti, impronta verificata per ogni file, overrides comuni e solo-client, file solo-server esclusi, registrazione nel MOD MANAGER, esito Completo/Incompleto onesto, ripresa che scarica solo ciò che manca, annullamento che non lascia nulla). Non fatto: modpack CurseForge, servizio in primo piano (se Android chiude l'app a metà, COMPLETA riprende) | test JVM (68 + 5 sui modpack della prova su emulatore, con il finto CDN) + emulatore (parte «modpack»: esito nel resoconto di ogni build) |
-| Mondi Java/Bedrock: riconoscimento (`level.dat`, `region`, `entities`, `poi`, `DIM-1`, `DIM1`, dimensioni personalizzate, `playerdata`, `datapacks`…), importazione **a flusso** (nessun mondo in RAM), checkpoint e ripresa, copia originale immutabile, avanzamento, pulizia | Realizzato (fase 5) | test JVM (anche migliaia di regioni, interruzione e ripresa) + emulatore |
+| Mondi Java/Bedrock: riconoscimento (`level.dat`, `region`, `entities`, `poi`, `DIM-1`, `DIM1`, dimensioni personalizzate, `playerdata`, `datapacks`…), importazione **a flusso** (nessun mondo in RAM), checkpoint e ripresa, copia originale immutabile, avanzamento, pulizia | **Parziale (fase 5)**: fatti riconoscimento senza estrarre (Java e Bedrock, mondi annidati o multipli), importazione dei mondi Java nella cartella `saves` di un profilo un file alla volta con diario e ripresa, controllo di CRC e spazio, pulizia all'annullamento, avviso di versione, esportazione in ZIP, eliminazione; i mondi Bedrock passano all'INSTALLER BEDROCK. Non fatto: lettura delle regioni (chunk), cartelle scelte con il selettore (solo archivi) | test JVM (34 + 4 sui mondi della prova) + emulatore (parte «worlds», con l'app chiusa davvero a metà: esito nel resoconto di ogni build) |
 | Conversione mondi Java→Bedrock | **Fase 6, parziale**: analisi di cosa si converte e cosa no, mappa dei blocchi, rapporto. La conversione completa (Anvil → LevelDB Bedrock) è un progetto a sé: Chunker è un programma Java e su Android servirebbe un runtime Java; la scrittura di LevelDB non esiste nel progetto | dichiarato nell'app; nessun «convertito» senza test |
 | Conversione mod Java→Bedrock | **Fase 7, parziale**: estrazione statica delle funzioni (blocchi, oggetti, ricette, loot, lingue, texture) e classificazione (Compatibile / parziale / non convertibile). Il comportamento in codice Java **non** si converte in Script API | rapporto onesto, nessun codice finto |
 | Runtime Java ARM64 integrato (Forge/Fabric/NeoForge/Quilt, OpenGL/ANGLE/GL4ES/Zink) | **Fuori da questa fase**: richiede NDK/JNI, librerie native per ABI, livello di traduzione grafica, accesso a un account Minecraft Java acquistato e un dispositivo reale; non è verificabile su emulatore CI. Fase 8: requisiti Java per versione, profili RAM, rilevamento dei launcher esterni (PojavLauncher e simili), esportazione del profilo | dichiarato nell'app |
@@ -100,8 +100,19 @@ Profili Java indipendenti (`files/java/profiles/<id>/`), importazione `.jar`/`.z
 - *Limiti dichiarati:* solo modpack Modrinth; nessun servizio in primo piano; non avvia Minecraft e non può sapere se il modpack parte
   (i file si esportano dal MOD MANAGER in uno ZIP per il launcher).
 
-### Fase 5 — `:world-importer`
-Riconoscimento Java/Bedrock, importazione a flusso da cartella (SAF) o archivio (ZIP64, `.mcworld`), checkpoint e ripresa, copia originale immutabile, report dei dati non supportati.
+### Fase 5 — `:world-engine` e WORLD MANAGER
+- **Motore** (modulo `:world-engine`): `WorldScanner` riconosce i mondi in un archivio leggendo solo l'elenco dei file e `level.dat`
+  (NBT Java big-endian con gzip; Bedrock tramite il lettore già usato dall'INSTALLER BEDROCK), con gli stessi controlli di sicurezza
+  degli altri archivi e limiti più larghi (fino a 16 GB estratti). `WorldImporter` copia un mondo Java in `saves/.import-<token>`
+  un file alla volta, con un diario dei file completati scritto solo dopo il controllo del CRC; il mondo si sposta in `saves` alla
+  fine; la ripresa riusa i file del diario solo se sul disco hanno ancora dimensione e CRC giusti. `WorldExporter` fa lo ZIP di un
+  mondo con la sua cartella.
+- **Schermata WORLD MANAGER** (stato **Parziale**): scelta dell'archivio (copiato nella memoria dell'app: l'originale non si tocca),
+  dettagli, profilo e cartella, avviso di versione, importazione con avanzamento e Annulla, importazioni interrotte (RIPRENDI /
+  ANNULLA), mondi nei profili (ESPORTA (ZIP) / ELIMINA); i mondi Bedrock vanno all'INSTALLER BEDROCK (nessun secondo sistema di
+  importazione).
+- *Limiti dichiarati:* non converte tra le edizioni; non legge i chunk; non apre il gioco; un mondo scelto come cartella (non
+  archivio) non è ancora supportato.
 
 ### Fasi 6–8 — conversione, analisi mod, runtime
 Come da tabella: si fa ciò che è reale e verificabile, il resto è dichiarato.
@@ -112,5 +123,5 @@ Analisi dei log di crash, controlli prima dell'avvio, README, APK finale.
 ## Come si verifica ogni fase
 1. Test JVM (`:core` e moduli nuovi) — in locale e in CI.
 2. Compilazione APK in CI (`assembleDebug`/`assembleRelease`).
-3. Prova su emulatore Android, in quattro lavori paralleli («base»: navigazione, importazione Bedrock, download, aggiornamento; «mods»: MOD MANAGER; «catalog»: CERCA ONLINE; «modpack»: MODPACK MANAGER): schermate e log salvati nella Release (`prova-emulatore-base.zip`, `prova-emulatore-mods.zip`, `prova-emulatore-catalog.zip`, `prova-emulatore-modpack.zip`). Ogni difetto trovato dall'emulatore si corregge nell'app **o** nello script, dichiarando quale dei due era sbagliato.
+3. Prova su emulatore Android, in cinque lavori paralleli («base»: navigazione, importazione Bedrock, download, aggiornamento; «mods»: MOD MANAGER; «catalog»: CERCA ONLINE; «modpack»: MODPACK MANAGER; «worlds»: WORLD MANAGER): schermate e log salvati nella Release (`prova-emulatore-<parte>.zip`). Ogni difetto trovato dall'emulatore si corregge nell'app **o** nello script, dichiarando quale dei due era sbagliato.
 4. Quello che nessuna prova automatica può confermare (Minecraft vero, rete reale, dispositivo fisico) viene detto esplicitamente nel resoconto.

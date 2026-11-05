@@ -21,7 +21,8 @@ L'app si apre su una **dashboard** (Minecraft trovato, contenuti gestiti, memori
 | JAVA EDITION | Parziale | Requisiti del telefono, memoria consigliata per profilo, versione di Java richiesta da ogni Minecraft. **Il gioco Java non si avvia da qui**: nessun runtime Java è integrato |
 | MOD MANAGER | Parziale | Profili Java indipendenti (Fabric, Quilt, Forge, NeoForge): aggiungi `.jar` o raccolte `.zip`, l'app li legge **senza eseguirli**, dice se vanno bene per il profilo, li installa con verifica dell'impronta, li attiva/disattiva, li rimuove, **annulla** l'ultima operazione, verifica il profilo ed **esporta i file attivi in uno ZIP**. **CERCA ONLINE** cerca su **Modrinth** (API ufficiale), sceglie la versione adatta al profilo, calcola le dipendenze obbligatorie, scarica con verifica dell'impronta e passa i file al profilo. **CurseForge non è collegato** (l'API richiede una chiave personale). Non avvia Minecraft Java. Dettagli sotto |
 | MODPACK MANAGER | Parziale | Installa un modpack **Modrinth** (`.mrpack`) in un profilo nuovo del MOD MANAGER: anteprima prima di scaricare, consenso ai siti nuovi, **impronta verificata per ogni file**, impostazioni del modpack applicate, esito onesto (*Completo* / *Incompleto* con l'elenco di ciò che manca), ripresa che scarica solo i file mancanti. **I modpack CurseForge non sono supportati**. Non avvia Minecraft Java. Dettagli sotto |
-| WORLD MANAGER, WORLD CONVERTER, JAVA TO BEDROCK | In arrivo | Come sopra. La conversione completa di mondi e mod non sarà promessa senza una verifica reale |
+| WORLD MANAGER | Parziale | Legge un mondo (`.zip`, `.mcworld`) **senza estrarlo**: edizione, versione, modalità, dimensioni e regioni, giocatori, data pack. Un mondo **Java** va nella cartella `saves` di un profilo del MOD MANAGER, un file alla volta (anche enorme), con **ripresa** se l'app si chiude a metà, avviso se la versione non è quella del profilo, ESPORTA (ZIP) ed ELIMINA. Un mondo **Bedrock** va all'INSTALLER BEDROCK. **Non converte** tra le edizioni. Dettagli sotto |
+| WORLD CONVERTER, JAVA TO BEDROCK | In arrivo | Pagina che spiega cosa farà e cosa manca; nessun pulsante finto. La conversione completa di mondi e mod non sarà promessa senza una verifica reale |
 | DOWNLOAD MANAGER | Pronto | Scarica un file da un indirizzo `https://` di un sito consentito (Modrinth, GitHub, CDN di CurseForge, o un sito che approvi tu): coda, pausa, ripresa da dove era arrivato, verifica dell'impronta (SHA-1/256/512), apertura nell'INSTALLER BEDROCK. Dettagli e limiti sotto |
 | DIAGNOSTICA | Pronto | Telefono (RAM, CPU, spazio, temperatura), controllo dei file preparati, ultimi errori (anche gli arresti inattesi dell'app), rapporto da condividere solo se premi il pulsante |
 | IMPOSTAZIONI | Pronto | Tema (Automatico / Chiaro / Scuro), profilo prestazioni (Risparmio / Bilanciato / Prestazioni / Personalizzato), svuota file temporanei |
@@ -168,6 +169,32 @@ servizio vero (Modrinth)» della CI (`OnlineModpackTest`): scarica i `.mrpack` d
 servizio, li legge e ne prepara il piano, e installa per intero il più piccolo (fino a 60 file e 120 MB) controllando ogni file sul
 disco. Il suo esito sta in `modpack-online-report.txt` di ogni build e non va dato per scontato.
 
+### WORLD MANAGER (mondi Java e Bedrock)
+
+1. **SCEGLI UN MONDO (.zip, .mcworld)**: l'app copia il file nella sua memoria (il tuo file non viene mai modificato) e ne legge
+   l'elenco dei file e `level.dat`, **senza estrarre nulla**. Riconosce Java (cartelle `region`, `DIM-1`, `DIM1`, `dimensions/…`,
+   `playerdata`, `datapacks`) e Bedrock (`db/`), anche con più mondi nello stesso archivio o il mondo dentro una cartella.
+2. Per un mondo **Java** scegli il profilo (MOD MANAGER) e il nome della cartella. Se il mondo è stato salvato con una versione di
+   Minecraft **più recente** del profilo l'app lo dice prima (aprirlo con una versione più vecchia può rovinarlo); se è più vecchio,
+   avvisa che il gioco lo aggiornerà.
+3. **IMPORTA NEL PROFILO** copia i file uno alla volta in una cartella di lavoro nascosta dentro `saves`, controllando dimensione e
+   CRC di ognuno; il mondo compare in `saves` solo alla fine, tutto insieme, senza sovrascrivere un mondo con lo stesso nome.
+   `session.lock` e i file fuori dal mondo non si copiano. **Annulla** cancella la cartella di lavoro. Se invece Android chiude
+   l'app a metà, alla riapertura il mondo compare tra le **importazioni interrotte**: **RIPRENDI** riusa i file già copiati
+   (ricontrollati sul disco) e copia solo il resto.
+4. Nell'elenco **Mondi nei profili**: **ESPORTA (ZIP)** salva il mondo dentro la sua cartella, pronto da estrarre in `saves` di un
+   programma di avvio; **ELIMINA** lo cancella dal profilo (con conferma; non si può annullare). Anche l'esportazione del profilo
+   dal MOD MANAGER include i suoi mondi.
+5. Un mondo **Bedrock** si passa all'**INSTALLER BEDROCK** («IMPORTA IN MINECRAFT»), che lo controlla e lo consegna a Minecraft come
+   ogni altro file.
+
+Cosa non fa: **non converte** i mondi tra Java e Bedrock (WORLD CONVERTER non c'è ancora), non apre il gioco, non ripara i mondi
+danneggiati e non legge il contenuto delle regioni (conta i file, non i chunk). Come è verificato: 34 test del modulo
+`world-engine` (mondi sintetici: dimensioni, mondi annidati, percorsi pericolosi, `level.dat` illeggibili, interruzione e ripresa,
+file rovinati nella cartella di lavoro, CRC sbagliati, spazio insufficiente, annullamento, esportazione e reimportazione) più
+`EmulatorWorldSamplesTest` sui mondi della prova su emulatore, e la parte «worlds» della prova su emulatore (`ci/worlds_phase.sh`),
+che chiude davvero l'app a metà di un'importazione e la riprende. Un mondo vero aperto dal gioco non si può provare qui.
+
 Altre schermate dell'installer: **FILE RECENTI**, **MOD INSTALLATI** (rinvia, segna l'esito, elimina), **CRONOLOGIA**, **BACKUP**
 (prima di ogni eliminazione si salva una copia; c'è anche ANNULLA subito dopo), **Informazioni**.
 
@@ -263,7 +290,7 @@ piano, scarico con impronta verificata, **file alterato rifiutato**, analisi del
 risultano saltati, non riusciti.
 
 A ogni push GitHub prova anche l'APK su un **emulatore Android** (`ci/emulator_smoke.sh`). Il computer di GitHub ha solo 2 core e
-l'emulatore è lento (ogni passaggio dura decine di secondi), quindi la prova gira in **quattro lavori paralleli**, ciascuno con il suo
+l'emulatore è lento (ogni passaggio dura decine di secondi), quindi la prova gira in **cinque lavori paralleli**, ciascuno con il suo
 emulatore (immagine di base di Android; solo se risulta inutilizzabile si ripete con quella dei servizi di Google):
 
 - **base**: apre dashboard, menu e ogni sezione, controlla che quelle non costruite non abbiano pulsanti finti, cambia tema e profilo
@@ -285,12 +312,15 @@ emulatore (immagine di base di Android; solo se risulta inutilizzabile si ripete
   applicate, MOD MANAGER e VERIFICA PROFILO), uno incompleto (un file che manca la prima volta e uno alterato: la ripresa scarica
   solo ciò che manca), uno lento da annullare a metà (non deve restare nulla), uno da un sito da consentire; poi l'apertura di un
   `.mrpack` dal DOWNLOAD MANAGER, TOGLI DALL'ELENCO e i dati dopo la chiusura dell'app.
+- **worlds**: il **WORLD MANAGER** con i mondi di prova: un mondo Java importato in un profilo (file identici all'originale) ed
+  esportato in ZIP, l'avviso per un mondo più recente del profilo, un mondo grande con l'app **chiusa a metà** dell'importazione e
+  RIPRENDI alla riapertura, un mondo Bedrock passato all'INSTALLER BEDROCK, ELIMINA.
 
 Lanciando il workflow a mano («Run workflow») il campo **parts** sceglie quali parti eseguire (es. `mods,modpack`; vuoto = tutte).
 
 Se un passaggio si pianta, lo script si ferma da solo dopo 85 minuti, salva schermata e log dell'ultimo punto raggiunto e lo scrive
 tra i problemi. Schermate, dump dell'interfaccia e log di ogni parte sono allegati alla Release (`prova-emulatore-base.zip`,
-`prova-emulatore-mods.zip`, `prova-emulatore-catalog.zip` e `prova-emulatore-modpack.zip`), insieme ai resoconti della prova col
+`prova-emulatore-mods.zip`, `prova-emulatore-catalog.zip`, `prova-emulatore-modpack.zip` e `prova-emulatore-worlds.zip`), insieme ai resoconti della prova col
 servizio vero di Modrinth: `catalog-online-report.txt` (mod) e `modpack-online-report.txt` (modpack).
 
 Cosa **non** si può provare in CI: Internet vero dall'emulatore (i test usano solo il server locale; l'unico contatto con Modrinth

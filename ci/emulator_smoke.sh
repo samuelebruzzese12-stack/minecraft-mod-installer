@@ -1,7 +1,7 @@
 #!/bin/bash
 # Prova su emulatore Android dell'app completa: dashboard, menu, INSTALLER BEDROCK, Java Edition, DOWNLOAD MANAGER,
-# MOD MANAGER (ci/mods_phase.sh), CERCA ONLINE (ci/catalog_phase.sh), MODPACK MANAGER (ci/modpack_phase.sh), Diagnostica,
-# Impostazioni e sezioni non ancora costruite.
+# MOD MANAGER (ci/mods_phase.sh), CERCA ONLINE (ci/catalog_phase.sh), MODPACK MANAGER (ci/modpack_phase.sh), WORLD MANAGER
+# (ci/worlds_phase.sh), Diagnostica, Impostazioni e sezioni non ancora costruite.
 # Installa l'APK, apre file di prova dal selettore di sistema (come farebbe
 # l'utente) e tocca i pulsanti. Con il FINTO Minecraft (ci/fakeminecraft) controlla anche che il file consegnato
 # dall'app contenga tutto, byte per byte. Alla fine installa l'APK nuovo SOPRA quello della versione precedente per
@@ -289,11 +289,12 @@ wait_storage() {
 # ======================================================================================================== quale parte, e il salvavita
 
 # Quale parte della prova eseguire: «base» (tutto tranne MOD MANAGER, CERCA ONLINE e MODPACK MANAGER), «mods» (solo MOD MANAGER),
-# «catalog» (solo CERCA ONLINE, che si prepara da sé il profilo), «modpack» (solo MODPACK MANAGER) o «all» (tutto di fila).
+# «catalog» (solo CERCA ONLINE, che si prepara da sé il profilo), «modpack» (solo MODPACK MANAGER), «worlds» (solo WORLD MANAGER,
+# che si prepara da sé il profilo) o «all» (tutto di fila).
 # L'emulatore del runner di GitHub (2 core) è lentissimo: ogni passaggio dura decine di secondi e tutto di fila supera l'ora e mezza.
 # Per questo il workflow lancia le parti in lavori paralleli, ciascuno con il suo emulatore.
 PART=${SMOKE_PART:-all}
-case "$PART" in all|base|mods|catalog|modpack) ;; *) echo "SMOKE_PART non valido: $PART (ammessi: all, base, mods, catalog, modpack)"; exit 2 ;; esac
+case "$PART" in all|base|mods|catalog|modpack|worlds) ;; *) echo "SMOKE_PART non valido: $PART (ammessi: all, base, mods, catalog, modpack, worlds)"; exit 2 ;; esac
 runs() { [ "$PART" = all ] || [ "$PART" = "$1" ]; }
 log "Parte della prova: $PART"
 
@@ -1018,6 +1019,15 @@ if runs modpack; then
   # Nella parte «modpack» l'app è appena installata e mai aperta: si apre qui.
   [ "$PART" = modpack ] && { adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3; }
   modpack_tests
+fi
+
+# ======================================================================================================== WORLD MANAGER
+
+# Anche questa fase sta in un file a parte (ci/worlds_phase.sh); usa le funzioni del MOD MANAGER per preparare il profilo.
+source ci/worlds_phase.sh
+if runs worlds; then
+  [ "$PART" = worlds ] && { adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3; }
+  worlds_tests
 fi
 
 # ======================================================================================================== INSTALLER BEDROCK (Minecraft assente)
