@@ -60,6 +60,10 @@ cosa non include.
 ## 4. Verifica
 
 * **Test JVM** (`:mod-converter`, `:bytecode`): mod di prova scritta nei test + 22 mod vere.
+* **Ultima prova completa** (5 novembre 2026, BDS 1.26.62.1): 20 add-on di mod vere (Aether, Alex's Caves, Alex's Mobs,
+  Ars Nouveau, Biomes O' Plenty, Botania, Create ×2, Farmer's Delight ×2, Friends & Foes, Ice and Fire, Iron's Spells,
+  Mekanism, Mowzie's Mobs, Mythic Metals, Naturalist, Quark, Supplementaries, Citadel): tutte le prove superate, nessun
+  errore nel registro dei contenuti, 254 creature vive con la vita giusta.
 * **Schemi ufficiali di Mojang** (`ci/validate_addon.py`).
 * **Server Bedrock ufficiale** (`ci/bds_test.py`, anche in CI nel job «Prove nel server Bedrock ufficiale»): per ogni
   add-on un mondo nuovo e prove GameTest dentro il gioco vero:
@@ -76,6 +80,10 @@ Strutture (`.nbt` → `.mcstructure`), progressi, bottini di casse e pesca, part
 inventario (entità di blocco + Script API), modelli Zeta (Quark), suoni dei blocchi, anteprima 3D di modelli e animazioni
 nell'app, esportazione del progetto sorgente, ripresa delle conversioni lunghe a metà. **Esecuzione Java**: l'app non contiene un runtime Java; prepara i profili per
 un launcher Java per Android (MOD MANAGER → esporta).
+
+Provato e scartato per ora: i **contenitori** dei blocchi delle add-on (`minecraft:block_entity` → `container`, utile per
+casse, armadietti e macchine con inventario) nel server Bedrock 1.26.62 vogliono le «funzioni sperimentali per i creatori»;
+un add-on normale non può usarli senza che il giocatore attivi gli esperimenti nel mondo.
 
 ## 6. Regole
 
