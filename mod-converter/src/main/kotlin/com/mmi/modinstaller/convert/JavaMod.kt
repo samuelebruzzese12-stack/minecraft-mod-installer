@@ -53,6 +53,9 @@ data class ConvertLimits(
     /** Si possono usare i blocchi con più stati del formato 1.26.40? */
     val statefulBlocks: Boolean get() = compare(bedrockTarget, listOf(1, 26, 40)) >= 0
 
+    /** Si possono usare i comportamenti con la Script API 2.0.0 (Minecraft 1.21.90 o più nuovo)? */
+    val scriptBehaviors: Boolean get() = compare(bedrockTarget, listOf(1, 21, 90)) >= 0
+
     private fun compare(a: List<Int>, b: List<Int>): Int {
         for (i in 0 until maxOf(a.size, b.size)) {
             val x = a.getOrElse(i) { 0 }; val y = b.getOrElse(i) { 0 }

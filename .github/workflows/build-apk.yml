@@ -93,7 +93,7 @@ jobs:
           # Per EmulatorModpackSamplesTest (modpack di prova della parte «modpack» dell'emulatore). Il server va appena avviato: un file
           # dei modpack di prova risponde 404 solo alla prima richiesta.
           MMI_FAKE_SERVER: http://127.0.0.1:8765
-        run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :catalog:test :modpack-engine:test :world-engine:test :mod-converter:test :app:testDebugUnitTest --continue --stacktrace
+        run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :catalog:test :modpack-engine:test :world-engine:test :bytecode:test :mod-converter:test :app:testDebugUnitTest --continue --stacktrace
 
       # Prova COL SERVIZIO VERO: le richieste e le risposte reali di Modrinth (ricerca con i filtri, versioni, dipendenze), un
       # download vero dal suo CDN con verifica dell'impronta, la lettura del .jar scaricato e l'installazione in un profilo; poi
@@ -142,6 +142,22 @@ jobs:
           cat convert-online-report.txt
           exit $status
 
+      - name: Prova nel server Bedrock ufficiale (blocchi, porte, creature, cibi… nel gioco vero)
+        id: bds
+        if: steps.convert.outcome != 'skipped'
+        continue-on-error: true
+        timeout-minutes: 90
+        run: |
+          python3 -I ci/fetch_bds.py bds
+          python3 -I ci/bds_test.py bds bds-out real-mods-out/*.mcaddon; status=$?
+          {
+            echo "== Prove nel server Bedrock ufficiale (Bedrock Dedicated Server di Mojang, con un giocatore simulato)"
+            echo "Usare il server Bedrock implica accettare l'EULA di Minecraft e l'informativa sulla privacy di Microsoft."
+            cat bds-out/riepilogo.txt
+          } > bds-report.txt 2>&1
+          cat bds-report.txt
+          exit $status
+
       - name: Riepilogo della prova col servizio vero
         if: always()
         continue-on-error: true
@@ -162,6 +178,14 @@ jobs:
               echo '```'
             else
               echo "(nessun resoconto della conversione)"
+            fi
+            echo "### Prove nel gioco vero (server Bedrock ufficiale): ${{ steps.bds.outcome }}"
+            if [ -f bds-report.txt ]; then
+              echo '```'
+              cat bds-report.txt
+              echo '```'
+            else
+              echo "(le prove nel server Bedrock non sono partite)"
             fi
             echo "### Modpack veri"
             if [ -f online-modpack-report.txt ]; then
@@ -257,6 +281,8 @@ jobs:
             convert-online-report.txt
             catalog-online-report.txt
             modpack-online-report.txt
+            bds-report.txt
+            bds-out
             fake-modrinth-out
             app/build/reports/tests/testDebugUnitTest
           if-no-files-found: ignore
@@ -279,6 +305,7 @@ jobs:
             catalog-online-report.txt
             modpack-online-report.txt
             convert-online-report.txt
+            bds-report.txt
 
       # Il finto Minecraft serve solo alla prova su emulatore: non entra mai nella Release.
       # Questi passaggi non possono bloccare la consegna dell'APK (vengono dopo e non fanno fallire l'esecuzione).

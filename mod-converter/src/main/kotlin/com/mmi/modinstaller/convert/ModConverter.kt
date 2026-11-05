@@ -93,7 +93,11 @@ class ConversionPlan internal constructor(
 }
 
 /** L'add-on scritto. */
-class WrittenAddon(val file: File, val name: String, val sizeBytes: Long, val fileCount: Int, val behaviorUuid: String, val resourceUuid: String)
+class WrittenAddon(
+    val file: File, val name: String, val sizeBytes: Long, val fileCount: Int, val behaviorUuid: String, val resourceUuid: String,
+    /** La versione di Minecraft Bedrock che serve per questo add-on (dipende da cosa usa: Script API, blocchi con stati…). */
+    val minEngine: List<Int> = ModConverter.MIN_ENGINE.map { it.toInt() }
+)
 
 internal class ItemOut(
     val mod: JavaModContent,
@@ -493,6 +497,12 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             }
             if (mod.spawnEggs.isNotEmpty()) notConverted.add("Uova delle creature: ${mod.spawnEggs.size}")
             val scripted = ArrayList<String>()
+            if (!limits.scriptBehaviors) {
+                if (foodsWithEffects > 0 || toolsWorn > 0 || blocksOut.any { b -> b.mod === mod && (b.code?.xp?.second ?: 0) > 0 }) {
+                    notConverted.add("Comportamenti ricostruibili con la Script API (usura degli attrezzi, effetti dei cibi, esperienza dei minerali): servono Minecraft 1.21.90 o più nuovo")
+                }
+                foodsWithEffects = 0; toolsWorn = 0
+            }
             if (statefulCount.isNotEmpty()) {
                 scripted.add(
                     "Blocchi con più stati come in Java (piazzamento, aperture, collegamenti, pietrarossa): " +
@@ -502,7 +512,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             if (foodsWithEffects > 0) scripted.add("Effetti dei cibi (pozioni dopo averli mangiati): $foodsWithEffects " + if (foodsWithEffects == 1) "cibo" else "cibi")
             if (toolsWorn > 0) scripted.add("Usura degli attrezzi quando scavano: $toolsWorn " + if (toolsWorn == 1) "attrezzo" else "attrezzi")
             if (placers > 0) fromCode.add("Oggetti che piazzano il loro blocco (semi e simili): $placers")
-            val xpBlocks = blocksOut.count { b -> b.mod === mod && (b.code?.xp?.second ?: 0) > 0 }
+            val xpBlocks = if (!limits.scriptBehaviors) 0 else blocksOut.count { b -> b.mod === mod && (b.code?.xp?.second ?: 0) > 0 }
             if (xpBlocks > 0) scripted.add("Esperienza dai minerali: $xpBlocks " + if (xpBlocks == 1) "blocco" else "blocchi")
             if (missingEffects.isNotEmpty()) {
                 notConverted.add(
@@ -665,7 +675,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             val blockById = blockEntries.associateBy { it.javaId }
             for (b in blocksOut) if (b.mod === mod) blockById[b.java.toString()]?.let { components.add(ComponentRegistry.block(b, it, null)) }
             val itemById = itemEntries.associateBy { it.javaId }
-            for (i in itemsOut) if (i.mod === mod) itemById[i.java.toString()]?.let { components.add(ComponentRegistry.item(i, it)) }
+            for (i in itemsOut) if (i.mod === mod) itemById[i.java.toString()]?.let { components.add(ComponentRegistry.item(i, it, limits.scriptBehaviors)) }
             val entById = entityEntries.associateBy { it.javaId }
             for (e in entitiesOut) if (e.mod === mod) entById[e.java.toString()]?.let { components.add(ComponentRegistry.entity(e, it)) }
             components.addAll(ComponentRegistry.recipes(ok, skips))
@@ -971,7 +981,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             tmp.delete()
             throw t
         }
-        return WrittenAddon(out, writer.name, out.length(), writer.count, writer.bpUuid, writer.rpUuid)
+        return WrittenAddon(out, writer.name, out.length(), writer.count, writer.bpUuid, writer.rpUuid, writer.minEngine.map { it.toInt() })
     }
 
     fun cleanName(name: String): String {
@@ -1189,6 +1199,7 @@ internal class AddonWriter(
 
         // ---- comportamenti (Script API) e manifest: alla fine, quando si sa quali componenti personalizzati servono
         val js = Behaviors.mainJs(scripts)
+        minEngine = when { stateful -> StateEngine.MIN_ENGINE; js != null -> Behaviors.MIN_ENGINE; else -> ModConverter.MIN_ENGINE }
         if (js != null) sink(bp + "scripts/main.js", js.toByteArray(Charsets.UTF_8))
         val description = "Convertito da Minecraft Java con Minecraft Mod Installer: " +
             plan.reports.filter { it.contentCount > 0 }.joinToString(", ") { it.title }.take(200)
@@ -1225,6 +1236,10 @@ internal class AddonWriter(
     /** C'è almeno un blocco con più stati (formato 1.26.40, quindi Minecraft 1.26.40 o più nuovo)? */
     private var stateful = false
 
+    /** La versione minima di Minecraft scritta nei manifest (si sa dopo [collect]). */
+    var minEngine: List<Long> = ModConverter.MIN_ENGINE
+        private set
+
     /** Il documento di un blocco con più stati (BLOCKBRIDGE, formato 1.26.40). */
     private fun statefulDoc(b: BlockOut, sf: StatefulBlock, geoId: String, materials: Map<String, Any?>): Map<String, Any?> {
         val c = LinkedHashMap<String, Any?>()
@@ -1257,7 +1272,9 @@ internal class AddonWriter(
     }
 
     /** I file che usano componenti personalizzati con parametri vogliono il formato [Behaviors.FORMAT]. */
-    private fun formatFor(components: Map<String, Any?>): String {
+    private fun formatFor(components: MutableMap<String, Any?>): String {
+        // Per un Minecraft più vecchio della 1.21.90 la Script API 2.0.0 non c'è: niente componenti personalizzati.
+        if (!limits.scriptBehaviors) components.keys.removeAll { it.startsWith("mmi:") }
         val custom = components.keys.filter { it.startsWith("mmi:") }
         scripts.addAll(custom)
         return if (custom.isEmpty()) ModConverter.FORMAT else Behaviors.FORMAT

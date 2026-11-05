@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.mmi.modinstaller.convert.ConversionPlan
 import com.mmi.modinstaller.convert.ConversionText
+import com.mmi.modinstaller.convert.ConvertLimits
 import com.mmi.modinstaller.convert.ConvertSource
 import com.mmi.modinstaller.convert.ModConverter
 import com.mmi.modinstaller.convert.ModReport
@@ -16,6 +17,7 @@ import com.mmi.modinstaller.core.formatBytes
 import com.mmi.modinstaller.data.AppContainer
 import com.mmi.modinstaller.data.ErrorMessages
 import com.mmi.modinstaller.data.FileInbox
+import com.mmi.modinstaller.data.MinecraftBridge
 import com.mmi.modinstaller.data.ModsRepository
 import com.mmi.modinstaller.mods.ItemCategory
 import com.mmi.modinstaller.mods.Profile
@@ -44,7 +46,17 @@ class PendingConversion(
 /** Un add-on già creato, nella memoria dell'app. */
 class SavedAddon(val file: File, val name: String, val sizeBytes: Long, val createdAt: Long)
 
-class ConvertOutcome(val addon: SavedAddon, val items: Int, val blocks: Int, val entities: Int, val recipes: Int, val ores: Int, val report: String)
+class ConvertOutcome(
+    val addon: SavedAddon, val items: Int, val blocks: Int, val entities: Int, val recipes: Int, val ores: Int, val report: String,
+    /** La versione di Minecraft Bedrock che serve per questo add-on. */
+    val minEngine: List<Int> = emptyList()
+)
+
+/**
+ * Per quale Minecraft Bedrock si converte: la versione installata sul telefono (se c'è) decide se si possono usare i
+ * blocchi con più stati del formato 1.26.40 (porte, lastre, scale, staccionate…). Senza Minecraft si converte per l'ultima.
+ */
+class ConvertTarget(val installed: String?, val version: List<Int>, val statefulBlocks: Boolean)
 
 sealed class ConvertDialog {
     class ChooseProfile : ConvertDialog()
@@ -58,7 +70,8 @@ data class ConvertState(
     val profiles: List<Profile> = emptyList(),
     val busy: BusyState? = null,
     val message: String? = null,
-    val dialog: ConvertDialog? = null
+    val dialog: ConvertDialog? = null,
+    val target: ConvertTarget? = null
 )
 
 /**
@@ -73,7 +86,19 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     private val manager = container.modManager
     private val repo = ModsRepository(application, container.paths)
     private val inbox = FileInbox(application, SafetyLimits(maxArchiveBytes = 1024L * 1024 * 1024))
-    private val converter = ModConverter()
+    /** Solo per i nomi dei file (non dipende dalla versione di destinazione). */
+    private val names = ModConverter()
+    private val bridge = MinecraftBridge(application, application.packageName + ".fileprovider")
+
+    private fun target(): ConvertTarget {
+        val info = try { bridge.primaryInfo() } catch (_: Throwable) { null }
+        val parts = info?.version?.parts?.take(3)?.takeIf { it.size >= 2 }
+        val version = parts ?: ConvertLimits().bedrockTarget
+        return ConvertTarget(info?.versionName, version, ConvertLimits(bedrockTarget = version).statefulBlocks)
+    }
+
+    /** Il convertitore per il Minecraft di destinazione (quello installato, o l'ultima versione). */
+    private fun converter(): ModConverter = ModConverter(ConvertLimits(bedrockTarget = (_state.value.target ?: target()).version))
 
     private val _state = MutableStateFlow(ConvertState())
     val state: StateFlow<ConvertState> = _state.asStateFlow()
@@ -101,7 +126,8 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         val addons = paths.convertedAddons.listFiles { f -> f.isFile && f.name.endsWith(".mcaddon") }.orEmpty()
             .sortedByDescending { it.lastModified() }
             .map { SavedAddon(it, it.name.removeSuffix(".mcaddon"), it.length(), it.lastModified()) }
-        _state.update { it.copy(addons = addons, profiles = manager.profiles()) }
+        val t = target()
+        _state.update { it.copy(addons = addons, profiles = manager.profiles(), target = t) }
     }
 
     private fun cleanIncoming() {
@@ -224,10 +250,11 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private suspend fun analyze(sources: List<ConvertSource>, copies: List<File>, name: String, from: String, cancel: CancelCheck, progress: ProgressCallback) {
-        val plan = withContext(Dispatchers.IO) { converter.analyze(sources, cancel, progress) }
+        val conv = converter()
+        val plan = withContext(Dispatchers.IO) { conv.analyze(sources, cancel, progress) }
         val old = _state.value.pending
         val withContent = plan.reports.filter { it.contentCount > 0 }
-        val addonName = converter.cleanName(if (withContent.size == 1) withContent[0].title else name)
+        val addonName = names.cleanName(if (withContent.size == 1) withContent[0].title else name)
         _state.update { it.copy(pending = PendingConversion(plan, plan.reports, addonName, from, copies), outcome = null) }
         if (old != null) withContext(Dispatchers.IO) { discard(old) }
     }
@@ -256,17 +283,17 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
             say("In queste mod non c'è niente che Bedrock possa usare: sono mod di solo codice.")
             return
         }
-        val name = converter.cleanName(p.addonName)
+        val name = names.cleanName(p.addonName)
         runBusy("Creo l'add-on «$name»", "Conversione annullata: non è stato scritto nessun add-on.") { cancel, progress ->
             val written = withContext(Dispatchers.IO) {
                 paths.convertedAddons.mkdirs()
                 val out = File(paths.convertedAddons, "$name.mcaddon")
-                converter.write(p.plan, name, out, cancel, progress)
+                converter().write(p.plan, name, out, cancel, progress)
             }
             val report = ConversionText.of(p.reports, name)
             val addon = SavedAddon(written.file, name, written.sizeBytes, written.file.lastModified())
             val outcome = ConvertOutcome(
-                addon, p.plan.itemCount, p.plan.blockCount, p.plan.entityCount, p.plan.recipeCount, p.plan.oreCount, report
+                addon, p.plan.itemCount, p.plan.blockCount, p.plan.entityCount, p.plan.recipeCount, p.plan.oreCount, report, written.minEngine
             )
             _state.update { it.copy(pending = null, outcome = outcome) }
             withContext(Dispatchers.IO) {

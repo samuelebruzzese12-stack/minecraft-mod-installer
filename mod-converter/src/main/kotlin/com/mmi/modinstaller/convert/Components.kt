@@ -46,12 +46,19 @@ internal object ComponentRegistry {
 
     private const val STATIC = "controlli statici dei file (formato e riferimenti)"
 
-    fun item(o: ItemOut, entry: ConvertedEntry): Component {
+    fun item(o: ItemOut, entry: ConvertedEntry, scripts: Boolean = true): Component {
         val diffs = ArrayList<String>()
         val bedrock = ArrayList<String>()
         bedrock.add(entry.detail)
-        if (o.effects.isNotEmpty()) bedrock.add("effetti dopo averlo mangiato: " + o.effects.joinToString { it.id })
-        if (o.kind in setOf(ItemKind.SWORD, ItemKind.PICKAXE, ItemKind.AXE, ItemKind.SHOVEL, ItemKind.HOE)) bedrock.add("si consuma scavando e colpendo (Script API)")
+        val tool = o.kind in setOf(ItemKind.SWORD, ItemKind.PICKAXE, ItemKind.AXE, ItemKind.SHOVEL, ItemKind.HOE)
+        if (o.effects.isNotEmpty()) {
+            if (scripts) bedrock.add("effetti dopo averlo mangiato: " + o.effects.joinToString { it.id })
+            else diffs.add("effetti del cibo non inclusi: servono Minecraft 1.21.90 o più nuovo")
+        }
+        if (tool) {
+            if (scripts) bedrock.add("si consuma scavando e colpendo (Script API)")
+            else diffs.add("si consuma solo colpendo: l'usura scavando vuole Minecraft 1.21.90 o più nuovo")
+        }
         o.places?.let { bedrock.add("piazza il blocco $it") }
         o.convertsTo?.let { bedrock.add("lascia $it") }
         val fromCode = o.code != null
@@ -60,7 +67,7 @@ internal object ComponentRegistry {
         if (missingFx > 0) diffs.add("$missingFx effetti della mod che Bedrock non ha")
         val status = when {
             diffs.isNotEmpty() -> ComponentStatus.APPROXIMATED
-            o.effects.isNotEmpty() || o.places != null || o.kind in setOf(ItemKind.SWORD, ItemKind.PICKAXE, ItemKind.AXE, ItemKind.SHOVEL, ItemKind.HOE) -> ComponentStatus.RECONSTRUCTED
+            o.effects.isNotEmpty() || o.places != null || tool -> ComponentStatus.RECONSTRUCTED
             else -> ComponentStatus.CONVERTED
         }
         return Component(

@@ -73,8 +73,11 @@ convert_tests() {
   fi
   sleep 0.5; shot "conversione: pagina vuota"
   CV_WHAT="pagina vuota"; cv_texts
-  cv_expect "Mod Java in Minecraft Bedrock" "SCEGLI MOD JAVA (.jar)" "CONVERTI LE MOD DI UN PROFILO" "Bedrock non esegue codice Java" \
-    "Add-on creati" "Nessun add-on creato finora." "Cosa fa e cosa no" "provalo in un mondo di prova"
+  # Le quattro strade e la versione di destinazione: il finto Minecraft è la 1.21.50, quindi niente blocchi con più stati.
+  cv_expect "Conversione Bedrock" "Analisi avanzata" "Modpack combinato" "Esecuzione Java" "Mod Java → add-on Bedrock" \
+    "1.21.50 (installato)" "Minecraft più vecchio della 1.26.40" \
+    "SCEGLI MOD JAVA (.jar)" "CONVERTI LE MOD DI UN PROFILO" "Macchine, menu e meccaniche nuove" \
+    "Add-on creati" "Nessun add-on creato finora." "Cosa fa e cosa no" "prova l'add-on in un mondo di prova"
   cv_absent "In arrivo" "Non è ancora stato costruito"
 
   # ================================================================== 5a) profilo: senza profili lo dice

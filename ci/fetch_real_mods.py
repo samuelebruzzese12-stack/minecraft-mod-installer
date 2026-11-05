@@ -25,6 +25,8 @@ MODS = [
     "born-in-chaos",                 # creature GeckoLib
     "biomes-o-plenty",               # blocchi, piante, legni
     "supplementaries",               # tanti blocchi decorativi disegnati dal codice
+    "alexs-mobs",                    # creature con modelli Citadel scritti nel codice (BLOCKBRIDGE)
+    "create",                        # mod complessa: macchine, molti blocchi con stati, ricette di macchine
     "sodium",                        # solo codice
     "geckolib",                      # libreria
 ]

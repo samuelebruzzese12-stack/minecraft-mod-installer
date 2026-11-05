@@ -86,6 +86,46 @@ class ConverterTest {
         assertEquals("Convertita in parte: il contenuto sì, il comportamento in codice no", r.verdict)
     }
 
+    @Test fun olderMinecraftGetsACompatibleAddon() {
+        // Minecraft 1.21.50 installato: niente Script API (vuole la 1.21.90) e niente blocchi con più stati (vogliono la 1.26.40).
+        val old = ModConverter(ConvertLimits(bedrockTarget = listOf(1, 21, 50)))
+        val p = old.analyzeJars(listOf(TestMod.jar()))
+        try {
+            val f = old.preview(p, "Test Mod")
+            val bp = Json.parseObject(String(f["Test Mod BP/manifest.json"]!!))
+            assertEquals(listOf(1L, 21L, 80L), bp.o("header")["min_engine_version"])
+            assertNull(f["Test Mod BP/scripts/main.js"])
+            assertTrue(bp.l("modules").none { (it as Map<*, *>)["type"] == "script" })
+            val sword = Json.parseObject(String(f["Test Mod BP/items/testmod/ruby_sword.json"]!!))
+            assertEquals("1.21.80", sword["format_version"])
+            assertNull(sword.o("minecraft:item").o("components")["mmi:tool_wear"])
+            val slab = Json.parseObject(String(f["Test Mod BP/blocks/testmod/ruby_slab.json"]!!))
+            assertEquals("1.21.80", slab["format_version"])
+            val r = p.reports.single()
+            assertTrue(r.scripted.toString(), r.scripted.isEmpty())
+            assertTrue(r.notConverted.toString(), r.notConverted.any { it.startsWith("Comportamenti ricostruibili con la Script API") })
+            val swordC = r.components.single { it.originalId == "testmod:ruby_sword" }
+            assertTrue(swordC.differences.toString(), swordC.differences.any { it.contains("1.21.90") })
+        } finally {
+            p.close()
+        }
+    }
+
+    @Test fun everyJarFileIsAccountedFor() {
+        // NESSUNA PERDITA SILENZIOSA: ogni file del JAR è in un gruppo del registro dei componenti.
+        val r = plan.reports.single()
+        val files = r.components.filter { it.kind == "file" }
+        val jarEntries = TestMod.jar().allNames().count { !it.endsWith("/") }
+        assertEquals(jarEntries, files.sumOf { it.count })
+        assertTrue(files.toString(), files.any { it.originalId == "Testi e traduzioni" && it.status == ComponentStatus.CONVERTED })
+        // La porta funziona ma con differenze scritte (cerniera sempre a sinistra, durezza stimata): «Approssimato», non «Ricostruito».
+        val door = r.components.single { it.kind == "blocco" && it.originalId == "testmod:ruby_door" }
+        assertEquals(ComponentStatus.APPROXIMATED, door.status)
+        assertTrue(door.differences.toString(), door.differences.any { it.contains("cerniera") })
+        assertTrue(door.bedrockFunction, door.bedrockFunction.startsWith("porta con i suoi stati"))
+        assertTrue(r.components.any { it.kind == "ricette" && it.status == ComponentStatus.NOT_RECONSTRUCTABLE })
+    }
+
     @Test fun manifestsAndPackLinks() {
         val bp = json("Test Mod BP/manifest.json")
         val rp = json("Test Mod RP/manifest.json")
