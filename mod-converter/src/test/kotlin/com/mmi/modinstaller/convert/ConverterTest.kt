@@ -53,11 +53,11 @@ class ConverterTest {
         assertEquals("Test Mod", r.title)
         assertEquals("Fabric", r.loader)
         assertEquals(
-            listOf("ruby", "ruby_door", "ruby_helmet", "ruby_pickaxe", "ruby_sign", "ruby_sword", "tomato"),
+            listOf("ruby", "ruby_helmet", "ruby_pickaxe", "ruby_sign", "ruby_sword", "tomato"),
             r.items.map { it.javaId.substringAfter(':') }.sorted()
         )
         assertEquals(
-            listOf("pedestal", "ruby_block", "ruby_crystal", "ruby_lamp", "ruby_leaves", "ruby_log", "ruby_ore", "ruby_slab", "ruby_trapdoor", "tall_lamp", "tomatoes"),
+            listOf("pedestal", "ruby_block", "ruby_crystal", "ruby_door", "ruby_lamp", "ruby_leaves", "ruby_log", "ruby_ore", "ruby_slab", "ruby_trapdoor", "tall_lamp", "tomatoes"),
             r.blocks.map { it.javaId.substringAfter(':') }.sorted()
         )
         assertEquals(listOf("Beetle", "Critter"), r.entities.map { it.name.replace("Bestiolina", "Critter") }.sorted())
@@ -71,10 +71,12 @@ class ConverterTest {
         assertEquals(1, r.ores)
         assertEquals(1, r.armorModels)
         assertTrue(r.notConverted.toString(), r.notConverted.contains("Blocchi disegnati dal codice (cartelli, casse, letti…): 1"))
-        assertTrue(r.notConverted.toString(), r.notConverted.contains("Blocchi con forme che l'app non sa ancora riprodurre: 1, es. ruby_door (door_bottom_left)"))
-        assertTrue(r.simplified.toString(), r.simplified.contains("Blocchi che restano solo come oggetti (non si piazzano): 2"))
-        assertEquals("solo oggetto", r.items.single { it.javaId == "testmod:ruby_door" }.detail)
-        assertEquals("Ruby Door", r.items.single { it.javaId == "testmod:ruby_door" }.name)
+        assertTrue(r.notConverted.toString(), r.notConverted.none { it.startsWith("Blocchi con forme che l'app non sa ancora riprodurre") })
+        assertTrue(r.simplified.toString(), r.simplified.contains("Blocchi che restano solo come oggetti (non si piazzano): 1"))
+        // BLOCKBRIDGE: la porta è una porta vera (due metà, si apre); la lastra ha i suoi stati
+        assertEquals("porta (con i suoi stati)", r.blocks.single { it.javaId == "testmod:ruby_door" }.detail)
+        assertEquals("Ruby Door", r.blocks.single { it.javaId == "testmod:ruby_door" }.name)
+        assertTrue(r.scripted.toString(), r.scripted.any { it.startsWith("Blocchi con più stati come in Java") && it.contains("1 porta") && it.contains("1 lastra") })
         assertTrue(r.notConverted.toString(), r.notConverted.contains("Uova delle creature: 1"))
         assertTrue(r.notConverted.toString(), r.notConverted.contains("Oggetti senza un'icona leggibile: 1"))
         assertTrue(r.notConverted.toString(), r.notConverted.any { it.startsWith("Suoni") })
@@ -92,7 +94,8 @@ class ConverterTest {
         assertEquals("resources", (rp.l("modules")[0] as Map<*, *>)["type"])
         assertEquals(rp.o("header")["uuid"], (bp.l("dependencies")[0] as Map<*, *>)["uuid"])
         // La spada usa lo script dell'usura: il pacchetto ha il modulo «script» e chiede la Script API 2.0.0 (Minecraft 1.21.90+).
-        assertEquals(listOf(1L, 21L, 90L), bp.o("header")["min_engine_version"])
+        // Ci sono blocchi con più stati (formato 1.26.40): serve Minecraft 1.26.40 o più nuovo.
+        assertEquals(listOf(1L, 26L, 40L), bp.o("header")["min_engine_version"])
         val script = bp.l("modules").map { it as Map<*, *> }.single { it["type"] == "script" }
         assertEquals("scripts/main.js", script["entry"])
         assertTrue(bp.l("dependencies").any { (it as Map<*, *>)["module_name"] == "@minecraft/server" && it["version"] == "2.0.0" })
@@ -176,7 +179,6 @@ class ConverterTest {
         val log = json("Test Mod BP/blocks/testmod/ruby_log.json").o("minecraft:block")
         assertEquals(listOf("minecraft:block_face"), log.o("description").o("traits").o("minecraft:placement_position")["enabled_states"])
         assertEquals(2, log.l("permutations").size)
-        assertNull(json("Test Mod BP/blocks/testmod/ruby_slab.json").o("minecraft:block")["permutations"])
 
         val crop = json("Test Mod BP/blocks/testmod/tomatoes.json").o("minecraft:block").o("components")
         assertEquals("minecraft:geometry.cross", crop["minecraft:geometry"])
@@ -188,12 +190,28 @@ class ConverterTest {
         assertEquals("default_foliage", (leaves["*"] as Map<*, *>)["tint_method"])
         assertEquals("alpha_test", (leaves["*"] as Map<*, *>)["render_method"])
 
-        // Lastra: geometria propria, metà altezza, collisione a metà
-        val slab = json("Test Mod BP/blocks/testmod/ruby_slab.json").o("minecraft:block").o("components")
-        assertEquals("geometry.testmod.ruby_slab", slab["minecraft:geometry"])
-        assertEquals(mapOf("origin" to listOf(-8L, 0L, -8L), "size" to listOf(16L, 8L, 16L)), slab["minecraft:collision_box"])
+        // Lastra (BLOCKBRIDGE): metà bassa o alta dal punto in cui la si piazza, doppia con la seconda; un pezzo per variante
+        val slabDoc = json("Test Mod BP/blocks/testmod/ruby_slab.json")
+        assertEquals("1.26.40", slabDoc["format_version"])
+        val slabBlock = slabDoc.o("minecraft:block")
+        assertEquals(listOf("minecraft:vertical_half"), slabBlock.o("description").o("traits").o("minecraft:placement_position")["enabled_states"])
+        assertEquals(listOf(false, true), slabBlock.o("description").o("states")["mmi:double"])
+        val slab = slabBlock.o("components")
+        assertEquals("geometry.testmod.ruby_slab", slab.o("minecraft:geometry")["identifier"])
+        val vis = slab.o("minecraft:geometry").o("bone_visibility")
+        assertEquals("q.block_state('minecraft:vertical_half') == 'bottom' && !q.block_state('mmi:double')", vis["b0"])
+        assertEquals("q.block_state('mmi:double')", vis["b1"])
+        assertTrue(slab.containsKey("mmi:slab"))
+        val slabPerms = slabBlock.l("permutations").map { it as Map<*, *> }
+        // Collisione: metà bassa (base), metà alta e blocco intero nelle varianti
+        val boxes = (listOf(slab) + slabPerms.map { it["components"] as Map<*, *> }).map { it["minecraft:collision_box"] }
+        assertTrue(boxes.toString(), boxes.contains(listOf(mapOf("origin" to listOf(-8L, 0L, -8L), "size" to listOf(16L, 8L, 16L)))))
+        assertTrue(boxes.toString(), boxes.contains(listOf(mapOf("origin" to listOf(-8L, 8L, -8L), "size" to listOf(16L, 8L, 16L)))))
+        assertTrue(boxes.toString(), boxes.contains(listOf(mapOf("origin" to listOf(-8L, 0L, -8L), "size" to listOf(16L, 16L, 16L)))))
         val geo = json("Test Mod RP/models/blocks/testmod/ruby_slab.geo.json")
-        val cube = (((geo.l("minecraft:geometry")[0] as Map<*, *>)["bones"] as List<*>)[0] as Map<*, *>)["cubes"] as List<*>
+        val bones = (geo.l("minecraft:geometry")[0] as Map<*, *>)["bones"] as List<*>
+        assertEquals(listOf("b0", "b1", "b2"), bones.map { (it as Map<*, *>)["name"] })
+        val cube = (bones[0] as Map<*, *>)["cubes"] as List<*>
         assertEquals(listOf(-8L, 0L, -8L), (cube[0] as Map<*, *>)["origin"])
 
         // Texture animata di un blocco: resta intera e va in flipbook_textures.json
@@ -205,10 +223,20 @@ class ConverterTest {
         // Forma troppo grande per Bedrock: cubo, e il rapporto lo dice
         assertEquals("minecraft:geometry.full_block", json("Test Mod BP/blocks/testmod/tall_lamp.json").o("minecraft:block").o("components")["minecraft:geometry"])
         assertTrue(plan.reports.single().simplified.toString(), plan.reports.single().simplified.any { it.contains("forma più grande di quella che Bedrock accetta") })
-        // Il cartello (disegnato dal codice) e la porta non diventano blocchi, ma oggetti con il loro nome
+        // Il cartello (disegnato dal codice) non diventa un blocco, ma un oggetto con il suo nome
         assertNull(files["Test Mod BP/blocks/testmod/ruby_sign.json"])
-        assertNull(files["Test Mod BP/blocks/testmod/ruby_door.json"])
-        assertEquals("block.testmod.ruby_door", json("Test Mod BP/items/testmod/ruby_door.json").o("minecraft:item").o("components").o("minecraft:display_name")["value"])
+        // La porta: due parti (Bedrock mette da sé quella di sopra), verso del giocatore, si apre con la mano e la pietrarossa
+        val door = json("Test Mod BP/blocks/testmod/ruby_door.json").o("minecraft:block")
+        val dt = door.o("description").o("traits")
+        assertEquals(mapOf("enabled_states" to listOf("minecraft:multi_block_part"), "parts" to 2L, "direction" to "up"), dt["minecraft:multi_block"])
+        assertEquals(listOf("minecraft:cardinal_direction"), dt.o("minecraft:placement_direction")["enabled_states"])
+        val dc = door.o("components")
+        assertEquals(mapOf("hand" to true, "pair" to true, "sound" to "door"), dc["mmi:openable"])
+        assertEquals(mapOf("movement_type" to "popped"), dc["minecraft:movable"])
+        assertTrue(dc.containsKey("minecraft:redstone_consumer"))
+        // 4 versi × 2 metà × aperta/chiusa: 16 pezzi visibili ognuno in un solo stato (la cerniera resta a sinistra)
+        assertEquals(16, dc.o("minecraft:geometry").o("bone_visibility").size)
+        assertTrue(text("Test Mod BP/scripts/main.js").contains("registerCustomComponent(\"mmi:openable\""))
         // Botola: lastra sottile di 3 pixel
         val trap = json("Test Mod BP/blocks/testmod/ruby_trapdoor.json").o("minecraft:block").o("components")
         assertEquals(mapOf("origin" to listOf(-8L, 0L, -8L), "size" to listOf(16L, 3L, 16L)), trap["minecraft:collision_box"])

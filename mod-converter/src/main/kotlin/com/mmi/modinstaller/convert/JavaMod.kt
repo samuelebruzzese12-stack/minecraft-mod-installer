@@ -43,8 +43,24 @@ data class ConvertLimits(
     val maxNestedJarBytes: Int = 32 * 1024 * 1024,
     val maxNestedJars: Int = 64,
     /** Somma dei file letti in memoria per i JAR annidati. */
-    val maxNestedTotalBytes: Long = 64L * 1024 * 1024
-)
+    val maxNestedTotalBytes: Long = 64L * 1024 * 1024,
+    /**
+     * La versione di Minecraft Bedrock per cui si converte (quella installata, se si conosce). Dalla 1.26.40 i blocchi con
+     * più stati (porte, lastre, scale, staccionate…) usano gli strumenti nativi di Bedrock; prima restano con un solo aspetto.
+     */
+    val bedrockTarget: List<Int> = listOf(1, 26, 40)
+) {
+    /** Si possono usare i blocchi con più stati del formato 1.26.40? */
+    val statefulBlocks: Boolean get() = compare(bedrockTarget, listOf(1, 26, 40)) >= 0
+
+    private fun compare(a: List<Int>, b: List<Int>): Int {
+        for (i in 0 until maxOf(a.size, b.size)) {
+            val x = a.getOrElse(i) { 0 }; val y = b.getOrElse(i) { 0 }
+            if (x != y) return x.compareTo(y)
+        }
+        return 0
+    }
+}
 
 /**
  * Il contenuto di una mod Java visto come file: solo le voci che servono alla conversione (`assets/`, `data/`, i descrittori),

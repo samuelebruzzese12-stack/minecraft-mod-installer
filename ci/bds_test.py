@@ -11,6 +11,10 @@ prova), il server parte, carica i pacchetti e fa le prove dentro il gioco vero:
   * creature: ognuna nasce, è ancora viva dopo un secondo e ha la vita prevista;
   * comportamenti ricostruiti con la Script API, con un giocatore simulato: gli attrezzi si consumano scavando, i cibi danno
     i loro effetti, i minerali lasciano esperienza (alcuni per tipo);
+  * blocchi con più stati, piazzati dal giocatore simulato (uno per famiglia): la porta mette la metà di sopra, si apre e
+    si rompe tutta; la lastra sopra un'altra diventa doppia; botole e cancelli si aprono e chiudono; staccionate, muretti e
+    pannelli si collegano; il pulsante dà il segnale di pietrarossa; la pedana si accende sotto una creatura; la coltura
+    cresce con la farina d'ossa;
   * registro dei contenuti (content log) senza errori.
 Scrive USCITA/<add-on>.json con gli esiti e USCITA/riepilogo.txt. Esce con 1 se qualcosa non va.
 Usare il server Bedrock implica accettare l'EULA di Minecraft e l'informativa sulla privacy di Microsoft.
@@ -44,7 +48,7 @@ def read_addon(path):
             kind = m["modules"][0]["type"]
             packs[kind] = (n.split("/")[0], m)
     blocks, items, entities = [], [], []
-    behaviors = {"tools": [], "foods": [], "ores": []}
+    behaviors = {"tools": [], "foods": [], "ores": [], "stateful": []}
     bp = packs.get("data", (None,))[0]
     for n in names:
         if not bp or not n.startswith(bp + "/") or not n.endswith(".json"):
@@ -58,6 +62,26 @@ def read_addon(path):
             bid = d["minecraft:block"]["description"]["identifier"]
             blocks.append(bid)
             comps = d["minecraft:block"].get("components", {})
+            traits = d["minecraft:block"]["description"].get("traits", {})
+            kind = None
+            if "mmi:openable" in comps:
+                kind = "door" if comps["mmi:openable"].get("pair") else ("gate" if comps["mmi:openable"].get("gate") else "trapdoor")
+                if comps["mmi:openable"].get("hand") is False:
+                    kind = None   # ferro: si apre solo con la pietrarossa
+            elif "mmi:slab" in comps:
+                kind = "slab"
+            elif "mmi:button" in comps:
+                kind = "button"
+            elif "mmi:pressure_plate" in comps:
+                kind = "plate"
+            elif "mmi:crop" in comps:
+                kind = "crop"
+            elif "minecraft:connection" in traits:
+                kind = "connect"
+            elif "minecraft:corner_and_cardinal_direction" in str(traits):
+                kind = "stairs"
+            if kind and not any(x["kind"] == kind for x in behaviors["stateful"]):
+                behaviors["stateful"].append({"id": bid, "kind": kind})
             xp = comps.get("mmi:xp_on_break")
             mining = comps.get("minecraft:destructible_by_mining")
             secs = mining.get("seconds_to_destroy", 1) if isinstance(mining, dict) else 1
@@ -218,6 +242,66 @@ if (B.tools.length + B.foods.length + B.ores.length) gt.register("bb", "comporta
   });
 }).structureName("bb:plat").maxTicks(2000).tag("bb");
 
+// Blocchi con più stati: il giocatore simulato (in creativa) li piazza e li usa come farebbe un giocatore vero.
+if (B.stateful.length) gt.register("bb", "stati", (test) => {
+  const ok = [], bad = [];
+  const p = test.spawnSimulatedPlayer({ x: 7, y: 2, z: 7 }, "Prova", GameMode.Creative);
+  const spots = [[5, 5], [5, 7], [5, 9], [9, 5], [9, 7], [9, 9], [7, 5], [7, 9], [3, 7], [11, 7], [7, 3], [7, 11]];
+  const steps = [];
+  const st = (loc, name) => test.getBlock(loc).permutation.getState(name);
+  B.stateful.slice(0, spots.length).forEach((b, k) => {
+    const [x, z] = spots[k];
+    const floor = { x, y: 1, z }, at = { x, y: 2, z }, above = { x, y: 3, z }, east = { x: x + 1, y: 2, z }, floorEast = { x: x + 1, y: 1, z };
+    const is = (loc) => test.getBlock(loc).typeId === b.id;
+    const check = (cond, what) => (cond ? ok : bad).push(b.id + ": " + what + (cond ? "" : " NO"));
+    const place = (loc) => p.useItemOnBlock(new ItemStack(b.id, 1), loc, Direction.Up);
+    if (b.kind === "door") {
+      steps.push(() => place(floor));
+      steps.push(() => { check(is(at) && is(above) && st(above, "minecraft:multi_block_part") === 1, "si piazza con la metà di sopra"); p.interactWithBlock(at, Direction.Up); });
+      steps.push(() => { check(st(at, "mmi:open") === true && st(above, "mmi:open") === true, "si apre (tutte e due le metà)"); p.breakBlock(above, Direction.Up); });
+      steps.push(() => check(!is(at) && !is(above), "si rompe tutta"));
+    } else if (b.kind === "slab") {
+      steps.push(() => place(floor));
+      steps.push(() => { check(is(at) && st(at, "mmi:double") === false, "si piazza"); place(at); });
+      steps.push(() => check(is(at) && st(at, "mmi:double") === true && !is(above), "due lastre fanno una lastra doppia"));
+    } else if (b.kind === "trapdoor" || b.kind === "gate") {
+      steps.push(() => place(floor));
+      steps.push(() => { check(is(at) && st(at, "mmi:open") === false, "si piazza chiusa"); p.interactWithBlock(at, Direction.Up); });
+      steps.push(() => { check(st(at, "mmi:open") === true, "si apre"); p.interactWithBlock(at, Direction.Up); });
+      steps.push(() => check(st(at, "mmi:open") === false, "si richiude"));
+    } else if (b.kind === "connect") {
+      steps.push(() => place(floor));
+      steps.push(() => place(floorEast));
+      steps.push(() => check(is(at) && is(east) && st(at, "minecraft:connection_east") === true && st(east, "minecraft:connection_west") === true, "due vicini si collegano"));
+    } else if (b.kind === "stairs") {
+      steps.push(() => place(floor));
+      steps.push(() => check(is(at) && st(at, "minecraft:corner") !== undefined && st(at, "minecraft:cardinal_direction") !== undefined, "si piazza con verso e angolo"));
+    } else if (b.kind === "button") {
+      steps.push(() => place(floor));
+      steps.push(() => { check(is(at), "si piazza"); p.interactWithBlock(at, Direction.Up); });
+      steps.push(() => check(test.getBlock(at).getRedstonePower() === 15, "premuto dà il segnale di pietrarossa"));
+      steps.push(() => {});
+      steps.push(() => check(st(at, "mmi:powered") === false, "torna su da solo"));
+    } else if (b.kind === "plate") {
+      steps.push(() => place(floor));
+      let pig;
+      steps.push(() => { check(is(at), "si piazza"); pig = test.spawn("minecraft:pig", at); });
+      steps.push(() => check(st(at, "mmi:powered") === true && test.getBlock(at).getRedstonePower() === 15, "si accende sotto una creatura"));
+      steps.push(() => { pig.remove(); });
+      steps.push(() => check(st(at, "mmi:powered") === false, "si spegne quando se ne va"));
+    } else if (b.kind === "crop") {
+      steps.push(() => { test.setBlockType("minecraft:farmland", floor); test.setBlockType(b.id, at); });
+      steps.push(() => { check(is(at) && st(at, "mmi:age") === 0, "si pianta sulla terra arata"); p.setItem(new ItemStack("minecraft:bone_meal", 8), 0, true); p.interactWithBlock(at, Direction.Up); });
+      steps.push(() => check(st(at, "mmi:age") > 0, "cresce con la farina d'ossa"));
+    }
+  });
+  steps.forEach((f, i) => test.runAfterDelay(5 + i * 12, () => { try { f(); } catch (e) { bad.push("errore: " + e); } }));
+  test.runAfterDelay(10 + steps.length * 12, () => {
+    log({ test: "stati", ok: ok, bad: bad });
+    if (bad.length) test.fail(bad.length + " prove sui blocchi con stati non riuscite"); else test.succeed();
+  });
+}).structureName("bb:plat").maxTicks(2000).tag("bb");
+
 system.runTimeout(() => log({ test: "pronto" }), 20);
 '''
 
@@ -246,7 +330,7 @@ def test_pack(dest, blocks, items, entities, behaviors=None):
     open(os.path.join(dest, "structures", "bb", "plat.mcstructure"), "wb").write(
         lenbt.mcstructure(size, data, [("minecraft:air", {}), ("minecraft:stone", {})]))
     payload = json.dumps({"blocks": blocks, "items": items, "entities": entities, "batch": BATCH,
-                          "behaviors": behaviors or {"tools": [], "foods": [], "ores": []}})
+                          "behaviors": behaviors or {"tools": [], "foods": [], "ores": [], "stateful": []}})
     open(os.path.join(dest, "scripts", "main.js"), "w", encoding="utf-8").write(TEST_JS.replace("__DATA__", payload))
     return pid
 

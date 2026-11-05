@@ -72,10 +72,20 @@ object TestMod {
         model("item/ruby_sign", """{"parent":"minecraft:item/generated","textures":{"layer0":"testmod:item/ruby_sign"}}""")
         tex("item/ruby_sign")
         // Porta: forma di Minecraft che l'app non riproduce; resta come oggetto
-        state("ruby_door", """{"variants":{"facing=east,half=lower,hinge=left,open=false":{"model":"testmod:block/ruby_door_bottom_left"},
-            "facing=east,half=upper,hinge=left,open=false":{"model":"testmod:block/ruby_door_top_left"}}}""")
-        model("block/ruby_door_bottom_left", """{"parent":"minecraft:block/door_bottom_left","textures":{"bottom":"testmod:block/ruby_door_bottom","top":"testmod:block/ruby_door_top"}}""")
-        model("block/ruby_door_top_left", """{"parent":"minecraft:block/door_top_left","textures":{"bottom":"testmod:block/ruby_door_bottom","top":"testmod:block/ruby_door_top"}}""")
+        // Porta completa come in Minecraft (32 varianti: verso × metà × cerniera × aperta), scritta a mano dal generatore.
+        run {
+            val v = ArrayList<String>()
+            val rot = mapOf("east" to 0, "south" to 90, "west" to 180, "north" to 270)
+            for ((facing, y) in rot) for (half in listOf("lower", "upper")) for (hinge in listOf("left", "right")) for (open in listOf(false, true)) {
+                val part = (if (half == "lower") "bottom" else "top") + "_" + hinge + if (open) "_open" else ""
+                val ry = (y + if (open) (if (hinge == "left") 90 else 270) else 0) % 360
+                v.add("\"facing=$facing,half=$half,hinge=$hinge,open=$open,powered=false\":{\"model\":\"testmod:block/ruby_door_$part\"" + (if (ry != 0) ",\"y\":$ry" else "") + "}")
+            }
+            state("ruby_door", "{\"variants\":{" + v.joinToString(",") + "}}")
+            for (half in listOf("bottom", "top")) for (hinge in listOf("left", "right")) for (open in listOf("", "_open")) {
+                model("block/ruby_door_${half}_$hinge$open", """{"parent":"minecraft:block/door_${half}_$hinge$open","textures":{"bottom":"testmod:block/ruby_door_bottom","top":"testmod:block/ruby_door_top"}}""")
+            }
+        }
         tex("block/ruby_door_bottom"); tex("block/ruby_door_top")
         model("item/ruby_door", """{"parent":"minecraft:item/generated","textures":{"layer0":"testmod:item/ruby_door"}}""")
         tex("item/ruby_door")

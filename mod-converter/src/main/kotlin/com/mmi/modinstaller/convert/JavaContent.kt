@@ -18,7 +18,11 @@ class JavaItemDef(val id: Rl, val model: Rl?, val info: ItemModelInfo?, val kind
 /** Come si orienta il blocco quando lo piazzi, se la variante scelta permette di riprodurlo in Bedrock. */
 enum class Orientation { NONE, FACING, AXIS }
 
-class JavaBlockDef(val id: Rl, val model: Rl?, val stateCount: Int, val facing: Boolean, val orientation: Orientation = Orientation.NONE)
+class JavaBlockDef(
+    val id: Rl, val model: Rl?, val stateCount: Int, val facing: Boolean, val orientation: Orientation = Orientation.NONE,
+    /** Il file «blockstates» per intero (BLOCKBRIDGE: blocchi con più stati). */
+    val states: JBlockStates? = null
+)
 
 /** Una mod letta: i suoi file utili già divisi per tipo. */
 class JavaModContent(
@@ -99,7 +103,7 @@ object JavaContentReader {
             if (id.ns == "minecraft") continue
             val o = jar.json(n, limits.maxJsonBytes)?.asJsonObject()
             val pick = o?.let { pickModel(it) }
-            blocks.add(JavaBlockDef(id, pick?.model, pick?.states ?: 1, pick?.facing ?: false, pick?.orientation ?: Orientation.NONE))
+            blocks.add(JavaBlockDef(id, pick?.model, pick?.states ?: 1, pick?.facing ?: false, pick?.orientation ?: Orientation.NONE, o?.let { JBlockStates.parse(it) }))
         }
         val blockIds = blocks.map { it.id }.toSet()
 

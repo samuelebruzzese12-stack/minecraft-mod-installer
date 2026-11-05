@@ -110,7 +110,10 @@ internal class ItemOut(
     /** Effetti del cibo che esistono in Bedrock (ricostruiti con la Script API). */
     val effects: List<Behaviors.Effect> = emptyList(),
     /** Cosa resta in mano dopo averlo mangiato o bevuto (es. la ciotola). */
-    val convertsTo: String? = null
+    val convertsTo: String? = null,
+    /** Il blocco che l'oggetto piazza quando non è il suo (es. i semi → la coltura), e dove si può piazzare. */
+    val places: String? = null,
+    val placeOn: List<String>? = null
 )
 
 internal class BlockOut(
@@ -248,6 +251,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 val fallback = look.textures.values.firstOrNull { exists(it) }
                 if (fallback == null) null else BlockLook.Shape(look.elements, look.textures.mapValues { (_, t) -> if (exists(t)) t else fallback })
             }
+            is BlockLook.Stateful -> look
         }
 
         // ---- blocchi e oggetti di tutte le mod: servono tutti per tradurre le ricette
@@ -273,6 +277,13 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             for (b in mod.blocks) {
                 // Cartelli, letti, casse, stendardi, teste: in Java li disegna sempre il codice.
                 val byName = DRAWN_BY_CODE.any { b.id.path.endsWith(it) }
+                // BLOCKBRIDGE: i blocchi con più stati (porte, lastre, scale, staccionate…) con gli strumenti di Bedrock 1.26.40.
+                val sf = if (byName || !limits.statefulBlocks) null else statefulOf(b, mod, res, code, null, ::exists)
+                if (sf != null) {
+                    bl.add(b to LookResult(BlockLook.Stateful(sf), null))
+                    converted[b.id] = unique(bedrockId(b.id))
+                    continue
+                }
                 val raw = if (byName) LookResult(null, drawnByCode = true) else b.model?.let { res.blockLook(it) } ?: LookResult(null)
                 if (raw.drawnByCode) {
                     drawnByCode[mod] = (drawnByCode[mod] ?: 0) + 1
@@ -320,6 +331,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         val languages = LinkedHashMap<String, MutableMap<String, String>>()
         val reports = ArrayList<ModReport>()
 
+        fun res0(m: JavaModContent) = resolverModels.getValue(m)
         for (p in pending) {
             cancel()
             val mod = p.mod
@@ -343,6 +355,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
 
             // ---- blocchi
             val blockEntries = ArrayList<ConvertedEntry>()
+            val statefulCount = LinkedHashMap<BlockFamily, Int>()
             val shapeNotes = LinkedHashMap<String, MutableList<String>>()
             var lootCount = 0
             for ((b, look) in p.blocks) {
@@ -360,19 +373,46 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 if (props.estimated) estimates.add("Durezza dei blocchi stimata (il codice della mod non si è potuto leggere per questi blocchi)")
                 look.simplified?.let { shapeNotes.getOrPut(it) { ArrayList() }.add(name) }
                 val orientedStates = when (b.orientation) { Orientation.FACING -> 4; Orientation.AXIS -> 3; Orientation.NONE -> 1 }
-                if (b.facing && b.orientation == Orientation.NONE) simplified.add("Alcuni blocchi orientabili si piazzano sempre rivolti nello stesso verso")
-                else if (b.stateCount > orientedStates) simplified.add("I blocchi con più stati in Java (es. colture, interruttori) hanno un solo aspetto")
+                var finalLook = look.look
                 var lootPath: String? = null
-                mod.blockLoot[b.id]?.let { table ->
-                    val r = lootConv.convert(table)
-                    lootPath = "loot_tables/blocks/" + b.id.ns + "/" + b.id.path + ".json"
-                    lootOut[lootPath!!] = r.table
-                    lootCount++
-                    if (r.simplified) simplified.add("Bottini dei blocchi senza tocco di velluto, fortuna e condizioni speciali")
+                val sfLook = look.look as? BlockLook.Stateful
+                if (sfLook != null) {
+                    // Il bottino può cambiare con lo stato (lastra doppia = 2 lastre, coltura matura = raccolto): uno per stato.
+                    val table = mod.blockLoot[b.id]
+                    val byJson = LinkedHashMap<String, String>()
+                    val basePath = "loot_tables/blocks/" + b.id.ns + "/" + b.id.path
+                    val lootFor: ((Map<String, String>) -> String?)? = table?.let { t ->
+                        { state: Map<String, String> ->
+                            val r = lootConv.convert(t, state)
+                            if (r.simplified) simplified.add("Bottini dei blocchi senza tocco di velluto, fortuna e condizioni speciali")
+                            val lootKey = com.mmi.modinstaller.core.Json.stringify(r.table, pretty = false)
+                            byJson.getOrPut(lootKey) {
+                                val path = basePath + (if (byJson.isEmpty()) "" else "_" + (byJson.size + 1)) + ".json"
+                                lootOut[path] = r.table
+                                path
+                            }
+                        }
+                    }
+                    val rebuilt = statefulOf(b, mod, res0(mod), code, lootFor, ::exists) ?: sfLook.block
+                    finalLook = BlockLook.Stateful(rebuilt)
+                    if (table != null) { lootCount++; lootPath = byJson.values.firstOrNull() }
+                    statefulCount[rebuilt.family] = (statefulCount[rebuilt.family] ?: 0) + 1
+                    rebuilt.note?.let { simplified.add(it) }
+                } else {
+                    if (b.facing && b.orientation == Orientation.NONE) simplified.add("Alcuni blocchi orientabili si piazzano sempre rivolti nello stesso verso")
+                    else if (b.stateCount > orientedStates) simplified.add("I blocchi con più stati in Java (es. colture, interruttori) hanno un solo aspetto")
+                    mod.blockLoot[b.id]?.let { table ->
+                        val r = lootConv.convert(table, b.states?.let { defaultState(it) })
+                        lootPath = "loot_tables/blocks/" + b.id.ns + "/" + b.id.path + ".json"
+                        lootOut[lootPath!!] = r.table
+                        lootCount++
+                        if (r.simplified) simplified.add("Bottini dei blocchi senza tocco di velluto, fortuna e condizioni speciali")
+                    }
                 }
                 val friction = bc?.friction?.takeIf { Math.abs(it - 0.6) > 1e-6 }?.let { (1.0 - it).coerceIn(0.0, 0.9) }
-                blocksOut.add(BlockOut(mod, b.id, id, key, look.look, props.hardness, props.resistance, props.sound, props.toolTags, props.light, lootPath, b.orientation, bc, friction))
-                blockEntries.add(ConvertedEntry(b.id.toString(), id, mod.lang["it_it"]?.get(key) ?: name, describe(look.look)))
+                blocksOut.add(BlockOut(mod, b.id, id, key, finalLook, props.hardness, props.resistance, props.sound, props.toolTags, props.light, lootPath,
+                    if (sfLook != null) Orientation.NONE else b.orientation, bc, friction))
+                blockEntries.add(ConvertedEntry(b.id.toString(), id, mod.lang["it_it"]?.get(key) ?: name, describe(finalLook)))
             }
             for ((why, list) in shapeNotes) {
                 simplified.add(
@@ -398,6 +438,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             var armorCount = 0
             var foodsWithEffects = 0
             var toolsWorn = 0
+            var placers = 0
             val missingEffects = LinkedHashSet<String>()
             for (it in p.items) {
                 val id = converted.getValue(it.id)
@@ -443,13 +484,24 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 if (fx.isNotEmpty()) foodsWithEffects++
                 if (kind in TOOLS) toolsWorn++
                 val remainder = if (!edible) null else (ic?.craftRemainder ?: containerOf(ic))?.let { r -> resolver.item(r)?.id }
-                itemsOut.add(ItemOut(mod, it.id, id, key, it.info!!.icon, kind, material, it.info.handheld || kind in TOOLS, fuel, armorTex, ic, fx, remainder))
+                // Semi e simili (in Java ItemNameBlockItem): piazzano il loro blocco; le colture solo sulla terra arata.
+                val placed = ic?.blockId?.takeIf { b -> b != it.id }?.let { b -> blocksOut.firstOrNull { o -> o.java == b } }
+                val placeOn = if ((placed?.look as? BlockLook.Stateful)?.block?.family == BlockFamily.CROP) listOf("minecraft:farmland") else null
+                if (placed != null) placers++
+                itemsOut.add(ItemOut(mod, it.id, id, key, it.info!!.icon, kind, material, it.info.handheld || kind in TOOLS, fuel, armorTex, ic, fx, remainder, placed?.bedrockId, placeOn))
                 itemEntries.add(ConvertedEntry(it.id.toString(), id, mod.lang["it_it"]?.get(key) ?: name, if (blockOnlyItem) "solo oggetto" else kind.label))
             }
             if (mod.spawnEggs.isNotEmpty()) notConverted.add("Uova delle creature: ${mod.spawnEggs.size}")
             val scripted = ArrayList<String>()
+            if (statefulCount.isNotEmpty()) {
+                scripted.add(
+                    "Blocchi con più stati come in Java (piazzamento, aperture, collegamenti, pietrarossa): " +
+                        statefulCount.entries.joinToString(", ") { (f, n) -> "$n " + f.label + if (n == 1) "" else "/e" }.replace("a/e", "e").replace("o/e", "i").replace("e/e", "i")
+                )
+            }
             if (foodsWithEffects > 0) scripted.add("Effetti dei cibi (pozioni dopo averli mangiati): $foodsWithEffects " + if (foodsWithEffects == 1) "cibo" else "cibi")
             if (toolsWorn > 0) scripted.add("Usura degli attrezzi quando scavano: $toolsWorn " + if (toolsWorn == 1) "attrezzo" else "attrezzi")
+            if (placers > 0) fromCode.add("Oggetti che piazzano il loro blocco (semi e simili): $placers")
             val xpBlocks = blocksOut.count { b -> b.mod === mod && (b.code?.xp?.second ?: 0) > 0 }
             if (xpBlocks > 0) scripted.add("Esperienza dai minerali: $xpBlocks " + if (xpBlocks == 1) "blocco" else "blocchi")
             if (missingEffects.isNotEmpty()) {
@@ -674,7 +726,21 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         is BlockLook.Cube -> "blocco"
         is BlockLook.Cross -> "pianta"
         is BlockLook.Shape -> "blocco con forma propria"
+        is BlockLook.Stateful -> look.block.family.label + " (con i suoi stati)"
     }
+
+    /** Il blocco con più stati di Bedrock per un blocco Java, se la sua famiglia si sa ricostruire. */
+    private fun statefulOf(
+        b: JavaBlockDef, mod: JavaModContent, res: ModelResolver, code: Map<JavaModContent, ModCodeFacts?>,
+        lootFor: ((Map<String, String>) -> String?)?, exists: (Rl) -> Boolean
+    ): StatefulBlock? {
+        val st = b.states ?: return null
+        val fam = StateEngine.family(st, code[mod]?.blocks?.get(b.id)?.role, b.id) ?: return null
+        return StateEngine.build(st, fam, res, b.id, lootFor, exists)
+    }
+
+    /** Lo stato «di partenza» di un blocco Java (per i bottini dei blocchi che restano con un solo aspetto). */
+    private fun defaultState(st: JBlockStates): Map<String, String> = st.properties.mapValues { (k, v) -> StateEngine.defaultValue(k, v) }
 
     private class BlockProps(val hardness: Double, val resistance: Double, val sound: String, val toolTags: List<String>, val light: Int, val estimated: Boolean)
 
@@ -1022,6 +1088,13 @@ internal class AddonWriter(
                     val box = Geometry.bounds(look.elements)
                     collision = if (box != null) linkedMapOf("origin" to box.first.map { n(it) }, "size" to box.second.map { n(it) }) else false
                 }
+                is BlockLook.Stateful -> {
+                    val geoId = "geometry." + b.bedrockId.replace(':', '.')
+                    sink(rp + "models/blocks/" + b.bedrockId.replace(':', '/') + ".geo.json", json(Geometry.documentBones(geoId, look.block.bones.map { it.name to it.elements })))
+                    geometry = geoId
+                    for ((v, t) in look.block.textures) instances[Geometry.materialName(v)] = t
+                    instances["*"] = look.block.textures.values.first()
+                }
             }
             val transparency = instances.values.distinct().map { t -> textures.require(t, block = true) }
             val render = when {
@@ -1031,7 +1104,7 @@ internal class AddonWriter(
                 transparency.contains(Transparency.CUTOUT) -> "alpha_test"
                 else -> "opaque"
             }
-            val tinted = (b.look as? BlockLook.Cube)?.tinted == true || (b.look as? BlockLook.Cross)?.tinted == true
+            val tinted = (b.look as? BlockLook.Cube)?.tinted == true || (b.look as? BlockLook.Cross)?.tinted == true || (b.look as? BlockLook.Stateful)?.block?.tinted == true
             val mi = LinkedHashMap<String, Any?>()
             for ((k, t) in instances.entries.take(64)) {
                 val key = ModConverter.textureKey(t)
@@ -1040,7 +1113,11 @@ internal class AddonWriter(
                 if (tinted && textures.isGray(t) && render != "blend") inst["tint_method"] = if (b.java.path.contains("grass")) "grass" else "default_foliage"
                 mi[k] = inst
             }
-            sink(bp + "blocks/" + b.bedrockId.replace(':', '/') + ".json", json(blockDoc(b, geometry, mi, collision)))
+            val sfl = b.look as? BlockLook.Stateful
+            if (sfl != null) {
+                stateful = true
+                sink(bp + "blocks/" + b.bedrockId.replace(':', '/') + ".json", json(statefulDoc(b, sfl.block, geometry as String, mi)))
+            } else sink(bp + "blocks/" + b.bedrockId.replace(':', '/') + ".json", json(blockDoc(b, geometry, mi, collision)))
             blocksJson[b.bedrockId] = linkedMapOf("sound" to b.sound)
         }
 
@@ -1123,7 +1200,7 @@ internal class AddonWriter(
             "format_version" to 2L,
             "header" to linkedMapOf(
                 "name" to title, "description" to description, "uuid" to uuid, "version" to version,
-                "min_engine_version" to if (scripted) Behaviors.MIN_ENGINE else ModConverter.MIN_ENGINE
+                "min_engine_version" to when { stateful -> StateEngine.MIN_ENGINE; scripted -> Behaviors.MIN_ENGINE; else -> ModConverter.MIN_ENGINE }
             ),
             "modules" to modules
         )
@@ -1133,6 +1210,40 @@ internal class AddonWriter(
 
     /** Componenti personalizzati usati (per scrivere solo il codice che serve). */
     private val scripts = LinkedHashSet<String>()
+
+    /** C'è almeno un blocco con più stati (formato 1.26.40, quindi Minecraft 1.26.40 o più nuovo)? */
+    private var stateful = false
+
+    /** Il documento di un blocco con più stati (BLOCKBRIDGE, formato 1.26.40). */
+    private fun statefulDoc(b: BlockOut, sf: StatefulBlock, geoId: String, materials: Map<String, Any?>): Map<String, Any?> {
+        val c = LinkedHashMap<String, Any?>()
+        c["minecraft:display_name"] = b.nameKey
+        val vis = LinkedHashMap<String, Any?>()
+        for (bone in sf.bones) if (bone.visible != null) vis[bone.name] = bone.visible
+        c["minecraft:geometry"] = if (vis.isEmpty()) geoId else linkedMapOf("identifier" to geoId, "bone_visibility" to vis)
+        c["minecraft:material_instances"] = materials
+        c["minecraft:destructible_by_mining"] = if (b.hardness < 0) false else linkedMapOf("seconds_to_destroy" to b.hardness)
+        c["minecraft:destructible_by_explosion"] = if (b.resistance < 0) false else linkedMapOf("explosion_resistance" to b.resistance)
+        if (b.lightEmission > 0) c["minecraft:light_emission"] = b.lightEmission.toLong().coerceIn(0L, 15L)
+        b.friction?.let { c["minecraft:friction"] = Math.round(it * 1000.0) / 1000.0 }
+        c["minecraft:light_dampening"] = 0L
+        b.lootPath?.let { c["minecraft:loot"] = it }
+        c.putAll(sf.base)
+        // Dal formato 1.26: i gruppi del blocco sono una lista e hanno lo spazio dei nomi.
+        val tags = b.toolTags.filter { it.contains(':') }
+        if (tags.isNotEmpty()) c["minecraft:tags"] = tags
+        b.code?.xp?.let { (min, max) -> if (max > 0) c[Behaviors.XP_ON_BREAK] = linkedMapOf("min" to min.toLong(), "max" to max.toLong()) }
+        scripts.addAll(c.keys.filter { it.startsWith("mmi:") })
+        val description = linkedMapOf<String, Any?>(
+            "identifier" to b.bedrockId,
+            "menu_category" to linkedMapOf("category" to if (sf.family == BlockFamily.CROP) "nature" else "construction")
+        )
+        if (sf.customStates.isNotEmpty()) description["states"] = sf.customStates
+        if (sf.traits.isNotEmpty()) description["traits"] = sf.traits
+        val block = linkedMapOf<String, Any?>("description" to description, "components" to c)
+        if (sf.permutations.isNotEmpty()) block["permutations"] = sf.permutations.map { (cond, comps) -> linkedMapOf("condition" to cond, "components" to comps) }
+        return linkedMapOf("format_version" to StateEngine.FORMAT, "minecraft:block" to block)
+    }
 
     /** I file che usano componenti personalizzati con parametri vogliono il formato [Behaviors.FORMAT]. */
     private fun formatFor(components: Map<String, Any?>): String {
@@ -1234,6 +1345,11 @@ internal class AddonWriter(
             }
         }
         it.fuelSeconds?.let { s -> c["minecraft:fuel"] = linkedMapOf("duration" to maxOf(0.05, s)) }
+        it.places?.let { b ->
+            val placer = linkedMapOf<String, Any?>("block" to b)
+            it.placeOn?.let { on -> placer["use_on"] = on }
+            c["minecraft:block_placer"] = placer
+        }
         if (tags.isNotEmpty()) c["minecraft:tags"] = linkedMapOf("tags" to tags.distinct())
         return linkedMapOf(
             "format_version" to formatFor(c),

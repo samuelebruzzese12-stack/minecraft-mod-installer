@@ -62,6 +62,9 @@ sealed class BlockLook {
 
     /** Forma propria, fatta di elementi: diventa una geometria Bedrock. */
     class Shape(val elements: List<JElement>, val textures: Map<String, Rl>) : BlockLook()
+
+    /** Blocco con più stati (porte, lastre, scale, staccionate…): geometria a pezzi e stati di Bedrock 1.26.40. */
+    class Stateful(val block: StatefulBlock) : BlockLook()
 }
 
 /** Il risultato della lettura del modello di un blocco, con le eventuali semplificazioni (per il rapporto). */
@@ -160,17 +163,58 @@ class ModelResolver(private val jars: List<JavaJar>, private val limits: Convert
             "flower_pot_cross" -> t("plant")?.let { LookResult(BlockLook.Cross(it, false), "solo la pianta, senza il vaso") }
             "slab" -> shape(listOf(JElement.box(listOf(0.0, 0.0, 0.0), listOf(16.0, 8.0, 16.0), byFace = slabFaces())), tex)
             "slab_top" -> shape(listOf(JElement.box(listOf(0.0, 8.0, 0.0), listOf(16.0, 16.0, 16.0), byFace = slabFaces())), tex)
-            "stairs", "inner_stairs", "outer_stairs" -> shape(
+            "stairs" -> shape(
                 listOf(
                     JElement.box(listOf(0.0, 0.0, 0.0), listOf(16.0, 8.0, 16.0), byFace = slabFaces()),
                     JElement.box(listOf(8.0, 8.0, 0.0), listOf(16.0, 16.0, 16.0), byFace = slabFaces())
-                ), tex, if (family == "stairs") null else "scala diritta (gli angoli no)"
+                ), tex
             )
+            "inner_stairs" -> shape(
+                listOf(
+                    JElement.box(listOf(0.0, 0.0, 0.0), listOf(16.0, 8.0, 16.0), byFace = slabFaces()),
+                    JElement.box(listOf(8.0, 8.0, 0.0), listOf(16.0, 16.0, 16.0), byFace = slabFaces()),
+                    JElement.box(listOf(0.0, 8.0, 8.0), listOf(8.0, 16.0, 16.0), byFace = slabFaces())
+                ), tex
+            )
+            "outer_stairs" -> shape(
+                listOf(
+                    JElement.box(listOf(0.0, 0.0, 0.0), listOf(16.0, 8.0, 16.0), byFace = slabFaces()),
+                    JElement.box(listOf(8.0, 8.0, 8.0), listOf(16.0, 16.0, 16.0), byFace = slabFaces())
+                ), tex
+            )
+            // Porte (dalla 1.19.3): un pannello spesso 3 pixel sul lato ovest; aperta o a destra = texture specchiata.
+            "door_bottom_left", "door_bottom_right", "door_bottom_left_open", "door_bottom_right_open",
+            "door_top_left", "door_top_right", "door_top_left_open", "door_top_right_open" -> {
+                val v = if (family.startsWith("door_top")) "#top" else "#bottom"
+                val mirrored = family.endsWith("right") || family.endsWith("left_open")
+                val west = JFace(if (mirrored) doubleArrayOf(16.0, 0.0, 0.0, 16.0) else doubleArrayOf(0.0, 0.0, 16.0, 16.0), v, 0, false)
+                val east = JFace(if (mirrored) doubleArrayOf(0.0, 0.0, 16.0, 16.0) else doubleArrayOf(16.0, 0.0, 0.0, 16.0), v, 0, false)
+                val faces = linkedMapOf(
+                    "down" to JFace(doubleArrayOf(13.0, 0.0, 16.0, 16.0), v, 0, false), "up" to JFace(doubleArrayOf(13.0, 0.0, 16.0, 16.0), v, 0, false),
+                    "north" to JFace(doubleArrayOf(3.0, 0.0, 0.0, 16.0), v, 0, false), "south" to JFace(doubleArrayOf(0.0, 0.0, 3.0, 16.0), v, 0, false),
+                    "west" to west, "east" to east
+                )
+                shape(listOf(JElement(doubleArrayOf(0.0, 0.0, 0.0), doubleArrayOf(3.0, 16.0, 16.0), null, null, 0.0, faces)), tex)
+            }
+            "template_fence_gate", "template_custom_fence_gate", "template_fence_gate_wall", "template_custom_fence_gate_wall" ->
+                shape(gate(open = false, wall = family.endsWith("wall")), tex)
+            "template_fence_gate_open", "template_custom_fence_gate_open", "template_fence_gate_wall_open", "template_custom_fence_gate_wall_open" ->
+                shape(gate(open = true, wall = family.contains("wall")), tex)
+            "fence_side", "custom_fence_side_north" -> shape(
+                listOf(
+                    JElement.box(listOf(7.0, 12.0, 0.0), listOf(9.0, 15.0, 9.0), all = "#texture"),
+                    JElement.box(listOf(7.0, 6.0, 0.0), listOf(9.0, 9.0, 9.0), all = "#texture")
+                ), tex
+            )
+            "template_wall_side" -> shape(listOf(JElement.box(listOf(5.0, 0.0, 0.0), listOf(11.0, 14.0, 8.0), all = "#wall")), tex)
+            "template_wall_side_tall" -> shape(listOf(JElement.box(listOf(5.0, 0.0, 0.0), listOf(11.0, 16.0, 8.0), all = "#wall")), tex)
+            "template_glass_pane_side" -> shape(listOf(JElement.box(listOf(7.0, 0.0, 0.0), listOf(9.0, 16.0, 7.0), all = "#pane", byFace = mapOf("up" to "#edge", "down" to "#edge"))), tex)
+            "template_glass_pane_side_alt" -> shape(listOf(JElement.box(listOf(7.0, 0.0, 9.0), listOf(9.0, 16.0, 16.0), all = "#pane", byFace = mapOf("up" to "#edge", "down" to "#edge"))), tex)
             "carpet" -> shape(listOf(JElement.box(listOf(0.0, 0.0, 0.0), listOf(16.0, 1.0, 16.0), all = "#wool")), tex)
-            "pressure_plate_up", "pressure_plate_down" ->
-                shape(listOf(JElement.box(listOf(1.0, 0.0, 1.0), listOf(15.0, 1.0, 15.0), all = "#texture")), tex)
-            "button", "button_pressed", "button_inventory" ->
-                shape(listOf(JElement.box(listOf(5.0, 0.0, 6.0), listOf(11.0, 2.0, 10.0), all = "#texture")), tex)
+            "pressure_plate_up" -> shape(listOf(JElement.box(listOf(1.0, 0.0, 1.0), listOf(15.0, 1.0, 15.0), all = "#texture")), tex)
+            "pressure_plate_down" -> shape(listOf(JElement.box(listOf(1.0, 0.0, 1.0), listOf(15.0, 0.5, 15.0), all = "#texture")), tex)
+            "button", "button_inventory" -> shape(listOf(JElement.box(listOf(5.0, 0.0, 6.0), listOf(11.0, 2.0, 10.0), all = "#texture")), tex)
+            "button_pressed" -> shape(listOf(JElement.box(listOf(5.0, 0.0, 6.0), listOf(11.0, 1.0, 10.0), all = "#texture")), tex)
             "fence_post", "fence_inventory", "custom_fence_post" ->
                 shape(listOf(JElement.box(listOf(6.0, 0.0, 6.0), listOf(10.0, 16.0, 10.0), all = "#texture")), tex, "solo il palo (non si collega)")
             "template_wall_post", "wall_inventory" ->
@@ -217,6 +261,69 @@ class ModelResolver(private val jars: List<JavaJar>, private val limits: Convert
     }
 
     private fun slabFaces() = mapOf("up" to "#top", "down" to "#bottom", "side" to "#side")
+
+    /** Il cancello di Minecraft (chiuso lungo l'asse X, aperto con le ante verso sud); «wall» = abbassato di 3 pixel. */
+    private fun gate(open: Boolean, wall: Boolean): List<JElement> {
+        val dy = if (wall) -3.0 else 0.0
+        fun b(x0: Double, y0: Double, z0: Double, x1: Double, y1: Double, z1: Double) =
+            JElement.box(listOf(x0, y0 + dy, z0), listOf(x1, y1 + dy, z1), all = "#texture")
+        val posts = listOf(b(0.0, 5.0, 7.0, 2.0, 16.0, 9.0), b(14.0, 5.0, 7.0, 16.0, 16.0, 9.0))
+        val bars = if (!open) listOf(
+            b(6.0, 6.0, 7.0, 8.0, 15.0, 9.0), b(8.0, 6.0, 7.0, 10.0, 15.0, 9.0), b(2.0, 6.0, 7.0, 6.0, 9.0, 9.0),
+            b(2.0, 12.0, 7.0, 6.0, 15.0, 9.0), b(10.0, 6.0, 7.0, 14.0, 9.0, 9.0), b(10.0, 12.0, 7.0, 14.0, 15.0, 9.0)
+        ) else listOf(
+            b(0.0, 6.0, 13.0, 2.0, 15.0, 15.0), b(14.0, 6.0, 13.0, 16.0, 15.0, 15.0), b(0.0, 6.0, 9.0, 2.0, 9.0, 13.0),
+            b(0.0, 12.0, 9.0, 2.0, 15.0, 13.0), b(14.0, 6.0, 9.0, 16.0, 9.0, 13.0), b(14.0, 12.0, 9.0, 16.0, 15.0, 13.0)
+        )
+        return posts + bars
+    }
+
+    /** Gli elementi di un modello (anche di quelli di Minecraft che l'app conosce), per comporre i blocchi con più stati. */
+    class ModelGeometry(val elements: List<JElement>, val textures: Map<String, Rl>, val tinted: Boolean)
+
+    fun geometry(modelRl: Rl): ModelGeometry? {
+        val r = resolve(modelRl) ?: return null
+        val family = r.vanillaParent?.removePrefix("minecraft:")?.substringAfterLast('/')
+        // Colture: 4 piani (in Bedrock la forma a X è una sola e non va bene per i blocchi con più stati).
+        if ((r.elements == null || r.elements.isEmpty()) && family == "crop") {
+            val t = texture(r.textures, "#crop") ?: return null
+            fun plane(f: List<Double>, to: List<Double>, faces: List<String>) =
+                JElement(f.toDoubleArray(), to.toDoubleArray(), null, null, 0.0, faces.associateWith { JFace(null, "#crop", 0, false) })
+            return ModelGeometry(
+                listOf(
+                    plane(listOf(4.0, -1.0, 0.0), listOf(4.0, 15.0, 16.0), listOf("west", "east")),
+                    plane(listOf(12.0, -1.0, 0.0), listOf(12.0, 15.0, 16.0), listOf("west", "east")),
+                    plane(listOf(0.0, -1.0, 4.0), listOf(16.0, 15.0, 4.0), listOf("north", "south")),
+                    plane(listOf(0.0, -1.0, 12.0), listOf(16.0, 15.0, 12.0), listOf("north", "south"))
+                ), mapOf("crop" to t), false
+            )
+        }
+        return when (val look = blockLook(modelRl).look) {
+            is BlockLook.Shape -> ModelGeometry(look.elements, look.textures, false)
+            is BlockLook.Cube -> {
+                val faces = LinkedHashMap<String, JFace>()
+                val tex = LinkedHashMap<String, Rl>()
+                for ((d, t) in look.faces) {
+                    val v = "f_" + t.path.substringAfterLast('/').map { if (it.isLetterOrDigit()) it else '_' }.joinToString("")
+                    tex[v] = t
+                    faces[d] = JFace(null, "#$v", 0, look.tinted)
+                }
+                ModelGeometry(listOf(JElement(doubleArrayOf(0.0, 0.0, 0.0), doubleArrayOf(16.0, 16.0, 16.0), null, null, 0.0, faces)), tex, look.tinted)
+            }
+            is BlockLook.Cross -> {
+                val rot = 45.0
+                val o = doubleArrayOf(8.0, 8.0, 8.0)
+                fun f(d: String) = JFace(null, "#cross", 0, look.tinted)
+                ModelGeometry(
+                    listOf(
+                        JElement(doubleArrayOf(0.8, 0.0, 8.0), doubleArrayOf(15.2, 16.0, 8.0), o, 'y', rot, linkedMapOf("north" to f("north"), "south" to f("south"))),
+                        JElement(doubleArrayOf(8.0, 0.0, 0.8), doubleArrayOf(8.0, 16.0, 15.2), o, 'y', rot, linkedMapOf("west" to f("west"), "east" to f("east")))
+                    ), mapOf("cross" to look.texture), look.tinted
+                )
+            }
+            else -> null
+        }
+    }
 
     private fun shape(elements: List<JElement>, tex: Map<String, String>, note: String? = null): LookResult? {
         val r = fromElements(elements, tex)
@@ -289,7 +396,22 @@ object Geometry {
     private fun n(v: Double): Any = if (v == Math.floor(v) && Math.abs(v) < 1e9) v.toLong() else Math.round(v * 10000.0) / 10000.0
 
     /** Il documento `.geo.json` (formato 1.21.0) per il blocco; le facce usano come materiale il nome della variabile Java. */
-    fun document(identifier: String, elements: List<JElement>): Map<String, Any?> {
+    fun document(identifier: String, elements: List<JElement>): Map<String, Any?> = documentBones(identifier, listOf("root" to elements))
+
+    /** Come [document], con più pezzi (BLOCKBRIDGE: uno per stato del blocco, mostrati o nascosti da «bone_visibility»). */
+    fun documentBones(identifier: String, bones: List<Pair<String, List<JElement>>>): Map<String, Any?> {
+        val boneList = bones.map { (name, els) -> linkedMapOf("name" to name, "pivot" to listOf(0L, 0L, 0L), "cubes" to cubes(els)) }
+        val description = linkedMapOf<String, Any?>(
+            "identifier" to identifier, "texture_width" to 16L, "texture_height" to 16L,
+            "visible_bounds_width" to 3L, "visible_bounds_height" to 3L, "visible_bounds_offset" to listOf(0L, 0.5, 0L)
+        )
+        return linkedMapOf(
+            "format_version" to "1.21.0",
+            "minecraft:geometry" to listOf(linkedMapOf("description" to description, "bones" to boneList))
+        )
+    }
+
+    private fun cubes(elements: List<JElement>): List<Any?> {
         val cubes = ArrayList<Any?>()
         for (e in elements) {
             val size = (0..2).map { e.to[it] - e.from[it] }
@@ -324,19 +446,7 @@ object Geometry {
             cube["uv"] = uv
             cubes.add(cube)
         }
-        val description = linkedMapOf<String, Any?>(
-            "identifier" to identifier, "texture_width" to 16L, "texture_height" to 16L,
-            "visible_bounds_width" to 3L, "visible_bounds_height" to 3L, "visible_bounds_offset" to listOf(0L, 0.5, 0L)
-        )
-        return linkedMapOf(
-            "format_version" to "1.21.0",
-            "minecraft:geometry" to listOf(
-                linkedMapOf(
-                    "description" to description,
-                    "bones" to listOf(linkedMapOf("name" to "root", "pivot" to listOf(0L, 0L, 0L), "cubes" to cubes))
-                )
-            )
-        )
+        return cubes
     }
 
     /** Nome del materiale Bedrock per una variabile Java («#0» → «t_0»). */

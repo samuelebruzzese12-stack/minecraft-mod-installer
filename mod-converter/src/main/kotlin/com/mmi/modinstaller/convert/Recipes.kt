@@ -323,14 +323,20 @@ class LootConverter(private val resolver: ItemResolver) {
 
     class Result(val table: Map<String, Any?>, val simplified: Boolean)
 
-    fun convert(o: Map<String, Any?>): Result {
+    /**
+     * [state]: lo stato Java del blocco (es. «type=double», «age=7»), se si conosce: le condizioni sullo stato del blocco
+     * («block_state_property») allora si valutano come in Java invece di essere ignorate.
+     */
+    fun convert(o: Map<String, Any?>, state: Map<String, String>? = null): Result {
+        lossy = false
         var simplified = false
         val pools = ArrayList<Any?>()
         for (p in o["pools"].asJsonList().orEmpty()) {
             val pool = p.asJsonObject() ?: continue
+            if (state != null && conditions(pool["conditions"], state) == false) continue
             val entries = ArrayList<Any?>()
             for (e in pool["entries"].asJsonList().orEmpty()) {
-                val r = entry(e.asJsonObject() ?: continue)
+                val r = entry(e.asJsonObject() ?: continue, state)
                 if (r.second) simplified = true
                 r.first?.let { entries.add(it) }
             }
@@ -341,12 +347,15 @@ class LootConverter(private val resolver: ItemResolver) {
                 if (type == "random_chance") {
                     val ch = (c.asJsonObject()?.get("chance") as? Number)?.toDouble()
                     if (ch != null) out["conditions"] = listOf(linkedMapOf("condition" to "random_chance", "chance" to ch))
-                } else if (type != "survives_explosion") simplified = true
+                } else if (type != "survives_explosion" && !(state != null && condition(c.asJsonObject(), state) != null)) simplified = true
             }
             pools.add(out)
         }
-        return Result(linkedMapOf("pools" to pools), simplified)
+        return Result(linkedMapOf("pools" to pools), simplified || lossy)
     }
+
+    /** Si è scartato un ramo per attrezzi speciali (tocco di velluto, cesoie): il bottino resta quello con l'attrezzo normale. */
+    private var lossy = false
 
     private fun rolls(v: Any?): Any = when (v) {
         is Number -> v.toLong().coerceAtLeast(1)
@@ -357,8 +366,49 @@ class LootConverter(private val resolver: ItemResolver) {
         else -> 1L
     }
 
+    /** Vero/falso se tutte le condizioni si sanno valutare con lo stato del blocco, null se qualcuna no. */
+    private fun conditions(v: Any?, state: Map<String, String>): Boolean? {
+        var all = true
+        for (c in v.asJsonList().orEmpty()) {
+            when (condition(c.asJsonObject(), state)) { false -> return false; null -> all = false; true -> {} }
+        }
+        return if (all) true else null
+    }
+
+    /** Una condizione di Java: quelle sullo stato del blocco si valutano; «sopravvive all'esplosione» è vera; gli attrezzi
+     *  speciali (tocco di velluto, cesoie) sono falsi (si scava con un attrezzo normale); le altre non si sanno (null). */
+    private fun condition(c: Map<String, Any?>?, state: Map<String, String>): Boolean? {
+        c ?: return null
+        return when ((c["condition"] as? String)?.removePrefix("minecraft:")) {
+            "block_state_property" -> {
+                val props = c["properties"].asJsonObject() ?: return null
+                props.all { (k, v) ->
+                    val actual = state[k] ?: return null
+                    when (v) {
+                        is Map<*, *> -> {
+                            val n = actual.toIntOrNull() ?: return null
+                            val min = (v["min"] as? Number)?.toInt() ?: Int.MIN_VALUE; val max = (v["max"] as? Number)?.toInt() ?: Int.MAX_VALUE
+                            n in min..max
+                        }
+                        else -> v.toString() == actual
+                    }
+                }
+            }
+            "survives_explosion" -> true
+            "match_tool" -> { lossy = true; false }
+            "inverted" -> condition(c["term"].asJsonObject(), state)?.not()
+            "any_of", "alternative" -> {
+                val r = c["terms"].asJsonList().orEmpty().map { condition(it.asJsonObject(), state) }
+                if (r.any { it == true }) true else if (r.all { it == false }) false else null
+            }
+            "all_of" -> conditions(c["terms"], state)
+            else -> null
+        }
+    }
+
     /** L'elemento convertito (o null se non si converte) e se è stato semplificato. */
-    private fun entry(e: Map<String, Any?>): Pair<Map<String, Any?>?, Boolean> {
+    private fun entry(e: Map<String, Any?>, state: Map<String, String>? = null): Pair<Map<String, Any?>?, Boolean> {
+        if (state != null && conditions(e["conditions"], state) == false) return null to false
         val type = (e["type"] as? String)?.removePrefix("minecraft:")
         return when (type) {
             "item" -> {
@@ -368,26 +418,43 @@ class LootConverter(private val resolver: ItemResolver) {
                 val functions = ArrayList<Any?>()
                 for (f in e["functions"].asJsonList().orEmpty()) {
                     val fo = f.asJsonObject() ?: continue
+                    // Una funzione con condizioni sullo stato (es. «2 se è una lastra doppia»): vale solo se lo stato le rispetta.
+                    if (fo["conditions"] != null) {
+                        val ok = if (state != null) conditions(fo["conditions"], state) else null
+                        if (ok == false) continue
+                        if (ok == null && state == null) { simplified = true; continue }
+                    }
                     when ((fo["function"] as? String)?.removePrefix("minecraft:")) {
                         "set_count" -> countJson(fo["count"])?.let { functions.add(linkedMapOf("function" to "set_count", "count" to it)) } ?: run { simplified = true }
                         "explosion_decay", "copy_name", "copy_components", "copy_nbt", "copy_state" -> {}
                         else -> simplified = true
                     }
                 }
-                if (e["conditions"].asJsonList()?.any { (it.asJsonObject()?.get("condition") as? String)?.endsWith("survives_explosion") != true } == true) simplified = true
+                if (e["conditions"].asJsonList()?.any { (it.asJsonObject()?.get("condition") as? String)?.endsWith("survives_explosion") != true } == true &&
+                    (state == null || conditions(e["conditions"], state) == null)) simplified = true
                 val out = linkedMapOf<String, Any?>("type" to "item", "name" to item.id, "weight" to ((e["weight"] as? Number)?.toLong() ?: 1L))
                 if (item.data != null) functions.add(0, linkedMapOf("function" to "set_data", "data" to item.data.toLong()))
                 if (functions.isNotEmpty()) out["functions"] = functions
                 out to simplified
             }
             "alternatives" -> {
-                // Di solito: [con il tocco di velluto → il blocco, altrimenti → il minerale]. Si tiene l'ultimo ramo.
                 val children = e["children"].asJsonList()?.mapNotNull { it.asJsonObject() }.orEmpty()
+                if (state != null) {
+                    // Come in Java: il primo ramo le cui condizioni valgono (es. coltura matura → raccolto, altrimenti → semi).
+                    for (c in children) {
+                        when (conditions(c["conditions"], state)) {
+                            true -> return entry(c, state).first to false
+                            false -> continue
+                            null -> break
+                        }
+                    }
+                }
+                // Di solito: [con il tocco di velluto → il blocco, altrimenti → il minerale]. Si tiene l'ultimo ramo.
                 val last = children.lastOrNull() ?: return null to true
-                entry(last).first to true
+                entry(last, state).first to true
             }
             "group", "sequence" -> {
-                val first = e["children"].asJsonList()?.firstNotNullOfOrNull { c -> c.asJsonObject()?.let { entry(it).first } }
+                val first = e["children"].asJsonList()?.firstNotNullOfOrNull { c -> c.asJsonObject()?.let { entry(it, state).first } }
                 first to true
             }
             "empty" -> linkedMapOf<String, Any?>("type" to "empty", "weight" to ((e["weight"] as? Number)?.toLong() ?: 1L)) to false
