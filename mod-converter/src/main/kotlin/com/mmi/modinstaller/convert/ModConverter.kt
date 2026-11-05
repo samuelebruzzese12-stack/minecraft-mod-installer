@@ -80,7 +80,8 @@ class ConversionPlan internal constructor(
     internal val entities: List<EntityOut>,
     internal val featureRules: List<Pair<String, Map<String, Any?>>>,
     internal val customTags: Map<String, Set<String>>,
-    internal val languages: Map<String, Map<String, String>>
+    internal val languages: Map<String, Map<String, String>>,
+    internal val sounds: List<SoundOut> = emptyList()
 ) : java.io.Closeable {
     val itemCount: Int get() = items.size
     val blockCount: Int get() = blocks.size
@@ -336,6 +337,10 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         val reports = ArrayList<ModReport>()
 
         fun res0(m: JavaModContent) = resolverModels.getValue(m)
+        // Suoni: prima quelli che le creature usano (letti dal loro codice), poi gli altri finché c'è posto.
+        val soundPriority = code.values.flatMap { f -> f?.entities?.values?.flatMap { e -> e.sounds.values }.orEmpty() }.toSet()
+        val soundPlan = SoundConverter.plan(mods, soundPriority)
+        val plannedSounds = soundPlan.sounds.map { it.java }.toSet()
         for (p in pending) {
             cancel()
             val mod = p.mod
@@ -670,6 +675,16 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                     .mapNotNull { (k, label) -> c[k]?.let { "$it $label" } }.joinToString(", ").ifEmpty { "nessuna registrazione di contenuto" } +
                     (if (f.analysis.exhausted) " (lettura parziale: codice molto grande)" else "")
             } ?: if (mod.jar.classEntries.isEmpty()) null else "Il codice della mod non si è potuto leggere"
+            // ---- suoni
+            val modSounds = soundPlan.sounds.filter { it.mod === mod }
+            if (modSounds.isNotEmpty()) {
+                notConverted.removeAll { it.startsWith("Suoni") }
+                fromCode.add("Suoni: ${modSounds.size} eventi, ${modSounds.sumOf { it.files.size }} file (si sentono con /playsound e dove la mod li usa)")
+                val withSound = entitiesOut.count { e -> e.mod === mod && e.facts?.sounds?.values?.any { it in plannedSounds } == true }
+                if (withSound > 0) scripted.add("Versi delle creature (dal codice: ambiente, ferita, morte): $withSound " + if (withSound == 1) "creatura" else "creature")
+            }
+            soundPlan.dropped[mod]?.let { n -> notConverted.add("Suoni non inclusi per non fare un add-on troppo grande: $n eventi") }
+
             // ---- registro dei componenti (BLOCKBRIDGE): ogni voce e ogni file del JAR, con quello che se n'è fatto
             val components = ArrayList<Component>()
             val blockById = blockEntries.associateBy { it.javaId }
@@ -680,7 +695,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             for (e in entitiesOut) if (e.mod === mod) entById[e.java.toString()]?.let { components.add(ComponentRegistry.entity(e, it)) }
             components.addAll(ComponentRegistry.recipes(ok, skips))
             for (n in notConverted) components.add(Component("gruppo", n, n, emptyList(), "non convertito", null, "—", emptyList(), listOf(n), ComponentStatus.DATA_KEPT))
-            components.addAll(ComponentRegistry.files(mod))
+            components.addAll(ComponentRegistry.files(mod, soundsConverted = modSounds.isNotEmpty()))
             reports.add(
                 ModReport(
                     mod.jar.label, mod.identity.name ?: mod.jar.label, mod.identity.loader, mod.identity.version,
@@ -691,7 +706,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         }
         return ConversionPlan(
             failed + reports, mods, itemsOut, blocksOut, recipesOut, lootOut, featuresOut, entitiesOut, rulesOut,
-            resolver.customTags.mapValues { it.value.toSet() }, languages
+            resolver.customTags.mapValues { it.value.toSet() }, languages, soundPlan.sounds
         )
     }
 
@@ -1196,6 +1211,24 @@ internal class AddonWriter(
             langs.add(code)
         }
         sink(rp + "texts/languages.json", json(langs))
+
+        // ---- suoni: definizioni, file .ogg della mod e versi delle creature
+        if (plan.sounds.isNotEmpty()) {
+            sink(rp + "sounds/sound_definitions.json", json(SoundConverter.definitions(plan.sounds)))
+            val copied = HashSet<String>()
+            for (snd in plan.sounds) for (f in snd.files) {
+                cancel()
+                if (!copied.add(f.path)) continue
+                f.mod.jar.bytes(f.entry, SoundConverter.MAX_BYTES.toInt())?.let { sink(rp + f.path + ".ogg", it) }
+            }
+            val known = plan.sounds.associateBy { it.java }
+            val ents = LinkedHashMap<String, Map<String, String>>()
+            for (e in plan.entities) {
+                val ev = e.facts?.sounds.orEmpty().mapNotNull { (k, v) -> known[v]?.let { k to it.id } }.toMap()
+                if (ev.isNotEmpty()) ents[e.bedrockId] = ev
+            }
+            if (ents.isNotEmpty()) sink(rp + "sounds.json", json(SoundConverter.entitySounds(ents)))
+        }
 
         // ---- comportamenti (Script API) e manifest: alla fine, quando si sa quali componenti personalizzati servono
         val js = Behaviors.mainJs(scripts)

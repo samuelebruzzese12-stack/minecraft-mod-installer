@@ -108,6 +108,16 @@ class JavaJar private constructor(
 
     fun text(name: String, max: Int): String? = bytes(name, max)?.let { String(it, Charsets.UTF_8) }
 
+    /** La grandezza di una voce (senza leggerla), o null se non c'è. */
+    fun size(name: String): Long? {
+        if (name in names) {
+            memory[name]?.let { return it.size.toLong() }
+            return zip?.getEntry(name)?.size
+        }
+        for (n in nested) n.size(name)?.let { return it }
+        return null
+    }
+
     /** I byte di una voce .class del JAR principale, o null se manca o è troppo grande. */
     fun classBytes(entry: String, max: Int = 4 * 1024 * 1024): ByteArray? {
         memory[entry]?.let { return if (it.size <= max) it else null }

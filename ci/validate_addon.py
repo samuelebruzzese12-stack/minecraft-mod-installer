@@ -104,12 +104,14 @@ def check(path, registry, items_ok):
                 k, v = line.split("=", 1)
                 lang[k] = v
     geometries = set()
+    bones_of = {}
     entity_geometries = set()
     animations = set()
     for n in names:
         if n.startswith(rp + "models/blocks/") and n.endswith(".geo.json"):
             for g in js(n)["minecraft:geometry"]:
                 geometries.add(g["description"]["identifier"])
+                bones_of[g["description"]["identifier"]] = {b.get("name") for b in g.get("bones", [])}
         if n.startswith(rp + "models/entity/") and n.endswith(".geo.json"):
             for g in js(n)["minecraft:geometry"]:
                 entity_geometries.add(g["description"]["identifier"])
@@ -153,7 +155,13 @@ def check(path, registry, items_ok):
             cb = checked.get("components", {}).get("minecraft:collision_box")
             if isinstance(cb, dict):
                 checked["components"]["minecraft:collision_box"] = [cb]
-            if d.get("format_version") != "1.21.80":
+            # Stati con valori vero/falso o numeri: il server Bedrock ufficiale (1.26.62) li accetta e li usa (provato con
+            # ci/bds_test.py), lo schema di Mojang elenca solo i testi. Per lo schema si scrivono come testi.
+            for k, v in list(checked.get("description", {}).get("states", {}).items()):
+                if isinstance(v, list) and v and all(isinstance(x, (bool, int)) for x in v):
+                    checked["description"]["states"][k] = [str(x).lower() for x in v]
+            # 1.21.80: blocchi semplici; 1.21.90: con comportamenti della Script API; 1.26.40: blocchi con più stati (BLOCKBRIDGE)
+            if d.get("format_version") not in ("1.21.80", "1.21.90", "1.26.40"):
                 problems.append(n + ": format_version inatteso " + str(d.get("format_version")))
             for e in block_v.iter_errors(checked):
                 problems.append("%s: %s (in %s)" % (n, e.message[:160], "/".join(map(str, e.absolute_path))))
@@ -161,8 +169,17 @@ def check(path, registry, items_ok):
             defined.add(ident)
             c = doc["components"]
             g = c.get("minecraft:geometry")
-            if g not in ("minecraft:geometry.full_block", "minecraft:geometry.cross") and g not in geometries:
-                problems.append(n + ": la geometria «%s» non c'è" % g)
+            gid = g.get("identifier") if isinstance(g, dict) else g
+            if gid not in ("minecraft:geometry.full_block", "minecraft:geometry.cross") and gid not in geometries:
+                problems.append(n + ": la geometria «%s» non c'è" % gid)
+            if isinstance(g, dict):
+                for bone in g.get("bone_visibility", {}):
+                    if bone not in bones_of.get(gid, set()):
+                        problems.append(n + ": l'osso «%s» di bone_visibility non è nella geometria" % bone)
+            for perm in doc.get("permutations", []):
+                pl = perm.get("components", {}).get("minecraft:loot")
+                if pl and bp + pl not in names:
+                    problems.append(n + ": manca la tabella dei bottini " + pl + " (variante)")
             methods = set()
             for inst, mi in c.get("minecraft:material_instances", {}).items():
                 tex = mi.get("texture")
@@ -268,6 +285,23 @@ def check(path, registry, items_ok):
                 problems.append(n + ": l'armatura non corrisponde a un oggetto")
             if not texture_file_ok(d["textures"]["default"]):
                 problems.append(n + ": manca la texture " + d["textures"]["default"])
+    # Suoni (BLOCKBRIDGE): ogni file citato c'è, ogni verso delle creature è un suono definito.
+    sd_name = rp + "sounds/sound_definitions.json"
+    sounds = {}
+    if sd_name in names:
+        sounds = js(sd_name).get("sound_definitions", {})
+        for sid, sdef in sounds.items():
+            for f in sdef.get("sounds", []):
+                fn = f if isinstance(f, str) else f.get("name")
+                if rp + fn + ".ogg" not in names and rp + fn + ".fsb" not in names:
+                    problems.append(sd_name + ": manca il file " + fn + ".ogg (suono " + sid + ")")
+    if rp + "sounds.json" in names:
+        ents = js(rp + "sounds.json").get("entity_sounds", {}).get("entities", {})
+        for eid, e in ents.items():
+            for ev, sid in e.get("events", {}).items():
+                sid = sid if isinstance(sid, str) else sid.get("sound")
+                if sid not in sounds:
+                    problems.append("sounds.json: %s/%s usa il suono %s che non è definito" % (eid, ev, sid))
     return problems
 
 

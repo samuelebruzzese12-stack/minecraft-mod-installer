@@ -107,7 +107,7 @@ internal object ComponentRegistry {
     }
 
     /** Le voci del JAR raggruppate per tipo: ogni file finisce in un gruppo, con quello che se n'è fatto. */
-    fun files(mod: JavaModContent): List<Component> {
+    fun files(mod: JavaModContent, soundsConverted: Boolean = false): List<Component> {
         class G(val label: String, val status: ComponentStatus, val what: String)
         val groups = LinkedHashMap<String, Pair<G, Int>>()
         fun add(key: String, g: G) { groups[key] = g to ((groups[key]?.second ?: 0) + 1) }
@@ -122,7 +122,10 @@ internal object ComponentRegistry {
                 n.startsWith("assets/") && area == "lang" -> add("lang", G("Testi e traduzioni", ComponentStatus.CONVERTED, "tutte le lingue della mod"))
                 n.startsWith("assets/") && (area == "blockstates" || area == "models" || area == "items") -> add("models", G("Modelli e stati dei blocchi", ComponentStatus.CONVERTED, "forme, varianti e icone"))
                 n.startsWith("assets/") && area == "textures" -> add("textures", G("Texture", ComponentStatus.CONVERTED, "quelle usate da oggetti, blocchi, armature e creature"))
-                n.startsWith("assets/") && (area == "sounds" || n.endsWith("sounds.json")) -> add("sounds", G("Suoni", ComponentStatus.DATA_KEPT, "non ancora convertiti: restano nel JAR originale"))
+                n.startsWith("assets/") && (area == "sounds" || n.endsWith("sounds.json")) -> add(
+                    "sounds", if (soundsConverted) G("Suoni", ComponentStatus.CONVERTED, "eventi e file .ogg nel pacchetto di risorse; i versi delle creature dal codice")
+                    else G("Suoni", ComponentStatus.DATA_KEPT, "non convertiti: restano nel JAR originale")
+                )
                 n.startsWith("assets/") && (area == "geo" || area == "animations") -> add("geo", G("Modelli e animazioni GeckoLib", ComponentStatus.CONVERTED, "convertiti per le creature"))
                 n.startsWith("assets/") && (area == "shaders" || area == "post_effect") -> add("shaders", G("Shader", ComponentStatus.NOT_RECONSTRUCTABLE, "gli add-on Bedrock non possono usare shader propri"))
                 n.startsWith("assets/") && area == "particles" -> add("particles", G("Particelle", ComponentStatus.DATA_KEPT, "non ancora convertite"))

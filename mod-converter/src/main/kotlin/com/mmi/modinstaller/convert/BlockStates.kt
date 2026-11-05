@@ -346,7 +346,8 @@ object StateEngine {
         override fun collision(j: Map<String, String>, els: List<JElement>): Any? {
             if (j["open"] == "true") return false
             val ns = j["facing"] == "north" || j["facing"] == "south"
-            return if (ns) box(0.0, 0.0, 6.0, 16.0, 24.0, 10.0) else box(6.0, 0.0, 0.0, 10.0, 24.0, 16.0)
+            // Dal formato 1.26 i riquadri alti più di un blocco vanno scritti come elenco.
+            return listOf(if (ns) box(0.0, 0.0, 6.0, 16.0, 24.0, 10.0) else box(6.0, 0.0, 0.0, 10.0, 24.0, 16.0))
         }
         override val note = "Cancelli: non si abbassano accanto ai muretti"
     }

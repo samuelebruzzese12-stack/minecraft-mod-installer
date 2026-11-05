@@ -142,21 +142,15 @@ jobs:
           cat convert-online-report.txt
           exit $status
 
-      - name: Prova nel server Bedrock ufficiale (blocchi, porte, creature, cibi… nel gioco vero)
-        id: bds
+      - name: Conserva gli add-on convertiti (per le prove nel server Bedrock)
         if: steps.convert.outcome != 'skipped'
         continue-on-error: true
-        timeout-minutes: 90
-        run: |
-          python3 -I ci/fetch_bds.py bds
-          python3 -I ci/bds_test.py bds bds-out real-mods-out/*.mcaddon; status=$?
-          {
-            echo "== Prove nel server Bedrock ufficiale (Bedrock Dedicated Server di Mojang, con un giocatore simulato)"
-            echo "Usare il server Bedrock implica accettare l'EULA di Minecraft e l'informativa sulla privacy di Microsoft."
-            cat bds-out/riepilogo.txt
-          } > bds-report.txt 2>&1
-          cat bds-report.txt
-          exit $status
+        uses: actions/upload-artifact@v4
+        with:
+          name: addon-convertiti
+          path: real-mods-out/*.mcaddon
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Riepilogo della prova col servizio vero
         if: always()
@@ -178,14 +172,6 @@ jobs:
               echo '```'
             else
               echo "(nessun resoconto della conversione)"
-            fi
-            echo "### Prove nel gioco vero (server Bedrock ufficiale): ${{ steps.bds.outcome }}"
-            if [ -f bds-report.txt ]; then
-              echo '```'
-              cat bds-report.txt
-              echo '```'
-            else
-              echo "(le prove nel server Bedrock non sono partite)"
             fi
             echo "### Modpack veri"
             if [ -f online-modpack-report.txt ]; then
@@ -281,8 +267,6 @@ jobs:
             convert-online-report.txt
             catalog-online-report.txt
             modpack-online-report.txt
-            bds-report.txt
-            bds-out
             fake-modrinth-out
             app/build/reports/tests/testDebugUnitTest
           if-no-files-found: ignore
@@ -305,7 +289,6 @@ jobs:
             catalog-online-report.txt
             modpack-online-report.txt
             convert-online-report.txt
-            bds-report.txt
 
       # Il finto Minecraft serve solo alla prova su emulatore: non entra mai nella Release.
       # Questi passaggi non possono bloccare la consegna dell'APK (vengono dopo e non fanno fallire l'esecuzione).
@@ -463,3 +446,64 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           files: prova-emulatore-${{ matrix.part }}.zip
+
+  # Prove nel gioco vero: il server Bedrock ufficiale di Mojang carica gli add-on delle mod vere e un giocatore simulato
+  # piazza blocchi, apre porte, mangia, scava; le creature devono nascere vive. Non blocca la consegna dell'APK.
+  bds:
+    name: Prove nel server Bedrock ufficiale
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    continue-on-error: true
+    steps:
+      - name: Scarica il codice
+        uses: actions/checkout@v4
+
+      - name: Scarica gli add-on convertiti
+        id: addons
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: addon-convertiti
+          path: real-mods-out
+
+      - name: Server Bedrock e prove
+        id: bds
+        if: steps.addons.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 -I ci/fetch_bds.py bds
+          python3 -I ci/bds_test.py bds bds-out real-mods-out/*.mcaddon; status=$?
+          {
+            echo "== Prove nel server Bedrock ufficiale (Bedrock Dedicated Server di Mojang, con un giocatore simulato)"
+            echo "Usare il server Bedrock implica accettare l'EULA di Minecraft e l'informativa sulla privacy di Microsoft."
+            cat bds-out/riepilogo.txt
+          } > bds-report.txt 2>&1
+          cat bds-report.txt
+          exit $status
+
+      - name: Riepilogo
+        if: always()
+        run: |
+          {
+            echo "## Prove nel gioco vero (server Bedrock ufficiale): ${{ steps.bds.outcome }}"
+            if [ -f bds-report.txt ]; then echo '```'; cat bds-report.txt; echo '```'; else echo "(le prove non sono partite)"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Salva i risultati
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prove-server-bedrock
+          path: |
+            bds-report.txt
+            bds-out
+          if-no-files-found: ignore
+
+      - name: Allega il rapporto alla Release
+        if: github.event_name != 'pull_request' && steps.bds.outcome != 'skipped'
+        continue-on-error: true
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          files: bds-report.txt

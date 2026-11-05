@@ -369,6 +369,8 @@ internal object CodeEntities {
         c["minecraft:health"] = linkedMapOf("value" to r(hp), "max" to r(hp))
         c["minecraft:collision_box"] = linkedMapOf("width" to r(f.width ?: width), "height" to r(f.height ?: height))
         c["minecraft:physics"] = linkedMapOf<String, Any?>()
+        // Java: il verso «ambiente» ogni 4 secondi circa (Mob.getAmbientSoundInterval = 80 tick, con un po' di caso).
+        if (f.sounds.containsKey("ambient")) c["minecraft:ambient_sound_interval"] = linkedMapOf("value" to 4.0, "range" to 8.0, "event_name" to "ambient")
         c["minecraft:pushable"] = linkedMapOf("is_pushable" to true, "is_pushable_by_piston" to true)
         c["minecraft:nameable"] = linkedMapOf<String, Any?>()
         c["minecraft:jump.static"] = linkedMapOf<String, Any?>()

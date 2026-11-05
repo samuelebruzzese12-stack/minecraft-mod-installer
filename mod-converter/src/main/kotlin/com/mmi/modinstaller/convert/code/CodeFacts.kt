@@ -112,7 +112,9 @@ class EntityFacts(
     /** Il renderer è di GeckoLib: il modello sta nei file della mod. */
     val geckoLib: Boolean,
     val geoModel: Rl?,
-    val geoAnimation: Rl?
+    val geoAnimation: Rl?,
+    /** I suoni della creatura letti dal codice (getAmbientSound, getHurtSound, getDeathSound): evento Bedrock → suono della mod. */
+    val sounds: Map<String, Rl> = emptyMap()
 )
 
 /** Tutto quello che si è capito dal codice di una mod. */
@@ -504,8 +506,25 @@ object CodeFactsReader {
                     model = model(modelObj, entityArg)
                 }
             }
+            // Suoni: i metodi della creatura restituiscono il SoundEvent registrato dalla mod.
+            val sounds = LinkedHashMap<String, Rl>()
+            if (entityClass != null) {
+                val me = Obj(entityClass).also { it.initialized = true }
+                for ((event, name, desc) in listOf(
+                    Triple("ambient", "getAmbientSound", "()Lnet/minecraft/sounds/SoundEvent;"),
+                    Triple("hurt", "getHurtSound", "(Lnet/minecraft/world/damagesource/DamageSource;)Lnet/minecraft/sounds/SoundEvent;"),
+                    Triple("death", "getDeathSound", "()Lnet/minecraft/sounds/SoundEvent;")
+                )) {
+                    val target = ip.resolve(entityClass, name, desc) ?: continue
+                    if (!target.first.name.let { owner -> ip.classes.find(owner) != null }) continue
+                    val v = runCatching { ip.run(target.first, target.second, me, Desc.params(desc).map { Unk }, 1) }.getOrNull()
+                    val r = resolve(v)
+                    val id = a.idOf(r) ?: (r as? Obj)?.let { o -> o.origin?.args?.firstNotNullOfOrNull { sem.rl(it) } }
+                    if (id != null && id.ns != "minecraft") sounds[event] = id
+                }
+            }
             return EntityFacts(
-                reg.id, classes, vanillaBase, category, width, height, fireImmune, attrs, goals, texture, model, shadow, rendererClass, gecko, geoModel, geoAnim
+                reg.id, classes, vanillaBase, category, width, height, fireImmune, attrs, goals, texture, model, shadow, rendererClass, gecko, geoModel, geoAnim, sounds
             )
         }
 

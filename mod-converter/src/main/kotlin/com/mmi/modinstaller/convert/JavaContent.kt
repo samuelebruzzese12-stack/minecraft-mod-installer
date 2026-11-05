@@ -45,8 +45,16 @@ class JavaModContent(
     /** Icona piatta degli oggetti-blocco (porte, cartelli…): serve se il blocco non si può convertire. */
     val blockItems: Map<Rl, JavaItemDef>,
     val geoModels: List<String>,
-    val codeFeatures: List<String>
+    val codeFeatures: List<String>,
+    /** I suoni della mod (assets/<ns>/sounds.json): evento «ns:nome» → file. */
+    val sounds: Map<Rl, JSound> = emptyMap()
 )
+
+/** Un file di un suono Java: «ns:percorso» sotto assets/ns/sounds/ (oppure un altro evento, se [event]). */
+class JSoundFile(val name: Rl, val volume: Double, val pitch: Double, val weight: Int, val stream: Boolean, val event: Boolean)
+
+/** Un evento sonoro Java (una voce di sounds.json). */
+class JSound(val files: List<JSoundFile>, val subtitle: String?)
 
 /** Legge da un JAR tutto quello che serve alla conversione. Non esegue nulla: solo file JSON e PNG. */
 object JavaContentReader {
@@ -191,9 +199,33 @@ object JavaContentReader {
         if (enchant > 0) code.add("Incantesimi: $enchant")
         val dims = all.count { it.startsWith("data/") && !it.contains("/tags/") && (it.contains("/dimension/") || it.contains("/worldgen/biome/")) && it.endsWith(".json") }
         if (dims > 0) code.add("Dimensioni o biomi: $dims")
+        // ---- suoni: sounds.json di ogni spazio dei nomi
+        val soundMap = LinkedHashMap<Rl, JSound>()
+        for (ns in namespaces) {
+            val o = jar.json("assets/$ns/sounds.json", limits.maxJsonBytes)?.asJsonObject() ?: continue
+            for ((event, v) in o) {
+                val e = v.asJsonObject() ?: continue
+                val files = ArrayList<JSoundFile>()
+                for (x in e["sounds"].asJsonList().orEmpty()) {
+                    when (x) {
+                        is String -> Rl.parse(x, ns)?.let { files.add(JSoundFile(it, 1.0, 1.0, 1, false, false)) }
+                        is Map<*, *> -> {
+                            val name = Rl.parse(x["name"] as? String, ns) ?: continue
+                            files.add(
+                                JSoundFile(
+                                    name, (x["volume"] as? Number)?.toDouble() ?: 1.0, (x["pitch"] as? Number)?.toDouble() ?: 1.0,
+                                    (x["weight"] as? Number)?.toInt() ?: 1, x["stream"] == true, x["type"] == "event"
+                                )
+                            )
+                        }
+                    }
+                }
+                if (files.isNotEmpty()) soundMap[Rl(ns, event)] = JSound(files, e["subtitle"] as? String)
+            }
+        }
         return JavaModContent(
             jar, identity, namespaces, blocks, items, lang, itemTags, blockTags, recipes, loot, configured, placed, modifiers,
-            fuels, spawnEggs, blockItems, geo, code
+            fuels, spawnEggs, blockItems, geo, code, soundMap
         )
     }
 

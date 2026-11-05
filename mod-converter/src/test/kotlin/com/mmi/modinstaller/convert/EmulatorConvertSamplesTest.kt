@@ -26,7 +26,8 @@ class EmulatorConvertSamplesTest {
 
     @Test fun contentModBecomesAnAddon() {
         val dir = samples()
-        val conv = ModConverter()
+        // Il finto Minecraft della prova su emulatore è la 1.21.50: l'app converte per quella versione (senza Script API).
+        val conv = ModConverter(ConvertLimits(bedrockTarget = listOf(1, 21, 50)))
         val tmp = Files.createTempDirectory("conv-emu").toFile()
         try {
             conv.analyze(listOf(ConvertSource(File(dir, "Mod_Da_Convertire.jar"), "Mod_Da_Convertire.jar"))).use { plan ->
