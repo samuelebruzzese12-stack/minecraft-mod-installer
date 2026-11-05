@@ -1,0 +1,42 @@
+name: Cache di sviluppo BLOCKBRIDGE
+
+# Solo per lo sviluppo: raccoglie in una Release privata («devcache») il materiale che il server di sviluppo non può scaricare
+# (mod vere da Modrinth, mappe dei nomi di Mojang, server Bedrock ufficiale, pacchetti npm delle Script API, CFR).
+# Non tocca l'app e non compila nulla. Usare il server Bedrock implica accettare l'EULA di Minecraft e l'informativa Microsoft.
+on:
+  push:
+    branches: [devcache]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cache:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Scarica il materiale
+        run: python3 -I ci/devcache.py devcache
+      - name: Impacchetta
+        run: |
+          cd devcache
+          zip -qr ../mods.zip mods
+          zip -qr ../mojang-mappings.zip mojang-mappings
+          zip -qr ../npm.zip npm
+          cd ..
+          ls -l mods.zip mojang-mappings.zip npm.zip devcache/*.zip devcache/*.jar devcache/indice.txt || true
+          { echo '```'; cat devcache/indice.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Pubblica nella Release «devcache»
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete devcache --yes --cleanup-tag 2>/dev/null || true
+          files="mods.zip mojang-mappings.zip npm.zip devcache/indice.txt"
+          for f in devcache/bedrock-server-*.zip devcache/cfr-*.jar; do [ -f "$f" ] && files="$files $f"; done
+          gh release create devcache --prerelease --target "$GITHUB_SHA" --title "Cache di sviluppo (non è l'app)" \
+            --notes "Materiale per lo sviluppo di BLOCKBRIDGE. Non è una versione dell'app." $files
