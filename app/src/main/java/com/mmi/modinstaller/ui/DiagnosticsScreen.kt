@@ -219,7 +219,11 @@ private fun CrashCard(crash: CrashView, onOpenProfile: (String) -> Unit, onShare
         a.minecraft?.let { StatRow("Minecraft", it) }
         a.loader?.let { StatRow("Caricatore", it) }
         a.java?.let { StatRow("Java", it) }
-        a.description?.let { StatRow("Descrizione", it) }
+        a.description?.let {
+            // Una frase intera: sotto l'etichetta, non accanto (StatRow è per i valori brevi).
+            Text("Descrizione", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(it, style = MaterialTheme.typography.bodyMedium)
+        }
         if (crash.truncated) {
             ToneRow(Tone.WARN, "File molto grande", "Letto solo fino a " + formatBytes(crash.bytesRead) + ": l'analisi guarda l'inizio e la fine.")
         }
