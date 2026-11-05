@@ -1101,7 +1101,10 @@ check_sample "Appunti.txt" "riconosciuto" "rapporto file non minecraft"
 if open_sample "Gun_Mod.zip"; then
   if $UI wait "INSTALLA IN MINECRAFT" 40; then
     sleep 1; shot "rapporto gun mod"
-    expect "Nel file ci sono 2 contenuti" "Gun Mod BP" "Gun Mod RP" "importali insieme" "INSTALLA IN MINECRAFT (2)" "2 di 2 selezionati"
+    expect "Nel file ci sono 2 contenuti" "Gun Mod BP" "Gun Mod RP" "INSTALLA IN MINECRAFT (2)" "2 di 2 selezionati"
+    # È un controllo informativo: nell'elenco dei controlli viene dopo gli avvisi e su uno schermo basso finisce sotto il bordo
+    # (prova 14: la pagina non era stata scorsa). Si cerca scorrendo.
+    expect_scroll "importali insieme"
     if $UI has "Dipendenza non trovata"; then fail "Gun_Mod: la dipendenza tra i due pacchetti risulta «non trovata»"; fi
   else
     shot "rapporto gun mod mancante"; fail "il rapporto di Gun_Mod.zip non compare entro 40 s"
