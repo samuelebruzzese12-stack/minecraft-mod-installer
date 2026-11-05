@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import com.mmi.modinstaller.DownloadsState
 import com.mmi.modinstaller.DownloadsViewModel
 import com.mmi.modinstaller.MainViewModel
+import com.mmi.modinstaller.ModpackViewModel
 import com.mmi.modinstaller.ModsViewModel
 import com.mmi.modinstaller.PickPurpose
 import com.mmi.modinstaller.Section
@@ -34,7 +35,14 @@ import com.mmi.modinstaller.download.DownloadState
 
 /** DOWNLOAD MANAGER: scarica un file da un sito consentito, con ripresa e verifica dell'impronta. */
 @Composable
-fun DownloadsScreen(dl: DownloadsState, model: DownloadsViewModel, vm: MainViewModel, mods: ModsViewModel, onMenu: () -> Unit) {
+fun DownloadsScreen(
+    dl: DownloadsState,
+    model: DownloadsViewModel,
+    vm: MainViewModel,
+    mods: ModsViewModel,
+    modpacks: ModpackViewModel,
+    onMenu: () -> Unit
+) {
     var toDelete by remember { mutableStateOf<DownloadRecord?>(null) }
     var toSave by remember { mutableStateOf<DownloadRecord?>(null) }
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
@@ -127,6 +135,13 @@ fun DownloadsScreen(dl: DownloadsState, model: DownloadsViewModel, vm: MainViewM
                         mods.addFiles(listOf(uri), "download")
                     }
                 },
+                onOpenModpack = {
+                    val uri = model.contentUri(item)
+                    if (uri != null) {
+                        vm.openSection(Section.MODPACKS)
+                        modpacks.openFile(uri)
+                    }
+                },
                 onSave = {
                     toSave = item
                     saver.launch(item.fileName)
@@ -191,6 +206,7 @@ private fun DownloadCard(
     model: DownloadsViewModel,
     onOpenInstaller: () -> Unit,
     onOpenMods: () -> Unit,
+    onOpenModpack: () -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -288,13 +304,11 @@ private fun DownloadCard(
                     GreenButton(text = "APRI NELL'INSTALLER BEDROCK", onClick = onOpenInstaller, height = 52.dp)
                 } else if (java) {
                     GreenButton(text = "AGGIUNGI AL MOD MANAGER", onClick = onOpenMods, height = 52.dp)
+                } else if (DownloadsViewModel.isModpack(record.fileName)) {
+                    GreenButton(text = "APRI NEL MODPACK MANAGER", onClick = onOpenModpack, height = 52.dp)
                 } else {
                     Text(
-                        text = if (DownloadsViewModel.isModpack(record.fileName)) {
-                            "Modpack: lo leggerà il MODPACK MANAGER (in arrivo). Intanto puoi salvarne una copia."
-                        } else {
-                            "Tipo di file non riconosciuto dall'app. Puoi salvarne una copia."
-                        },
+                        text = "Tipo di file non riconosciuto dall'app. Puoi salvarne una copia.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

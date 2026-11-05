@@ -815,18 +815,18 @@ class ModManagerTest {
         assertTrue(mm.journal(pid).isEmpty())
     }
 
-    @Test fun extraFilesListsSettingsAndSkipsManagedFoldersHiddenFilesAndTheTrash() {
+    @Test fun extraFilesListsSettingsAndSkipsRegisteredFilesHiddenFilesAndTheTrash() {
+        installed(install(modFile("a", "1.0.0")))
+        val off = installed(install(modFile("b", "1.0.0")))
+        mm.setEnabled(pid, off.item.id, false)
         val dir = File(root, pid)
         Fx.file(dir, "config/sodium.toml", "a".toByteArray())
         Fx.file(dir, "config/sub/b.json", "b".toByteArray())
         Fx.file(dir, "options.txt", "c".toByteArray())
-        Fx.file(dir, "mods/dentro.jar", "d".toByteArray())
-        Fx.file(dir, "resourcepacks/x.zip", "e".toByteArray())
-        Fx.file(dir, "shaderpacks/s.zip", "e".toByteArray())
-        Fx.file(dir, "datapacks/d.zip", "e".toByteArray())
         Fx.file(dir, ".nascosto", "f".toByteArray())
         Fx.file(dir, ".trash/x/y.bin", "g".toByteArray())
         Fx.file(dir, "config/.temporaneo", "h".toByteArray())
+        Fx.file(dir, "mods/.a.jar.part", "i".toByteArray())
         val link = File(dir, "config/collegamento.toml")
         val linked = try {
             java.nio.file.Files.createSymbolicLink(link.toPath(), File(dir, "options.txt").toPath())
@@ -834,9 +834,31 @@ class ModManagerTest {
         } catch (e: Exception) {
             false
         }
+        // «a» (attivo) e «b» (disattivato) sono nell'elenco della cartella mods: non sono «extra».
         assertEquals(listOf("config/sodium.toml", "config/sub/b.json", "options.txt"), mm.extraFiles(pid))
         if (linked) assertFalse(mm.extraFiles(pid).contains("config/collegamento.toml"))
         assertTrue(mm.extraFiles("non-esiste").isEmpty())
+    }
+
+    @Test fun extraFilesIncludeWhatSitsInTheManagedFoldersWithoutBeingRegistered() {
+        installed(install(modFile("a", "1.0.0")))
+        val dir = File(root, pid)
+        Fx.file(dir, "mods/1.20.1/dentro.jar", "d".toByteArray())
+        Fx.file(dir, "mods/leggimi.txt", "e".toByteArray())
+        Fx.file(dir, "resourcepacks/x.zip", "e".toByteArray())
+        Fx.file(dir, "shaderpacks/cartella/s.txt", "e".toByteArray())
+        assertEquals(
+            listOf("mods/1.20.1/dentro.jar", "mods/leggimi.txt", "resourcepacks/x.zip", "shaderpacks/cartella/s.txt"),
+            mm.extraFiles(pid)
+        )
+        // E finiscono nello ZIP esportato: niente di ciò che il profilo contiene sparisce in silenzio.
+        val out = java.io.ByteArrayOutputStream()
+        val result = mm.exportZip(pid, out) as Outcome.Ok
+        assertEquals(
+            setOf("mods/a-1.0.0.jar", "mods/1.20.1/dentro.jar", "mods/leggimi.txt", "resourcepacks/x.zip", "shaderpacks/cartella/s.txt"),
+            zipEntries(out.toByteArray()).keys
+        )
+        assertEquals(4, result.value.extras)
     }
 
     @Test fun extraFilesDoNotGoDeeperThanTheLimit() {

@@ -90,7 +90,7 @@ jobs:
         env:
           MMI_SAMPLES: ${{ github.workspace }}/samples-test
           MMI_FAKE_MODRINTH: http://127.0.0.1:8765/modrinth/v2
-        run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :catalog:test :app:testDebugUnitTest --continue --stacktrace
+        run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :catalog:test :modpack-engine:test :app:testDebugUnitTest --continue --stacktrace
 
       # Prova COL SERVIZIO VERO: le richieste e le risposte reali di Modrinth (ricerca con i filtri, versioni, dipendenze), un
       # download vero dal suo CDN con verifica dell'impronta, la lettura del .jar scaricato e l'installazione in un profilo.
@@ -196,6 +196,7 @@ jobs:
             jar-analyzer/build/reports/tests/test
             mod-manager/build/reports/tests/test
             catalog/build/reports/tests/test
+            modpack-engine/build/reports/tests/test
             catalog-online-report.txt
             fake-modrinth-out
             app/build/reports/tests/testDebugUnitTest

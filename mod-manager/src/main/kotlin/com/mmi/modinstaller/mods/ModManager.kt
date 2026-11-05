@@ -441,27 +441,34 @@ class ModManager(
     // ------------------------------------------------------------------------------------------ file di un modpack
 
     /**
-     * I file della cartella del profilo che non sono mod o pacchetti gestiti: impostazioni (`config/…`), script e altro che un
-     * modpack porta con sé. Percorsi relativi con `/`, in ordine. Non contano il cestino, i nomi che iniziano con un punto
-     * (temporanei) e i collegamenti simbolici.
+     * I file della cartella del profilo che non sono mod o pacchetti registrati: impostazioni (`config/…`), script e altro che
+     * un modpack porta con sé, e anche i file messi nelle cartelle `mods`, `resourcepacks`… che l'elenco non conosce
+     * (sottocartelle, tipi diversi da .jar/.zip). Percorsi relativi con `/`, in ordine. Non contano i file registrati (attivi
+     * o disattivati), il cestino, i nomi che iniziano con un punto (temporanei) e i collegamenti simbolici.
      */
     fun extraFiles(profileId: String): List<String> {
         val base = profileDir(profileId)
         if (!base.isDirectory) return emptyList()
-        val managed = ItemCategory.values().map { it.folder }.toSet()
+        val items = repo.items(profileId)
+        val managed = ItemCategory.values().associate { c -> c.folder to items.filter { it.category == c }.map { it.fileName }.toSet() }
         val out = ArrayList<String>()
-        fun walk(dir: File, prefix: String, depth: Int) {
+        fun walk(dir: File, prefix: String, depth: Int, known: Set<String>?) {
             if (depth > MAX_EXTRA_DEPTH || out.size >= MAX_EXTRA_FILES) return
             val children = dir.listFiles()?.sortedBy { it.name } ?: return
             for (f in children) {
                 if (f.name.startsWith(".")) continue
                 if (java.nio.file.Files.isSymbolicLink(f.toPath())) continue
-                if (depth == 0 && f.name in managed) continue
                 val path = if (prefix.isEmpty()) f.name else prefix + "/" + f.name
-                if (f.isDirectory) walk(f, path, depth + 1) else if (f.isFile && out.size < MAX_EXTRA_FILES) out.add(path)
+                if (f.isDirectory) {
+                    walk(f, path, depth + 1, if (depth == 0) managed[f.name] else null)
+                } else if (f.isFile && out.size < MAX_EXTRA_FILES) {
+                    // Direttamente dentro una cartella gestita: i file registrati (anche disattivati) non sono «extra».
+                    if (known != null && f.name.removeSuffix(ProfileItem.DISABLED_SUFFIX) in known) continue
+                    out.add(path)
+                }
             }
         }
-        walk(base, "", 0)
+        walk(base, "", 0, null)
         return out
     }
 

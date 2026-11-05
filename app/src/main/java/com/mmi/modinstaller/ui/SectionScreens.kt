@@ -233,14 +233,6 @@ private fun SectionCard(section: Section, onClick: () -> Unit) {
 private class SectionPlan(val what: List<String>, val missing: String)
 
 private fun planFor(section: Section): SectionPlan = when (section) {
-    Section.MODPACKS -> SectionPlan(
-        listOf(
-            "Leggere i modpack Modrinth (.mrpack) e CurseForge (manifest.json)",
-            "Scaricare i file mancanti con ripresa e verifica, e creare un profilo indipendente",
-            "Applicare gli «overrides» del modpack solo dentro il profilo"
-        ),
-        "Non è ancora stato costruito. Dipende dal Download Manager e dal Mod Manager."
-    )
     Section.WORLDS -> SectionPlan(
         listOf(
             "Importare mondi Java e Bedrock (ZIP, .mcworld, .mctemplate) anche molto grandi, a flusso",

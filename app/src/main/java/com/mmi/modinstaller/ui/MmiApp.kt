@@ -54,6 +54,7 @@ import com.mmi.modinstaller.DownloadsViewModel
 import com.mmi.modinstaller.BusyState
 import com.mmi.modinstaller.CatalogViewModel
 import com.mmi.modinstaller.MainViewModel
+import com.mmi.modinstaller.ModpackViewModel
 import com.mmi.modinstaller.ModsViewModel
 import com.mmi.modinstaller.PickPurpose
 import com.mmi.modinstaller.Screen
@@ -67,13 +68,15 @@ fun MmiApp(
     model: BridgeViewModel,
     downloadsModel: DownloadsViewModel,
     modsModel: ModsViewModel,
-    catalogModel: CatalogViewModel
+    catalogModel: CatalogViewModel,
+    modpackModel: ModpackViewModel
 ) {
     val state by vm.state.collectAsState()
     val bridge by model.state.collectAsState()
     val downloads by downloadsModel.state.collectAsState()
     val mods by modsModel.state.collectAsState()
     val catalog by catalogModel.state.collectAsState()
+    val modpacks by modpackModel.state.collectAsState()
     // La pagina «CERCA ONLINE» è dentro il MOD MANAGER: si apre dal suo pulsante e si chiude con «indietro».
     var showCatalog by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
@@ -105,6 +108,7 @@ fun MmiApp(
     LaunchedEffect(state.section) {
         if (state.section != Section.INSTALLER) model.refresh()
         if (state.section == Section.MODS) modsModel.onSectionOpened()
+        if (state.section == Section.MODPACKS) modpackModel.onSectionOpened()
         if (state.section != Section.MODS) showCatalog = false
     }
 
@@ -112,7 +116,7 @@ fun MmiApp(
 
     BackHandler(enabled = state.section != Section.HOME || state.busy != null || state.dialog != null) {
         // Durante un'operazione sui file Java «indietro» non lascia la schermata: l'operazione si interrompe con Annulla.
-        if (mods.busy == null) vm.back()
+        if (mods.busy == null && modpacks.busy == null) vm.back()
     }
     // Dichiarati dopo l'altro: «indietro» chiude prima il menu e poi la pagina CERCA ONLINE, senza uscire dal MOD MANAGER.
     BackHandler(enabled = showCatalog && state.section == Section.MODS) {
@@ -192,15 +196,24 @@ fun MmiApp(
                         } else {
                             ModsScreen(mods, modsModel, vm, openMenu, onOpenCatalog = { showCatalog = true })
                         }
-                        Section.DOWNLOADS -> DownloadsScreen(downloads, downloadsModel, vm, modsModel, openMenu)
+                        Section.MODPACKS -> ModpackScreen(
+                            state = modpacks,
+                            model = modpackModel,
+                            vm = vm,
+                            onMenu = openMenu,
+                            onOpenMods = { vm.openSection(Section.MODS) }
+                        )
+                        Section.DOWNLOADS -> DownloadsScreen(downloads, downloadsModel, vm, modsModel, modpackModel, openMenu)
                         Section.DIAGNOSTICS -> DiagnosticsScreen(state, bridge, vm, model, openMenu)
                         Section.SETTINGS -> SettingsScreen(state, bridge, vm, model, openMenu)
                         else -> ComingSoonScreen(state.section, vm, openMenu)
                     }
                     val busy = state.busy
                     val modsBusy = mods.busy
+                    val modpackBusy = modpacks.busy
                     if (busy != null) BusyOverlay(busy) { vm.cancelBusy() }
                     else if (modsBusy != null) BusyOverlay(modsBusy) { modsModel.cancelBusy() }
+                    else if (modpackBusy != null) BusyOverlay(modpackBusy) { modpackModel.cancelBusy() }
                 }
             }
         }

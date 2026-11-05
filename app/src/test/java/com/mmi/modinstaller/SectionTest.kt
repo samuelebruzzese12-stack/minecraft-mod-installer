@@ -45,9 +45,15 @@ class SectionTest {
     }
 
     @Test
+    fun modpackManagerIsPartialBecauseOnlyModrinthPacksAreSupported() {
+        // Installa i .mrpack di Modrinth; i modpack CurseForge no (serve una chiave personale): non può dirsi «Pronto».
+        assertEquals(Availability.PARTIAL, Section.MODPACKS.availability)
+    }
+
+    @Test
     fun theEnginesNotBuiltYetAreMarkedComingSoon() {
         val soon = Section.values().filter { it.availability == Availability.SOON }.map { it.name }.toSet()
-        assertEquals(setOf("MODPACKS", "WORLDS", "CONVERTER", "JAVA_TO_BEDROCK"), soon)
+        assertEquals(setOf("WORLDS", "CONVERTER", "JAVA_TO_BEDROCK"), soon)
     }
 
     @Test

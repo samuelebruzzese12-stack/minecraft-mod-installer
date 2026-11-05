@@ -201,7 +201,7 @@ class DownloadsViewModel(application: Application) : AndroidViewModel(applicatio
         fun isJavaCandidate(fileName: String): Boolean =
             fileName.substringAfterLast('.', "").lowercase(Locale.ROOT) in JAVA
 
-        /** Modpack Modrinth: lo leggerà il MODPACK MANAGER, che non esiste ancora. */
+        /** Modpack Modrinth (.mrpack): si apre nel MODPACK MANAGER. */
         fun isModpack(fileName: String): Boolean =
             fileName.substringAfterLast('.', "").lowercase(Locale.ROOT) == "mrpack"
 

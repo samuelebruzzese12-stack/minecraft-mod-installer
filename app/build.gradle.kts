@@ -88,6 +88,7 @@ dependencies {
     implementation(project(":jar-analyzer"))
     implementation(project(":mod-manager"))
     implementation(project(":catalog"))
+    implementation(project(":modpack-engine"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

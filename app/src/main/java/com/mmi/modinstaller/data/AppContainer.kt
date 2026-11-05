@@ -13,6 +13,7 @@ import com.mmi.modinstaller.download.DownloadOptions
 import com.mmi.modinstaller.download.UrlPolicy
 import com.mmi.modinstaller.mods.ModManager
 import com.mmi.modinstaller.mods.ProfileRepository
+import com.mmi.modinstaller.modpack.ModpackRepository
 import java.io.File
 
 /**
@@ -49,6 +50,9 @@ class AppContainer private constructor(context: Context) {
 
     /** Profili Java e file al loro interno (MOD MANAGER). Usa la sezione `java_profiles` dell'archivio centrale. */
     val modManager: ModManager by lazy { ModManager(ProfileRepository(store), paths.javaProfiles) }
+
+    /** Elenco dei modpack installati (MODPACK MANAGER). Usa la sezione `modpacks` dell'archivio centrale. */
+    val modpacks: ModpackRepository by lazy { ModpackRepository(store) }
 
     /**
      * Catalogo online (Modrinth, API pubblica v2). Parla solo con api.modrinth.com, solo con https e solo con richieste di

@@ -20,6 +20,7 @@ class MainActivity : ComponentActivity() {
     private val downloads: DownloadsViewModel by viewModels()
     private val mods: ModsViewModel by viewModels()
     private val catalog: CatalogViewModel by viewModels()
+    private val modpacks: ModpackViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,7 +28,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val bridgeState by bridge.state.collectAsState()
             MmiTheme(bridgeState.settings.theme) {
-                MmiApp(vm, bridge, downloads, mods, catalog)
+                MmiApp(vm, bridge, downloads, mods, catalog, modpacks)
             }
         }
         // Dopo una ricreazione (es. processo chiuso da Android) l'intent originale non va rielaborato.
@@ -86,7 +87,14 @@ class MainActivity : ComponentActivity() {
             vm.showMessage("Quello che hai condiviso non è un file: scegli un file Minecraft con «+ SELEZIONA FILE».")
             return
         }
-        // I file Java (.jar, .mrpack) vanno al MOD MANAGER; tutto il resto all'INSTALLER BEDROCK, come prima.
-        mods.routeIncoming(uris, openMods = { vm.openSection(Section.MODS) }, others = { vm.openFiles(it, PickPurpose.ANY) })
+        // I modpack Modrinth (.mrpack) vanno al MODPACK MANAGER, gli altri file Java (.jar) al MOD MANAGER; tutto il resto
+        // all'INSTALLER BEDROCK, come prima.
+        modpacks.routeIncoming(
+            uris,
+            openSection = { vm.openSection(Section.MODPACKS) },
+            others = { rest ->
+                mods.routeIncoming(rest, openMods = { vm.openSection(Section.MODS) }, others = { vm.openFiles(it, PickPurpose.ANY) })
+            }
+        )
     }
 }

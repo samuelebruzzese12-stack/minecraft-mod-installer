@@ -18,6 +18,9 @@ class AppPaths(context: Context) {
     /** Profili Java del MOD MANAGER: ognuno ha le sue cartelle mods, resourcepacks, shaderpacks, datapacks e il cestino. */
     val javaProfiles: File = File(context.filesDir, "java/profiles")
 
+    /** Copie dei modpack installati (.mrpack): servono a completare un'installazione rimasta a metà. */
+    val modpacks: File = File(context.filesDir, "modpacks")
+
     /** Copie di sicurezza create prima di eliminare un pacchetto. */
     val backups: File = File(context.filesDir, "backups")
 
@@ -34,6 +37,7 @@ class AppPaths(context: Context) {
         prepared.mkdirs()
         downloads.mkdirs()
         javaProfiles.mkdirs()
+        modpacks.mkdirs()
         backups.mkdirs()
         libraryFile.parentFile?.mkdirs()
         sessions.mkdirs()
