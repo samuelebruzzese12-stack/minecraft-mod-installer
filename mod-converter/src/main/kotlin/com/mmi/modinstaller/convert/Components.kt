@@ -40,3 +40,123 @@ class Component(
     /** Quanti file o voci rappresenta (per i gruppi di file). */
     val count: Int = 1
 )
+
+/** Costruisce il registro dei componenti di una mod a partire da quello che la conversione ha prodotto. */
+internal object ComponentRegistry {
+
+    private const val STATIC = "controlli statici dei file (formato e riferimenti)"
+
+    fun item(o: ItemOut, entry: ConvertedEntry): Component {
+        val diffs = ArrayList<String>()
+        val bedrock = ArrayList<String>()
+        bedrock.add(entry.detail)
+        if (o.effects.isNotEmpty()) bedrock.add("effetti dopo averlo mangiato: " + o.effects.joinToString { it.id })
+        if (o.kind in setOf(ItemKind.SWORD, ItemKind.PICKAXE, ItemKind.AXE, ItemKind.SHOVEL, ItemKind.HOE)) bedrock.add("si consuma scavando e colpendo (Script API)")
+        o.places?.let { bedrock.add("piazza il blocco $it") }
+        o.convertsTo?.let { bedrock.add("lascia $it") }
+        val fromCode = o.code != null
+        if (!fromCode && o.kind != ItemKind.ITEM) diffs.add("valori stimati: il codice non si è potuto leggere per questo oggetto")
+        val missingFx = o.code?.food?.effects?.count { Behaviors.bedrockEffect(it.effect) == null } ?: 0
+        if (missingFx > 0) diffs.add("$missingFx effetti della mod che Bedrock non ha")
+        val status = when {
+            diffs.isNotEmpty() -> ComponentStatus.APPROXIMATED
+            o.effects.isNotEmpty() || o.places != null || o.kind in setOf(ItemKind.SWORD, ItemKind.PICKAXE, ItemKind.AXE, ItemKind.SHOVEL, ItemKind.HOE) -> ComponentStatus.RECONSTRUCTED
+            else -> ComponentStatus.CONVERTED
+        }
+        return Component(
+            "oggetto", o.java.toString(), o.code?.classes?.firstOrNull()?.substringAfterLast('/')?.let { "classe $it" } ?: o.kind.label,
+            emptyList(), if (fromCode) "valori letti dal codice (senza eseguirlo)" else "dal modello e dai gruppi della mod",
+            o.bedrockId, bedrock.joinToString("; "), listOf(STATIC), diffs, status
+        )
+    }
+
+    fun block(o: BlockOut, entry: ConvertedEntry, simplified: String?): Component {
+        val diffs = ArrayList<String>()
+        simplified?.let { diffs.add(it) }
+        val sf = (o.look as? BlockLook.Stateful)?.block
+        sf?.note?.let { diffs.add(it) }
+        if (o.code == null) diffs.add("durezza e resistenza stimate")
+        val status = when {
+            diffs.isNotEmpty() -> ComponentStatus.APPROXIMATED
+            sf != null || o.code?.xp != null -> ComponentStatus.RECONSTRUCTED
+            else -> ComponentStatus.CONVERTED
+        }
+        val bedrock = if (sf != null) "${sf.family.label} con i suoi stati (${sf.bones.size} varianti di aspetto)" else entry.detail
+        return Component(
+            "blocco", o.java.toString(), o.code?.classes?.firstOrNull()?.substringAfterLast('/')?.let { "classe $it" } ?: "blocco",
+            emptyList(), if (sf != null) "blockstates di Java ricostruiti con gli stati di Bedrock" else "modello e texture",
+            o.bedrockId, bedrock, listOf(STATIC), diffs, status
+        )
+    }
+
+    fun entity(e: EntityOut, entry: ConvertedEntry): Component {
+        val diffs = ArrayList<String>()
+        if (e.facts?.goals.isNullOrEmpty()) diffs.add("comportamento generico (l'IA della mod non si è potuta leggere)")
+        else diffs.add("IA tradotta negli obiettivi di Bedrock più vicini: le azioni speciali scritte in codice no")
+        return Component(
+            "creatura", e.java.toString(), e.facts?.vanillaBase?.let { "deriva da $it" } ?: "creatura",
+            emptyList(), entry.detail, e.bedrockId, entry.detail, listOf(STATIC), diffs, ComponentStatus.APPROXIMATED
+        )
+    }
+
+    /** Le voci del JAR raggruppate per tipo: ogni file finisce in un gruppo, con quello che se n'è fatto. */
+    fun files(mod: JavaModContent): List<Component> {
+        class G(val label: String, val status: ComponentStatus, val what: String)
+        val groups = LinkedHashMap<String, Pair<G, Int>>()
+        fun add(key: String, g: G) { groups[key] = g to ((groups[key]?.second ?: 0) + 1) }
+        val code = G("Codice Java (classi)", ComponentStatus.APPROXIMATED, "letto senza eseguirlo: registrazioni, valori, IA, modelli e animazioni; la logica delle macchine e degli eventi resta nel JAR")
+        for (n in mod.jar.allNames()) {
+            val parts = n.split('/')
+            val area = parts.getOrNull(2)
+            when {
+                n.endsWith(".class") -> add("code", code)
+                n.startsWith("META-INF/") || n.endsWith(".mixins.json") || n.endsWith("refmap.json") || n.endsWith(".accesswidener") ->
+                    add("meta", G("Descrittori, mixin e modifiche al motore", ComponentStatus.NOT_RECONSTRUCTABLE, "Bedrock non permette agli add-on di cambiare il motore del gioco"))
+                n.startsWith("assets/") && area == "lang" -> add("lang", G("Testi e traduzioni", ComponentStatus.CONVERTED, "tutte le lingue della mod"))
+                n.startsWith("assets/") && (area == "blockstates" || area == "models" || area == "items") -> add("models", G("Modelli e stati dei blocchi", ComponentStatus.CONVERTED, "forme, varianti e icone"))
+                n.startsWith("assets/") && area == "textures" -> add("textures", G("Texture", ComponentStatus.CONVERTED, "quelle usate da oggetti, blocchi, armature e creature"))
+                n.startsWith("assets/") && (area == "sounds" || n.endsWith("sounds.json")) -> add("sounds", G("Suoni", ComponentStatus.DATA_KEPT, "non ancora convertiti: restano nel JAR originale"))
+                n.startsWith("assets/") && (area == "geo" || area == "animations") -> add("geo", G("Modelli e animazioni GeckoLib", ComponentStatus.CONVERTED, "convertiti per le creature"))
+                n.startsWith("assets/") && (area == "shaders" || area == "post_effect") -> add("shaders", G("Shader", ComponentStatus.NOT_RECONSTRUCTABLE, "gli add-on Bedrock non possono usare shader propri"))
+                n.startsWith("assets/") && area == "particles" -> add("particles", G("Particelle", ComponentStatus.DATA_KEPT, "non ancora convertite"))
+                n.startsWith("data/") && (area == "recipe" || area == "recipes") -> add("recipes", G("Ricette", ComponentStatus.CONVERTED, "quelle che Bedrock sa fare (vedi le ricette saltate)"))
+                n.startsWith("data/") && (area == "loot_table" || area == "loot_tables") && parts.getOrNull(3) == "blocks" -> add("loot", G("Bottini dei blocchi", ComponentStatus.CONVERTED, "anche per stato (lastre doppie, colture mature)"))
+                n.startsWith("data/") && (area == "loot_table" || area == "loot_tables") -> add("loot2", G("Bottini di creature, casse e pesca", ComponentStatus.DATA_KEPT, "non ancora convertiti"))
+                n.startsWith("data/") && (area == "tags") -> add("tags", G("Gruppi (tag)", ComponentStatus.CONVERTED, "usati per ricette e attrezzi"))
+                n.startsWith("data/") && (area == "structure" || area == "structures") -> add("structures", G("Strutture", ComponentStatus.DATA_KEPT, "non ancora convertite"))
+                n.startsWith("data/") && (area == "advancement" || area == "advancements") -> add("adv", G("Progressi", ComponentStatus.DATA_KEPT, "Bedrock non ha progressi per gli add-on"))
+                n.startsWith("data/") && area == "worldgen" -> add(
+                    "worldgen", G("Generazione del mondo (biomi, minerali, strutture)", ComponentStatus.APPROXIMATED, "i minerali sì; biomi, dimensioni e strutture non ancora")
+                )
+                n.startsWith("data/") && (area == "dimension" || area == "dimension_type") -> add("dim", G("Dimensioni", ComponentStatus.DATA_KEPT, "non ancora convertite"))
+                n.startsWith("data/") && (area == "enchantment" || area == "damage_type" || area == "trim_material" || area == "trim_pattern" || area == "painting_variant" || area == "jukebox_song") ->
+                    add("registries", G("Incantesimi, danni e altri registri", ComponentStatus.DATA_KEPT, "non ancora convertiti"))
+                n.endsWith("/") -> {}
+                else -> add("other", G("Altri file", ComponentStatus.DATA_KEPT, "restano nel JAR originale"))
+            }
+        }
+        return groups.map { (_, p) ->
+            val (g, n) = p
+            Component("file", g.label, "$n file", emptyList(), g.what, null, g.what, emptyList(), emptyList(), g.status, n)
+        }
+    }
+
+    fun recipes(ok: Int, skips: Map<String, Int>): List<Component> {
+        val out = ArrayList<Component>()
+        if (ok > 0) out.add(Component("ricette", "Ricette convertite", "$ok ricette", emptyList(), "tradotte nel formato di Bedrock", null, "si fanno nel banco o nel tavolo giusto", listOf(STATIC), emptyList(), ComponentStatus.CONVERTED, ok))
+        for ((why, n) in skips) {
+            val status = if (why.contains("macchina") || why.contains("codice")) ComponentStatus.NOT_RECONSTRUCTABLE else ComponentStatus.DATA_KEPT
+            out.add(Component("ricette", "Ricette non convertite", "$n ricette", emptyList(), why, null, "—", emptyList(), listOf(why), status, n))
+        }
+        return out
+    }
+
+    /** Il registro in JSON (per l'esportazione del progetto). */
+    fun json(components: List<Component>): List<Map<String, Any?>> = components.map { c ->
+        linkedMapOf(
+            "tipo" to c.kind, "originale" to c.originalId, "funzione_java" to c.originalFunction, "dipendenze" to c.dependencies,
+            "conversione" to c.conversion, "bedrock" to c.bedrockId, "funzione_bedrock" to c.bedrockFunction, "prove" to c.tests,
+            "differenze" to c.differences, "stato" to c.status.label, "quanti" to c.count.toLong()
+        )
+    }
+}

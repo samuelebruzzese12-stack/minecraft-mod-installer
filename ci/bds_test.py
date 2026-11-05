@@ -110,7 +110,8 @@ def read_addon(path):
             e = d["minecraft:entity"]
             h = (e.get("components", {}).get("minecraft:health") or {}).get("max")
             entities.append({"id": e["description"]["identifier"], "health": h})
-    behaviors["ores"].sort(key=lambda o: o["ticks"])
+    # prima i minerali che danno sempre esperienza (minimo > 0): lì un risultato zero è un errore vero
+    behaviors["ores"].sort(key=lambda o: (o["min"] == 0, o["ticks"]))
     return z, packs, blocks, items, entities, behaviors
 
 
@@ -230,7 +231,7 @@ if (B.tools.length + B.foods.length + B.ores.length) gt.register("bb", "comporta
       const gone = test.getBlock(loc).typeId !== ore.id;
       const n = orbs - before;
       if (!gone) bad.push(ore.id + ": non si è rotto");
-      else if (n < ore.min || (ore.max > 0 && n === 0)) bad.push(ore.id + ": esperienza " + n + " (attesa " + ore.min + "–" + ore.max + ")");
+      else if (n < ore.min || n > ore.max) bad.push(ore.id + ": esperienza " + n + " (attesa " + ore.min + "–" + ore.max + ")");
       else ok.push(ore.id + " esperienza " + n);
     });
     t += ore.ticks + 5;

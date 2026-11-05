@@ -84,7 +84,15 @@ class PartFacts(
 class KeyFacts(val time: Double, val x: Double, val y: Double, val z: Double, val interpolation: String)
 class ChannelFacts(val bone: String, val target: String, val keys: List<KeyFacts>)
 class AnimFacts(val name: String, val length: Double, val looping: Boolean, val channels: List<ChannelFacts>, val role: String)
-class ModelFacts(val modelClass: String, val texWidth: Int, val texHeight: Int, val root: PartFacts, val animations: List<AnimFacts>)
+/**
+ * Un movimento «procedurale» di Citadel (Alex's Mobs, Ice and Fire): walk/swing/flap ruotano un osso attorno a X/Y/Z con
+ * cos(passo·velocità + sfasamento)·ampiezza·andatura, bob lo fa sobbalzare. Valori in radianti come nel codice Java.
+ */
+class ProcFacts(val bone: String, val kind: String, val speed: Double, val degree: Double, val invert: Boolean, val offset: Double, val weight: Double, val bounce: Boolean = false)
+class ModelFacts(
+    val modelClass: String, val texWidth: Int, val texHeight: Int, val root: PartFacts, val animations: List<AnimFacts>,
+    val procedural: List<ProcFacts> = emptyList(), val source: String = "layer"
+)
 
 class EntityFacts(
     val id: Rl,
@@ -550,6 +558,7 @@ object CodeFactsReader {
         // -------------------------------------------------------------------------------------------- modelli
 
         fun model(modelObj: Obj, entity: Obj): ModelFacts? {
+            citadel(modelObj, entity)?.let { return it }
             // Il modello riceve una ModelPart da ctx.bakeLayer(STRATO): lo strato porta alla LayerDefinition registrata.
             val part = (modelObj.args + (modelObj.superCall?.args ?: emptyList())).firstOrNull { (it as? Obj)?.origin?.name == "bakeLayer" } as? Obj
             val layerLoc = part?.origin?.args?.firstOrNull() ?: return null
@@ -562,6 +571,101 @@ object CodeFactsReader {
             val th = create.args.getOrNull(2)?.int() ?: 32
             val tree = part(root) ?: return null
             return ModelFacts(modelObj.type, tw, th, tree, animations(modelObj, entity))
+        }
+
+        // ---------------------------------------------------------------- modelli Citadel (Alex's Mobs, Ice and Fire…)
+
+        private fun isCitadelBox(o: Obj): Boolean =
+            o.type.startsWith("com/github/alexthe666/citadel/client/model/") && (o.type.endsWith("ModelBox") || o.type.endsWith("ModelPart") || o.type.endsWith("Box")) ||
+                ip.superChain(o.type).any { it.endsWith("/AdvancedModelBox") || it.endsWith("/BasicModelPart") }
+
+        /**
+         * I modelli Citadel si costruiscono nel costruttore, come i vecchi ModelRenderer: «new AdvancedModelBox(this, nome)»,
+         * setPos/setRotationPoint, setTextureOffset(u, v).addBox(…), addChild(figlio), setRotateAngle(osso, x, y, z). Le stesse
+         * convenzioni delle ModelPart di Minecraft (asse Y verso il basso, radice a y=24), quindi diventano le stesse PartFacts.
+         */
+        fun citadel(modelObj: Obj, entity: Obj): ModelFacts? {
+            val chain = ip.superChain(modelObj.type) + listOfNotNull(modelObj.superCall?.owner)
+            if (chain.none { it.startsWith("com/github/alexthe666/citadel/client/model/") }) return null
+            val boxes = LinkedHashSet<Obj>()
+            fun collect(o: Obj, depth: Int) {
+                if (depth > 64 || !boxes.add(o)) return
+                for (c in o.calls) if (c.name == "addChild") (c.args.firstOrNull() as? Obj)?.let { collect(it, depth + 1) }
+            }
+            for (v in modelObj.fields.values) (v as? Obj)?.takeIf { isCitadelBox(it) }?.let { collect(it, 0) }
+            if (boxes.isEmpty()) return null
+            val parentOf = HashMap<Obj, Obj>()
+            for (b in boxes) for (c in b.calls) if (c.name == "addChild") (c.args.firstOrNull() as? Obj)?.let { if (it !in parentOf) parentOf[it] = b }
+            val angles = HashMap<Obj, DoubleArray>()
+            for (c in modelObj.calls) if (c.name == "setRotateAngle" || c.name == "setRotationAngle") {
+                val b = c.args.getOrNull(0) as? Obj ?: continue
+                angles[b] = doubleArrayOf(num(c.args.getOrNull(1)) ?: 0.0, num(c.args.getOrNull(2)) ?: 0.0, num(c.args.getOrNull(3)) ?: 0.0)
+            }
+            val fieldName = HashMap<Obj, String>()
+            for ((k, v) in modelObj.fields) if (v is Obj && v !in fieldName) fieldName[v] = k
+            val used = HashSet<String>()
+            fun nameOf(b: Obj): String {
+                val base = ((b.args.firstOrNull { it is StrV } as? StrV)?.v ?: fieldName[b] ?: "bone").replace(Regex("[^A-Za-z0-9_]"), "_").ifEmpty { "bone" }
+                var n = base; var i = 2
+                while (!used.add(n)) n = base + "_" + i++
+                return n
+            }
+            val names = HashMap<Obj, String>()
+            fun part(b: Obj, depth: Int): PartFacts? {
+                if (depth > 48) return null
+                var x = 0.0; var y = 0.0; var z = 0.0
+                var u = 0; var v = 0
+                var mirror = (b.fields["mirror"] as? IntV)?.v?.let { it != 0 } ?: false
+                val cubes = ArrayList<CubeFacts>()
+                val children = ArrayList<PartFacts>()
+                for (c in b.calls) when (c.name) {
+                    "setPos", "setRotationPoint" -> { x = num(c.args.getOrNull(0)) ?: x; y = num(c.args.getOrNull(1)) ?: y; z = num(c.args.getOrNull(2)) ?: z }
+                    "setTextureOffset", "texOffs" -> { u = c.args.getOrNull(0)?.int() ?: u; v = c.args.getOrNull(1)?.int() ?: v }
+                    "addBox" -> {
+                        val g = if (c.args.firstOrNull() is StrV) c.args.drop(1) else c.args
+                        val n = g.take(6).map { it.num() }
+                        if (n.size == 6 && n.all { it != null }) {
+                            val extra = g.drop(6)
+                            val inflate = extra.firstOrNull { it is com.mmi.modinstaller.bytecode.FloatV || it is com.mmi.modinstaller.bytecode.DoubleV }?.num() ?: 0.0
+                            val m = extra.lastOrNull { it is IntV }?.int()?.let { it != 0 } ?: mirror
+                            cubes.add(CubeFacts(u, v, n[0]!!, n[1]!!, n[2]!!, n[3]!!, n[4]!!, n[5]!!, inflate, m))
+                        }
+                    }
+                    "addChild" -> (c.args.firstOrNull() as? Obj)?.let { ch -> if (parentOf[ch] === b && ch !in names) part(ch, depth + 1)?.let { children.add(it) } }
+                }
+                val a = angles[b]
+                val rx = num(b.fields["rotateAngleX"]) ?: a?.get(0) ?: 0.0
+                val ry = num(b.fields["rotateAngleY"]) ?: a?.get(1) ?: 0.0
+                val rz = num(b.fields["rotateAngleZ"]) ?: a?.get(2) ?: 0.0
+                val name = nameOf(b)
+                names[b] = name
+                return PartFacts(name, x, y, z, rx, ry, rz, cubes, children)
+            }
+            val roots = boxes.filter { it !in parentOf }.mapNotNull { part(it, 0) }
+            if (roots.isEmpty() || roots.all { r -> r.cubes.isEmpty() && r.children.isEmpty() }) return null
+            val tw = modelObj.fields["texWidth"]?.int() ?: modelObj.fields["textureWidth"]?.int() ?: 64
+            val th = modelObj.fields["texHeight"]?.int() ?: modelObj.fields["textureHeight"]?.int() ?: 32
+            val tree = PartFacts("root", 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, emptyList(), roots)
+            // I movimenti di setupAnim: walk/swing/flap/bob di Citadel con i loro numeri.
+            animations(modelObj, entity)
+            val proc = ArrayList<ProcFacts>()
+            for (c in modelObj.calls) {
+                val kind = c.name
+                if (kind !in setOf("walk", "swing", "flap", "bob")) continue
+                val box = c.args.getOrNull(0) as? Obj ?: continue
+                val bone = names[box] ?: continue
+                val g = c.args.drop(1)
+                if (kind == "bob") {
+                    val speed = num(g.getOrNull(0)) ?: continue; val degree = num(g.getOrNull(1)) ?: continue
+                    proc.add(ProcFacts(bone, kind, speed, degree, false, 0.0, 0.0, bounce = g.getOrNull(2)?.int() == 1))
+                } else {
+                    val speed = num(g.getOrNull(0)) ?: continue; val degree = num(g.getOrNull(1)) ?: continue
+                    proc.add(ProcFacts(bone, kind, speed, degree, g.getOrNull(2)?.int() == 1, num(g.getOrNull(3)) ?: 0.0, num(g.getOrNull(4)) ?: 0.0))
+                }
+            }
+            // Un osso con più movimenti uguali (rami diversi del codice: nuoto, volo…): si tiene il primo per tipo.
+            val firstByKind = proc.distinctBy { it.bone + "/" + it.kind }
+            return ModelFacts(modelObj.type, tw, th, tree, emptyList(), firstByKind, "citadel")
         }
 
         private fun sameLayer(a: V, b: V): Boolean {

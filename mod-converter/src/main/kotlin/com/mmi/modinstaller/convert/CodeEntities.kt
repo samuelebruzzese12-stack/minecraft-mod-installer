@@ -112,6 +112,10 @@ internal object CodeEntities {
             if (!byRole.containsKey(a.role)) byRole[a.role] = id
         }
         var generic = false
+        // Citadel: i movimenti di setupAnim (walk/swing/flap/bob) diventano espressioni Molang con gli stessi numeri.
+        if (!byRole.containsKey("walk") && model.procedural.isNotEmpty()) {
+            procedural(model)?.let { anims["animation.$prefix.walk"] = it; byRole["walk"] = "animation.$prefix.walk" }
+        }
         if (!byRole.containsKey("walk")) {
             walkCycle(bones)?.let { anims["animation.$prefix.walk"] = it; byRole["walk"] = "animation.$prefix.walk"; generic = true }
         }
@@ -145,6 +149,40 @@ internal object CodeEntities {
         m["animation_length"] = r(a.length)
         m["bones"] = out
         return m
+    }
+
+    /**
+     * Citadel (AdvancedModelBox): walk/swing/flap aggiungono a X/Y/Z cos(passo·velocità + sfasamento)·ampiezza·andatura +
+     * peso·andatura (col segno opposto se «invert»), bob fa sobbalzare l'osso. In Molang i gradi: passo = distanza percorsa,
+     * andatura = velocità di movimento (come le animazioni di Minecraft Bedrock per le gambe).
+     */
+    private fun procedural(model: ModelFacts): Map<String, Any?>? {
+        val deg = 180.0 / Math.PI
+        val rot = LinkedHashMap<String, Array<MutableList<String>>>()
+        val pos = LinkedHashMap<String, MutableList<String>>()
+        for (p in model.procedural) {
+            val speed = r(p.speed * deg)
+            if (p.kind == "bob") {
+                val amp = r(p.degree)
+                val sin = "math.sin(query.modified_distance_moved * $speed)"
+                pos.getOrPut(p.bone) { ArrayList() }.add(
+                    if (p.bounce) "math.abs($sin * query.modified_move_speed * $amp)" else "(query.modified_move_speed * $amp - $sin * query.modified_move_speed * $amp)"
+                )
+                continue
+            }
+            val axis = when (p.kind) { "walk" -> 0; "swing" -> 1; else -> 2 }
+            val e = "(math.cos(query.modified_distance_moved * $speed + ${r(p.offset * deg)}) * ${r(p.degree * deg)} + ${r(p.weight * deg)}) * query.modified_move_speed"
+            rot.getOrPut(p.bone) { arrayOf(ArrayList(), ArrayList(), ArrayList()) }[axis].add(if (p.invert) "-$e" else e)
+        }
+        val bones = LinkedHashMap<String, Any?>()
+        for (b in (rot.keys + pos.keys).distinct()) {
+            val m = LinkedHashMap<String, Any?>()
+            rot[b]?.let { a -> m["rotation"] = a.map { l -> if (l.isEmpty()) 0L else l.joinToString(" + ") } }
+            pos[b]?.let { l -> m["position"] = listOf(0L, l.joinToString(" + "), 0L) }
+            bones[b] = m
+        }
+        if (bones.isEmpty()) return null
+        return linkedMapOf("loop" to true, "bones" to bones)
     }
 
     private fun time(t: Double): String {

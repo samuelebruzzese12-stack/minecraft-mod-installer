@@ -660,11 +660,22 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                     .mapNotNull { (k, label) -> c[k]?.let { "$it $label" } }.joinToString(", ").ifEmpty { "nessuna registrazione di contenuto" } +
                     (if (f.analysis.exhausted) " (lettura parziale: codice molto grande)" else "")
             } ?: if (mod.jar.classEntries.isEmpty()) null else "Il codice della mod non si è potuto leggere"
+            // ---- registro dei componenti (BLOCKBRIDGE): ogni voce e ogni file del JAR, con quello che se n'è fatto
+            val components = ArrayList<Component>()
+            val blockById = blockEntries.associateBy { it.javaId }
+            for (b in blocksOut) if (b.mod === mod) blockById[b.java.toString()]?.let { components.add(ComponentRegistry.block(b, it, null)) }
+            val itemById = itemEntries.associateBy { it.javaId }
+            for (i in itemsOut) if (i.mod === mod) itemById[i.java.toString()]?.let { components.add(ComponentRegistry.item(i, it)) }
+            val entById = entityEntries.associateBy { it.javaId }
+            for (e in entitiesOut) if (e.mod === mod) entById[e.java.toString()]?.let { components.add(ComponentRegistry.entity(e, it)) }
+            components.addAll(ComponentRegistry.recipes(ok, skips))
+            for (n in notConverted) components.add(Component("gruppo", n, n, emptyList(), "non convertito", null, "—", emptyList(), listOf(n), ComponentStatus.DATA_KEPT))
+            components.addAll(ComponentRegistry.files(mod))
             reports.add(
                 ModReport(
                     mod.jar.label, mod.identity.name ?: mod.jar.label, mod.identity.loader, mod.identity.version,
                     itemEntries, blockEntries, ok, mod.recipes.size, skips, lootCount, ores, armorCount, entityEntries,
-                    estimates.toList(), simplified.toList(), notConverted, null, codeSummary, fromCode, scripted = scripted
+                    estimates.toList(), simplified.toList(), notConverted, null, codeSummary, fromCode, components, scripted
                 )
             )
         }
@@ -1563,8 +1574,8 @@ object ConversionText {
     fun of(reports: List<ModReport>, addonName: String?): String {
         val b = StringBuilder()
         b.append("JAVA TO BEDROCK — ").append(addonName ?: "rapporto").append('\n')
-        b.append("Bedrock non esegue codice Java: passano il contenuto (oggetti, blocchi, texture, nomi, ricette, bottini, minerali, ")
-            .append("armature, creature con modello GeckoLib), non il comportamento scritto in codice.\n")
+        b.append("Il codice Java non gira in Bedrock: l'app lo legge (senza eseguirlo) e ricostruisce con gli strumenti di Bedrock ")
+            .append("e la Script API quello che si può. Tutto il resto è elencato qui sotto, voce per voce.\n")
         for (r in reports) {
             b.append("\n== ").append(r.title)
             if (r.version != null) b.append(' ').append(r.version)
@@ -1574,6 +1585,13 @@ object ConversionText {
             b.append("Oggetti: ").append(r.items.size).append(" · Blocchi: ").append(r.blocks.size).append(" · Creature: ").append(r.entities.size)
                 .append(" · Ricette: ").append(r.recipesConverted).append(" su ").append(r.recipesTotal)
                 .append(" · Bottini: ").append(r.lootTables).append(" · Minerali: ").append(r.ores).append('\n')
+            r.codeSummary?.let { b.append("Codice: ").append(it).append('\n') }
+            for (s in r.scripted) b.append("+ ricostruito: ").append(s).append('\n')
+            for (s in r.fromCode) b.append("+ dal codice: ").append(s).append('\n')
+            if (r.components.isNotEmpty()) {
+                val by = r.components.groupBy { it.status }.mapValues { (_, l) -> l.sumOf { it.count } }
+                b.append("Registro dei componenti: ").append(ComponentStatus.values().filter { by[it] != null }.joinToString(" · ") { it.label + " " + by[it] }).append('\n')
+            }
             for ((why, n) in r.recipeSkips.entries.sortedByDescending { it.value }) b.append("- ricette non convertite (").append(n).append("): ").append(why).append('\n')
             for (s in r.simplified) b.append("- semplificato: ").append(s).append('\n')
             for (s in r.estimates) b.append("- stimato: ").append(s).append('\n')
