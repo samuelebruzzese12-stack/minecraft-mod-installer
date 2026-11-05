@@ -1,0 +1,101 @@
+# Oggetti Java con un nome diverso in Bedrock: «java bedrock [dato]».
+# Ricavato dalla tabella di GeyserMC/mappings (items.json, licenza MIT) e controllato sugli oggetti di Bedrock 1.26.60.5.
+abandoned_camp_map filled_map
+black_banner banner
+black_bed bed 15
+blue_banner banner 4
+blue_bed bed 11
+bricks brick_block
+brown_banner banner 3
+brown_bed bed 12
+buried_ancient_city_map filled_map
+buried_mineshaft_map filled_map
+buried_treasure_map filled_map
+buried_trial_chambers_map filled_map
+cobblestone_stairs stone_stairs
+cobweb web
+cyan_banner banner 6
+cyan_bed bed 9
+dead_bush deadbush
+debug_stick stick
+desert_pyramid_map filled_map
+desert_village_map filled_map
+dirt_path grass_path
+end_stone_brick_stairs end_brick_stairs
+end_stone_bricks end_bricks
+flowering_azalea_leaves azalea_leaves_flowered
+frogspawn frog_spawn
+furnace_minecart hopper_minecart
+glow_item_frame glow_frame
+gray_banner banner 8
+gray_bed bed 7
+green_banner banner 2
+green_bed bed 13
+item_frame frame
+jack_o_lantern lit_pumpkin
+jungle_pyramid_map filled_map
+knowledge_book book
+light_blue_banner banner 12
+light_blue_bed bed 3
+light_gray_banner banner 7
+light_gray_bed bed 8
+light_gray_glazed_terracotta silver_glazed_terracotta
+lily_pad waterlily
+lime_banner banner 10
+lime_bed bed 5
+magenta_banner banner 13
+magenta_bed bed 2
+magma_block magma
+map empty_map
+melon melon_block
+nether_brick netherbrick
+nether_bricks nether_brick
+nether_quartz_ore quartz_ore
+note_block noteblock
+oak_button wooden_button
+oak_door wooden_door
+oak_fence_gate fence_gate
+oak_pressure_plate wooden_pressure_plate
+oak_trapdoor trapdoor
+ocean_monument_map filled_map
+orange_banner banner 14
+orange_bed bed 1
+pink_banner banner 9
+pink_bed bed 6
+plains_village_map filled_map
+powered_rail golden_rail
+prismarine_brick_stairs prismarine_bricks_stairs
+purple_banner banner 5
+purple_bed bed 10
+red_banner banner 1
+red_bed bed 14
+red_nether_bricks red_nether_brick
+rooted_dirt dirt_with_roots
+savanna_village_map filled_map
+shulker_box undyed_shulker_box
+slime_block slime
+small_dripleaf small_dripleaf_block
+snow snow_layer
+snow_block snow
+snowy_village_map filled_map
+spawner mob_spawner
+spectral_arrow arrow
+stone_slab normal_stone_slab
+stone_stairs normal_stone_stairs
+stonecutter stonecutter_block
+swamp_hut_map filled_map
+taiga_village_map filled_map
+terracotta hardened_clay
+tipped_arrow arrow
+warm_ocean_ruins_map filled_map
+waxed_copper_block waxed_copper
+white_banner banner 15
+white_bed bed
+woodland_mansion_map filled_map
+yellow_banner banner 11
+yellow_bed bed 4
+zombified_piglin_spawn_egg zombie_pigman_spawn_egg
+# Nomi di versioni di Java precedenti (le mod non aggiornate li usano ancora).
+chain iron_chain
+grass short_grass
+scute turtle_scute

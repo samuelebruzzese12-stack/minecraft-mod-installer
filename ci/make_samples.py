@@ -405,6 +405,67 @@ def crash_samples(out):
         f.write(gzip.compress(log.encode("utf-8"), mtime=0))
 
 
+def convert_samples(out):
+    """Una mod Java con contenuto da portare in Bedrock (JAVA TO BEDROCK): oggetti, blocchi, minerale con generazione, ricette,
+    bottini, spada, elmo con il disegno sul corpo, cibo, nomi in inglese e italiano e una creatura GeckoLib. Il test
+    «EmulatorConvertSamplesTest» (mod-converter) la converte con il codice vero e controlla le attese di ci/convert_phase.sh."""
+    def j(v):
+        return json.dumps(v).encode("utf-8")
+    ns = "rubini"
+    e = {
+        "fabric.mod.json": j({"schemaVersion": 1, "id": ns, "version": "1.0.0", "name": "Rubini e Pomodori",
+                              "icon": "assets/rubini/icon.png", "environment": "*", "entrypoints": {"main": ["prova.rubini.Main"]},
+                              "depends": {"fabricloader": ">=0.15.0", "minecraft": "~1.21.1"}}),
+        "prova/rubini/Main.class": class_file(65),
+        "assets/rubini/icon.png": png(64, 64, (200, 30, 40), (150, 20, 30)),
+        "assets/rubini/lang/en_us.json": j({
+            "item.rubini.ruby": "Ruby", "item.rubini.ruby_sword": "Ruby Sword", "item.rubini.ruby_helmet": "Ruby Helmet",
+            "item.rubini.tomato": "Tomato", "block.rubini.ruby_block": "Block of Ruby", "block.rubini.ruby_ore": "Ruby Ore",
+            "entity.rubini.ladybug": "Ladybug"}),
+        "assets/rubini/lang/it_it.json": j({
+            "item.rubini.ruby": "Rubino", "item.rubini.ruby_sword": "Spada di rubino", "item.rubini.ruby_helmet": "Elmo di rubino",
+            "item.rubini.tomato": "Pomodoro", "block.rubini.ruby_block": "Blocco di rubino", "block.rubini.ruby_ore": "Minerale di rubino",
+            "entity.rubini.ladybug": "Coccinella"}),
+    }
+    red, dark = (200, 30, 40), (120, 10, 20)
+    for b in ("ruby_block", "ruby_ore"):
+        e["assets/rubini/blockstates/%s.json" % b] = j({"variants": {"": {"model": "rubini:block/" + b}}})
+        e["assets/rubini/models/block/%s.json" % b] = j({"parent": "minecraft:block/cube_all", "textures": {"all": "rubini:block/" + b}})
+        e["assets/rubini/textures/block/%s.png" % b] = png(16, 16, red, dark) if b == "ruby_block" else png(16, 16, (120, 120, 120), red)
+    for i, parent in (("ruby", "item/generated"), ("ruby_sword", "item/handheld"), ("ruby_helmet", "item/generated"), ("tomato", "item/generated")):
+        e["assets/rubini/models/item/%s.json" % i] = j({"parent": "minecraft:" + parent, "textures": {"layer0": "rubini:item/" + i}})
+        e["assets/rubini/textures/item/%s.png" % i] = png(16, 16, red, dark)
+    e["assets/rubini/models/item/ruby_block.json"] = j({"parent": "rubini:block/ruby_block"})
+    e["assets/rubini/textures/models/armor/ruby_layer_1.png"] = png(64, 32, red, dark)
+    e["data/minecraft/tags/item/swords.json"] = j({"values": ["rubini:ruby_sword"]})
+    e["data/minecraft/tags/item/head_armor.json"] = j({"values": ["rubini:ruby_helmet"]})
+    e["data/c/tags/item/foods/vegetable.json"] = j({"values": ["rubini:tomato"]})
+    e["data/minecraft/tags/block/mineable/pickaxe.json"] = j({"values": ["rubini:ruby_block", "rubini:ruby_ore"]})
+    e["data/rubini/recipe/ruby_block.json"] = j({"type": "minecraft:crafting_shaped", "pattern": ["RRR", "RRR", "RRR"],
+                                                  "key": {"R": "rubini:ruby"}, "result": {"id": "rubini:ruby_block"}})
+    e["data/rubini/recipe/ruby_sword.json"] = j({"type": "minecraft:crafting_shaped", "pattern": ["R", "R", "S"],
+                                                  "key": {"R": "rubini:ruby", "S": "#c:rods/wooden"}, "result": {"id": "rubini:ruby_sword"}})
+    e["data/rubini/recipe/ruby_from_ore.json"] = j({"type": "minecraft:smelting", "ingredient": "rubini:ruby_ore",
+                                                     "result": {"id": "rubini:ruby"}, "experience": 1.0, "cookingtime": 200})
+    e["data/rubini/recipe/infusion.json"] = j({"type": "rubini:infusion", "input": "rubini:ruby", "result": "rubini:tomato"})
+    e["data/rubini/loot_table/blocks/ruby_ore.json"] = j({"type": "minecraft:block", "pools": [{"rolls": 1, "entries": [
+        {"type": "minecraft:item", "name": "rubini:ruby", "functions": [{"function": "minecraft:set_count", "count": {"type": "minecraft:uniform", "min": 1, "max": 2}}]}]}]})
+    e["data/rubini/worldgen/configured_feature/ore_ruby.json"] = j({"type": "minecraft:ore", "config": {"size": 5, "targets": [
+        {"target": {"predicate_type": "minecraft:tag_match", "tag": "minecraft:stone_ore_replaceables"}, "state": {"Name": "rubini:ruby_ore"}}]}})
+    e["data/rubini/worldgen/placed_feature/ore_ruby.json"] = j({"feature": "rubini:ore_ruby", "placement": [
+        {"type": "minecraft:count", "count": 6}, {"type": "minecraft:in_square"},
+        {"type": "minecraft:height_range", "height": {"type": "minecraft:uniform", "min_inclusive": {"absolute": -32}, "max_inclusive": {"absolute": 48}}},
+        {"type": "minecraft:biome"}]})
+    e["assets/rubini/geo/entity/ladybug.geo.json"] = j({"format_version": "1.12.0", "minecraft:geometry": [{
+        "description": {"identifier": "geometry.rubini.ladybug", "texture_width": 32, "texture_height": 32},
+        "bones": [{"name": "body", "pivot": [0, 0, 0], "cubes": [{"origin": [-3, 0, -4], "size": [6, 3, 8], "uv": [0, 0]}]}]}]})
+    e["assets/rubini/animations/ladybug.animation.json"] = j({"format_version": "1.8.0", "animations": {
+        "animation.ladybug.walk": {"loop": True, "bones": {"body": {"rotation": {"0.0": {"vector": [0, 0, 0], "easing": "linear"}, "0.5": [0, 5, 0]}}}},
+        "animation.ladybug.idle": {"loop": True, "bones": {"body": {"position": [0, 0, 0]}}}}})
+    e["assets/rubini/textures/entity/ladybug.png"] = png(32, 32, red, (20, 20, 20))
+    write_zip(os.path.join(out, "Mod_Da_Convertire.jar"), e)
+
+
 def main(out):
     os.makedirs(out, exist_ok=True)
 
@@ -475,6 +536,7 @@ def main(out):
     modpack_samples(out)
     world_samples(out)
     crash_samples(out)
+    convert_samples(out)
 
     for n in sorted(os.listdir(out)):
         print("%-40s %8d byte" % (n, os.path.getsize(os.path.join(out, n))))
