@@ -104,6 +104,76 @@ def write_zip(path, entries):
             z.writestr(name, data)
 
 
+# ---------------------------------------------------------------------------------------------------- file Java (MOD MANAGER)
+
+
+def class_file(major=61):
+    """Un .class minimo: solo l'intestazione (CAFEBABE + versione). Non è eseguibile, all'analisi basta."""
+    return bytes([0xCA, 0xFE, 0xBA, 0xBE, 0, 0, (major >> 8) & 0xFF, major & 0xFF, 0, 0])
+
+
+def fabric_mod(mod_id, name, version, extra_depends=None, major=61):
+    depends = {"fabricloader": ">=0.14.0", "minecraft": "~1.20.1", "java": ">=17"}
+    depends.update(extra_depends or {})
+    descriptor = {
+        "schemaVersion": 1, "id": mod_id, "version": version, "name": name,
+        "description": "Mod di prova per la verifica automatica.", "authors": ["Tester"],
+        "license": "MIT", "environment": "*", "entrypoints": {"main": ["prova." + mod_id + ".Main"]},
+        "depends": depends,
+    }
+    return zip_bytes({
+        "fabric.mod.json": json.dumps(descriptor, indent=2).encode("utf-8"),
+        "META-INF/MANIFEST.MF": b"Manifest-Version: 1.0\r\n\r\n",
+        "prova/" + mod_id + "/Main.class": class_file(major),
+    })
+
+
+def forge_mod(mod_id, name, version):
+    toml = (
+        'modLoader="javafml"\nloaderVersion="[47,)"\nlicense="MIT"\n'
+        '[[mods]]\nmodId="%s"\nversion="%s"\ndisplayName="%s"\nauthors="Tester"\ndescription="Mod di prova."\n'
+        '[[dependencies.%s]]\n    modId="forge"\n    mandatory=true\n    versionRange="[47.1.0,)"\n    ordering="NONE"\n    side="BOTH"\n'
+        '[[dependencies.%s]]\n    modId="minecraft"\n    mandatory=true\n    versionRange="[1.20.1,1.21)"\n    side="BOTH"\n'
+    ) % (mod_id, version, name, mod_id, mod_id)
+    return zip_bytes({
+        "META-INF/mods.toml": toml.encode("utf-8"),
+        "META-INF/MANIFEST.MF": b"Manifest-Version: 1.0\r\n\r\n",
+        "prova/" + mod_id + "/Main.class": class_file(61),
+    })
+
+
+def java_samples(out):
+    """File per provare il MOD MANAGER. Sono veri archivi con le stesse descrizioni delle mod vere (fabric.mod.json,
+    mods.toml, pack.mcmeta) ma senza codice eseguibile. Il test «EmulatorSamplesTest» li controlla con l'analizzatore e il
+    gestore dei profili veri (in CI, prima dell'emulatore), così le attese dello script non dipendono da come li scrivo qui."""
+    def put(name, data):
+        with open(os.path.join(out, name), "wb") as f:
+            f.write(data)
+
+    # Fabric 1.20.1: va bene in un profilo «Fabric 1.20.1».
+    put("Mod_Fabric_Esempio.jar", fabric_mod("esempiofabric", "Esempio Fabric", "1.0.0"))
+    # Forge 1.20.1: in un profilo Fabric deve essere bloccata (caricatore sbagliato).
+    put("Mod_Forge_Esempio.jar", forge_mod("esempioforge", "Esempio Forge", "1.0.0"))
+    # Mod che richiede una libreria che il profilo non ha, e la libreria che la soddisfa.
+    put("Mod_Con_Dipendenza.jar", fabric_mod("condipendenza", "Con Dipendenza", "1.2.0", {"libesempio": ">=2.0.0"}))
+    put("Libreria_Esempio.jar", fabric_mod("libesempio", "Libreria Esempio", "2.1.0"))
+    # Una mod che arriva dal DOWNLOAD MANAGER (servita dal server di prova come /mod.jar).
+    put("Mod_Scaricata.jar", fabric_mod("scaricata", "Mod Scaricata", "3.0.0"))
+    # Raccolta: tre mod in uno ZIP, più un file di testo. Ognuna deve diventare un file da controllare per conto suo.
+    put("Raccolta_Mod.zip", zip_bytes({
+        "mods/Uno.jar": fabric_mod("raccoltauno", "Raccolta Uno", "1.0.0"),
+        "mods/Due.jar": fabric_mod("raccoltadue", "Raccolta Due", "1.0.0"),
+        "mods/Tre.jar": fabric_mod("raccoltatre", "Raccolta Tre", "1.0.0"),
+        "LEGGIMI.txt": b"Tre mod in un solo archivio.\n",
+    }))
+    # Resource pack Java (pack_format 15 = Minecraft 1.20 e 1.20.1).
+    put("Texture_Java.zip", zip_bytes({
+        "pack.mcmeta": json.dumps({"pack": {"pack_format": 15, "description": "Texture Java di prova"}}).encode("utf-8"),
+        "assets/minecraft/textures/block/stone.png": png(16, 16),
+        "assets/minecraft/textures/block/dirt.png": png(16, 16, (120, 85, 50), (90, 60, 35)),
+    }))
+
+
 def main(out):
     os.makedirs(out, exist_ok=True)
 
@@ -169,6 +239,8 @@ def main(out):
     # 8) file che non è un pacchetto
     with open(os.path.join(out, "Appunti.txt"), "wb") as f:
         f.write(b"Questo non e' un pacchetto Minecraft.\n")
+
+    java_samples(out)
 
     for n in sorted(os.listdir(out)):
         print("%-40s %8d byte" % (n, os.path.getsize(os.path.join(out, n))))

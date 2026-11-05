@@ -7,13 +7,14 @@ vero e registra ogni richiesta, così lo script può controllare COSA ha chiesto
 
 Percorsi:
   /ok.mcpack, /wrong-hash.mcpack   il texture pack di prova (veloce); stessi byte, nomi diversi
+  /mod.jar                         (solo con --jar) una mod Java di prova, per il passaggio al MOD MANAGER
   /hop.mcpack                      risponde 302 verso /ok.mcpack (reindirizzamento sullo stesso sito)
   /slow.bin, /slow2.bin            2 MiB lenti: i primi 320 KiB subito, poi 64 KiB/s; una ripresa (Range) va veloce
   /drop.bin                        3 MiB: la PRIMA richiesta senza Range si interrompe a 1 MiB (rete che cade)
   /gone.bin                        404
   /away.mcpack                     302 verso un sito https non consentito (.invalid non esiste mai)
 
-Uso: dl_server.py --port 8765 --payload CARTELLA/Texture_Verde.mcpack --out CARTELLA-DI-USCITA
+Uso: dl_server.py --port 8765 --payload CARTELLA/Texture_Verde.mcpack [--jar CARTELLA/Mod_Scaricata.jar] --out CARTELLA-DI-USCITA
 Scrive in --out: dl-expected.txt (NOME DIMENSIONE SHA256), dl-server.log (una riga JSON per evento).
 """
 import argparse
@@ -170,6 +171,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--payload", required=True, help="file servito come ok.mcpack")
+    ap.add_argument("--jar", help="file servito come mod.jar (facoltativo)")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
@@ -182,7 +184,7 @@ def main():
         ("/slow.bin", big, "slow"),
         ("/slow2.bin", big, "slow"),
         ("/drop.bin", drop, "drop"),
-    ):
+    ) + ((("/mod.jar", open(args.jar, "rb").read(), "normal"),) if args.jar else ()):
         FILES[path] = {"data": data, "mode": mode, "etag": '"' + hashlib.sha256(data).hexdigest()[:16] + '"'}
 
     with open(args.out + "/dl-expected.txt", "w") as out:

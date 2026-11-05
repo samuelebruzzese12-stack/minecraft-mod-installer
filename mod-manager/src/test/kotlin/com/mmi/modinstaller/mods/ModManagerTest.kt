@@ -604,4 +604,95 @@ class ModManagerTest {
         assertTrue(install(pair, confirmed = true) is InstallResult.NotAllowed)
         assertEquals(1, mm.items(pid).size)
     }
+
+    // ------------------------------------------------------------------ esportazione
+
+    private fun zipEntries(bytes: ByteArray): Map<String, ByteArray> {
+        val out = LinkedHashMap<String, ByteArray>()
+        java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(bytes)).use { zin ->
+            while (true) {
+                val e = zin.nextEntry ?: break
+                out[e.name] = zin.readBytes()
+            }
+        }
+        return out
+    }
+
+    @Test fun exportZipHasTheEnabledFilesInTheGameFolderLayout() {
+        installed(install(modFile("a", "1.0.0", content = "AAAA")))
+        val off = installed(install(modFile("b", "1.0.0", content = "BBBB")))
+        mm.setEnabled(pid, off.item.id, false)
+        val pack = sourceFile("Pack.zip", "ZIPPACK")
+        val packReport = Fx.report("Pack.zip", kind = ContentKind.RESOURCE_PACK, sha256 = Fx.sha256(pack.readBytes()))
+        assertTrue(mm.install(pid, pack, packReport, true) is InstallResult.Installed)
+
+        val out = java.io.ByteArrayOutputStream()
+        val result = mm.exportZip(pid, out) as Outcome.Ok
+        val entries = zipEntries(out.toByteArray())
+        assertEquals(setOf("mods/a-1.0.0.jar", "resourcepacks/Pack.zip"), entries.keys)
+        assertEquals("AAAA", String(entries.getValue("mods/a-1.0.0.jar")))
+        assertEquals("ZIPPACK", String(entries.getValue("resourcepacks/Pack.zip")))
+        assertEquals(2, result.value.files)
+        assertEquals(11L, result.value.bytes)
+        assertEquals(1, result.value.perCategory[ItemCategory.MOD])
+        assertEquals(1, result.value.perCategory[ItemCategory.RESOURCE_PACK])
+        assertTrue(result.value.missing.isEmpty())
+        assertTrue(result.value.changed.isEmpty())
+    }
+
+    @Test fun exportZipDoesNotTouchTheProfile() {
+        installed(install(modFile("a", "1.0.0", content = "AAAA")))
+        val before = listing()
+        val items = mm.items(pid)
+        mm.exportZip(pid, java.io.ByteArrayOutputStream())
+        assertEquals(before, listing())
+        assertEquals(items, mm.items(pid))
+    }
+
+    @Test fun exportZipReportsMissingAndChangedFiles() {
+        installed(install(modFile("gone", "1.0.0", content = "G")))
+        installed(install(modFile("edited", "1.0.0", content = "E")))
+        installed(install(modFile("fine", "1.0.0", content = "F")))
+        File(modsDir(), "gone-1.0.0.jar").delete()
+        File(modsDir(), "edited-1.0.0.jar").writeText("E modificato")
+
+        val out = java.io.ByteArrayOutputStream()
+        val result = mm.exportZip(pid, out) as Outcome.Ok
+        assertEquals(2, result.value.files)
+        assertEquals(1, result.value.missing.size)
+        assertTrue(result.value.missing.single().contains("gone"))
+        assertEquals(1, result.value.changed.size)
+        assertTrue(result.value.changed.single().contains("edited"))
+        assertEquals(setOf("mods/edited-1.0.0.jar", "mods/fine-1.0.0.jar"), zipEntries(out.toByteArray()).keys)
+    }
+
+    @Test fun exportZipOfAnEmptyProfileIsAValidEmptyZip() {
+        val out = java.io.ByteArrayOutputStream()
+        val result = mm.exportZip(pid, out) as Outcome.Ok
+        assertEquals(0, result.value.files)
+        assertTrue(zipEntries(out.toByteArray()).isEmpty())
+    }
+
+    @Test fun exportZipCanBeCancelledAndForUnknownProfilesFails() {
+        installed(install(modFile("a", "1.0.0", content = "AAAA")))
+        try {
+            mm.exportZip(pid, java.io.ByteArrayOutputStream(), cancel = { throw CancellationException("stop") })
+            fail("doveva essere annullata")
+        } catch (e: CancellationException) {
+            // atteso
+        }
+        assertEquals(1, mm.items(pid).size)
+        assertTrue(mm.exportZip("nope", java.io.ByteArrayOutputStream()) is Outcome.Fail)
+    }
+
+    @Test fun exportZipReportsWriteErrors() {
+        installed(install(modFile("a", "1.0.0", content = "AAAA")))
+        val broken = object : java.io.OutputStream() {
+            override fun write(b: Int) = throw java.io.IOException("disco pieno")
+            override fun write(b: ByteArray, off: Int, len: Int) = throw java.io.IOException("disco pieno")
+        }
+        val r = mm.exportZip(pid, broken)
+        assertTrue(r.toString(), r is Outcome.Fail)
+        assertTrue((r as Outcome.Fail).detail!!.contains("disco pieno"))
+    }
 }

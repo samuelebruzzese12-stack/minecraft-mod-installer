@@ -5,7 +5,8 @@ Comandi:
   dump PERCORSO          salva l'albero dell'interfaccia in PERCORSO
   texts PERCORSO         elenca i testi visibili (uno per riga)
   has-in PERCORSO TESTO  esce 0 se TESTO compare nel dump
-  anr                    se c'è una finestra di Android «… non risponde», preme «Wait» e stampa il titolo (esce 0); altrimenti esce 1
+  anr                    se c'è una finestra di Android «… non risponde», la chiude («Wait» per la nostra app, «Close app» per gli altri
+                         programmi di Android) e stampa il titolo (esce 0); altrimenti esce 1
   has TESTO              come sopra ma su una schermata nuova
   tap TESTO              tocca il primo elemento che contiene TESTO (scorre fino a 3 volte per trovarlo)
   tap-last TESTO         come tap, ma sceglie l'ULTIMO elemento che contiene TESTO (es. la voce del menu laterale)
@@ -16,6 +17,9 @@ Comandi:
   fields PERCORSO        elenca i campi di testo visibili (dall'alto in basso): indice e contenuto
   fill N TESTO           tocca il campo di testo numero N (da 0, dall'alto) e ci scrive TESTO (solo caratteri semplici)
   clear-field N          svuota il campo di testo numero N
+  switches               elenca gli interruttori visibili (dall'alto in basso): indice e stato (on/off)
+  switch-state N         esce 0 se l'interruttore N è acceso, 1 se è spento, 2 se non esiste
+  tap-switch N           tocca l'interruttore numero N
 """
 import re
 import subprocess
@@ -200,6 +204,48 @@ def edit_fields(path):
     return out
 
 
+def switch_nodes(path):
+    """Gli interruttori visibili (nodi «checkable», come lo Switch di Compose), dall'alto in basso."""
+    out = []
+    screen = None
+    for n in ET.parse(path).getroot().iter("node"):
+        box = box_of(n)
+        if box is None:
+            continue
+        if screen is None:
+            screen = box
+            continue
+        if outside(box, screen):
+            continue
+        if n.get("checkable") == "true" and box[2] > box[0] and box[3] > box[1]:
+            out.append({"checked": n.get("checked") == "true", "box": box})
+    out.sort(key=lambda f: (f["box"][1], f["box"][0]))
+    return out
+
+
+def locate_switch(index, scrolls=4):
+    """Cerca l'interruttore numero index scorrendo la pagina verso il basso (fino a scrolls volte). Restituisce il nodo o None.
+    L'indice conta gli interruttori visibili in quel momento, dall'alto: con una sola scheda è sempre 0."""
+    for i in range(scrolls + 1):
+        p = dump("/tmp/mmi_switch.xml")
+        if p:
+            found = switch_nodes(p)
+            if index < len(found):
+                return found[index]
+        if i < scrolls:
+            swipe_up()
+    return None
+
+
+def tap_switch(index):
+    node = locate_switch(index)
+    if node is None:
+        return False
+    x1, y1, x2, y2 = node["box"]
+    adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
+    return True
+
+
 SAFE_TEXT = re.compile(r"^[A-Za-z0-9:/._?=-]*$")
 
 
@@ -251,10 +297,15 @@ def wait(needle, seconds=20):
 
 
 ANR_RE = re.compile(r"isn.t responding|not responding", re.I)
+OWN_APP_RE = re.compile(r"minecraft mod installer|com\.mmi\.modinstaller", re.I)
 
 
 def anr():
-    """Chiude la finestra di sistema «… non risponde» (ANR) toccando «Wait». Restituisce il titolo, o None se non c'è."""
+    """Chiude la finestra di sistema «… non risponde» (ANR). Restituisce il titolo, o None se non c'è.
+
+    Se a non rispondere è l'app in prova si tocca «Wait» (il problema viene segnalato a parte dalla prova). Se è un
+    altro programma di Android (launcher, System UI…) si tocca «Close app»: premere «Wait» non toglie la finestra quando
+    il programma è rimasto appeso, e nell'ultima esecuzione fallita l'avevamo premuto 246 volte senza risultato."""
     p = dump("/tmp/mmi_anr.xml")
     if not p:
         return None
@@ -266,7 +317,8 @@ def anr():
                 title = label.strip()
     if title is None:
         return None
-    for needle in ("wait", "close app"):
+    order = ("wait", "close app") if OWN_APP_RE.search(title) else ("close app", "wait")
+    for needle in order:
         for n in ns:
             if n["text"].strip().lower() == needle:
                 x1, y1, x2, y2 = n["box"]
@@ -323,6 +375,20 @@ def main(argv):
         return fill(int(argv[2]), argv[3] if len(argv) > 3 else "")
     if cmd == "clear-field":
         return clear_field(int(argv[2]))
+    if cmd == "switches":
+        p = dump("/tmp/mmi_switch.xml")
+        if not p:
+            return 1
+        for i, sw in enumerate(switch_nodes(p)):
+            print("%d\t%s" % (i, "on" if sw["checked"] else "off"))
+        return 0
+    if cmd == "switch-state":
+        node = locate_switch(int(argv[2]))
+        if node is None:
+            return 2
+        return 0 if node["checked"] else 1
+    if cmd == "tap-switch":
+        return 0 if tap_switch(int(argv[2])) else 1
     print(__doc__)
     return 2
 

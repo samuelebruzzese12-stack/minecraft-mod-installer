@@ -58,6 +58,10 @@ fun ModsScreen(mods: ModsState, model: ModsViewModel, vm: MainViewModel, onMenu:
         model.addFiles(uris, "file")
     }
     val profile = mods.active
+    // Lo ZIP con i file attivi del profilo: il nome del file viene proposto dal selettore di sistema.
+    val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null) model.exportZip(uri)
+    }
 
     SectionPage(title = Section.MODS.title, onBack = { vm.back() }, onMenu = onMenu) {
         InfoCard {
@@ -93,7 +97,10 @@ fun ModsScreen(mods: ModsState, model: ModsViewModel, vm: MainViewModel, onMenu:
         } else if (profile == null) {
             NoProfileCard(model)
         } else {
-            ProfileCard(mods, profile, model)
+            ProfileCard(mods, profile, model) {
+                val safe = profile.name.replace(Regex("[^A-Za-z0-9._-]+"), "_").trim('_').ifEmpty { "profilo" }
+                exporter.launch("$safe.zip")
+            }
         }
 
         GreenButton(
@@ -117,7 +124,8 @@ fun ModsScreen(mods: ModsState, model: ModsViewModel, vm: MainViewModel, onMenu:
                         "delle classi. Non esegue mai il codice della mod.",
                     "Le compatibilità si deducono da quello che la mod dichiara di sé: può essere incompleto o sbagliato. " +
                         "Un controllo superato non garantisce che il gioco parta.",
-                    "Non avvia Minecraft Java e non copia i file in un programma di avvio: restano nei profili di questa app.",
+                    "Non avvia Minecraft Java. I file restano nei profili di questa app: per usarli altrove esportali in uno " +
+                        "ZIP (solo i file attivi) e estrailo nella cartella di gioco del tuo programma di avvio.",
                     "Modrinth e CurseForge non sono ancora collegati: i file si aggiungono da memoria o dal DOWNLOAD MANAGER."
                 )
             )
@@ -144,7 +152,7 @@ private fun NoProfileCard(model: ModsViewModel) {
 }
 
 @Composable
-private fun ProfileCard(mods: ModsState, profile: Profile, model: ModsViewModel) {
+private fun ProfileCard(mods: ModsState, profile: Profile, model: ModsViewModel, onExport: () -> Unit) {
     val disabled = mods.items.count { !it.enabled }
     InfoCard {
         Text(text = profile.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -166,6 +174,7 @@ private fun ProfileCard(mods: ModsState, profile: Profile, model: ModsViewModel)
             RowButton("ELIMINA") { model.askDeleteProfile() }
         }
         FullButton("VERIFICA PROFILO") { model.checkProfile() }
+        FullButton("ESPORTA I FILE ATTIVI (ZIP)", enabled = mods.items.any { it.enabled }, onClick = onExport)
         val last = mods.lastOperation
         FullButton(
             text = if (last != null) "ANNULLA: $last" else "NESSUNA OPERAZIONE DA ANNULLARE",

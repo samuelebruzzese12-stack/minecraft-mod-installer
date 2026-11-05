@@ -1,6 +1,6 @@
 #!/bin/bash
 # Prova su emulatore Android dell'app completa: dashboard, menu, INSTALLER BEDROCK, Java Edition, DOWNLOAD MANAGER,
-# Diagnostica, Impostazioni e sezioni non ancora costruite. Installa l'APK, apre file di prova dal selettore di sistema (come farebbe
+# MOD MANAGER (ci/mods_phase.sh), Diagnostica, Impostazioni e sezioni non ancora costruite. Installa l'APK, apre file di prova dal selettore di sistema (come farebbe
 # l'utente) e tocca i pulsanti. Con il FINTO Minecraft (ci/fakeminecraft) controlla anche che il file consegnato
 # dall'app contenga tutto, byte per byte. Alla fine installa l'APK nuovo SOPRA quello della versione precedente per
 # controllare che elenchi e cronologia non vadano persi. Salva schermate, dump dell'interfaccia e log in $OUT.
@@ -33,13 +33,44 @@ fail() { log "PROBLEMA: $*"; echo "$*" >> "$PROBLEMS"; }
 note() { log "NOTA: $*"; echo "$*" >> "$NOTES"; }
 phase() { echo; log "=================== $* ==================="; }
 
-# Sull'emulatore di GitHub, subito dopo l'avvio, Android può mostrare «System UI isn't responding» (o simili): copre l'app
-# e la prova non vede più nulla. È un problema dell'emulatore, non dell'app: si preme «Wait» e si annota. Se invece è
-# l'app a non rispondere, è un problema vero e si segnala.
+# Sull'emulatore di GitHub (2 core) Android può mostrare «System UI isn't responding», «Pixel Launcher isn't responding» o simili:
+# la finestra copre l'app e la prova non vede più nulla. È un problema dell'emulatore, non dell'app: si chiude («Wait» per la
+# nostra app, «Close app» per i programmi di Android, vedi ui.py) e si annota. Se invece è l'app a non rispondere, è un problema
+# vero e si segnala. Se la finestra non se ne va più (nell'esecuzione 9 comparve 246 volte di fila) l'emulatore è inutilizzabile:
+# la prova si ferma con il codice 3 e lascia il file EMULATORE_INUTILIZZABILE, e il workflow la ripete con un emulatore nuovo.
+ANR_TOTAL=0; ANR_STREAK=0
+ANR_MAX_STREAK=${ANR_MAX_STREAK:-10}; ANR_MAX_TOTAL=${ANR_MAX_TOTAL:-40}
+LOGCAT_PID=""
+
+emulator_unusable() {
+  echo "$1" > "$OUT/EMULATORE_INUTILIZZABILE"
+  fail "emulatore inutilizzabile: $1 (non è un difetto dell'app: la prova va ripetuta con un emulatore nuovo)"
+  adb shell cat /proc/loadavg > "$OUT/loadavg.txt" 2>&1
+  adb shell top -b -n 1 2>/dev/null | head -n 25 > "$OUT/top.txt"
+  [ -n "$LOGCAT_PID" ] && kill "$LOGCAT_PID" 2>/dev/null
+  exit 3
+}
+
+# $1 = titolo della finestra appena chiusa da «ui.py anr» (può essere vuoto).
+anr_seen() {
+  local title="$1"
+  ANR_TOTAL=$((ANR_TOTAL+1)); ANR_STREAK=$((ANR_STREAK+1))
+  note "finestra di Android «${title:-non risponde}» chiusa (n. $ANR_TOTAL, di fila $ANR_STREAK)"
+  if echo "$title" | grep -qiE "Minecraft Mod Installer|$PKG"; then fail "Android segnala che l'app non risponde: $title"; fi
+  if [ $((ANR_STREAK % 3)) -eq 0 ]; then
+    # Chiuderla non basta: si ferma con la forza il programma appeso (di solito il launcher) e si torna alla Home.
+    note "la finestra ricompare: fermo il launcher e torno alla Home"
+    adb shell am force-stop com.google.android.apps.nexuslauncher > /dev/null 2>&1
+    adb shell am force-stop com.android.launcher3 > /dev/null 2>&1
+    adb shell input keyevent KEYCODE_HOME > /dev/null 2>&1
+    sleep 6
+  fi
+  if [ "$ANR_STREAK" -ge "$ANR_MAX_STREAK" ]; then emulator_unusable "la finestra «non risponde» è comparsa $ANR_STREAK volte di fila"; fi
+  if [ "$ANR_TOTAL" -ge "$ANR_MAX_TOTAL" ]; then emulator_unusable "in tutto $ANR_TOTAL finestre «non risponde» di Android"; fi
+}
 dismiss_anr() {
   local title; title=$($UI anr 2>/dev/null) || title=""
-  note "finestra di Android «${title:-non risponde}»: premo Wait"
-  if echo "$title" | grep -qiE "Minecraft Mod Installer|$PKG"; then fail "Android segnala che l'app non risponde: $title"; fi
+  anr_seen "$title"
   sleep 4
 }
 
@@ -52,7 +83,7 @@ shot() {
     adb exec-out screencap -p > "$OUT/shots/$n.png" 2>/dev/null
     LAST_SHOT="$OUT/shots/$n.png"
     $UI dump "$OUT/ui/$n.xml" >/dev/null 2>&1 || break
-    if grep -qiE "isn.{1,8}t responding|not responding" "$OUT/ui/$n.xml"; then dismiss_anr; else break; fi
+    if grep -qiE "isn.{1,8}t responding|not responding" "$OUT/ui/$n.xml"; then dismiss_anr; else ANR_STREAK=0; break; fi
   done
   if [ -s "$OUT/ui/$n.xml" ]; then
     LAST_UI="$OUT/ui/$n.xml"
@@ -89,7 +120,7 @@ snap() {
   local i
   for i in 1 2 3; do
     rm -f "$CUR"; $UI dump "$CUR" >/dev/null 2>&1
-    if [ -s "$CUR" ] && grep -qiE "isn.{1,8}t responding|not responding" "$CUR"; then dismiss_anr; else return 0; fi
+    if [ -s "$CUR" ] && grep -qiE "isn.{1,8}t responding|not responding" "$CUR"; then dismiss_anr; else ANR_STREAK=0; return 0; fi
   done
 }
 seen() { [ -s "$CUR" ] && $UI has-in "$CUR" "$1" 2>/dev/null; }
@@ -209,14 +240,29 @@ adb logcat -c
 adb logcat -v threadtime > "$OUT/logcat.txt" 2>&1 &
 LOGCAT_PID=$!
 
-# Subito dopo l'avvio l'emulatore è ancora carico (servizi di Google, indicizzazione): si lascia calmare il sistema e si
-# chiudono eventuali finestre «non risponde» prima di cominciare.
+# Subito dopo l'avvio l'emulatore è ancora carico (servizi, indicizzazione): con 2 core è normale restare con il carico alto per
+# minuti. Si aspetta che il carico del processore scenda (al massimo 4 minuti), chiudendo nel frattempo le finestre «non risponde».
+wait_calm() {
+  local i load t calm=0
+  sleep 15
+  for i in $(seq 1 24); do
+    if t=$($UI anr 2>/dev/null); then anr_seen "$t"; sleep 4; calm=0; continue; fi
+    ANR_STREAK=0
+    load=$(adb shell cat /proc/loadavg 2>/dev/null | tr -d '\r' | cut -d' ' -f1)
+    if [ -z "$load" ]; then note "non riesco a leggere il carico del sistema: attendo 45 s"; sleep 45; return 0; fi
+    log "carico del sistema (media su 1 minuto): $load"
+    if awk -v l="$load" 'BEGIN { exit !(l < 3.0) }'; then
+      calm=$((calm+1)); [ "$calm" -ge 2 ] && return 0
+    else
+      calm=0
+    fi
+    sleep 8
+  done
+  note "il carico del sistema non è sceso sotto 3 in 4 minuti: proseguo lo stesso"
+}
 log "Attendo che il sistema si calmi"
 adb shell input keyevent KEYCODE_HOME > /dev/null 2>&1
-sleep 20
-for _ in 1 2 3; do
-  if t=$($UI anr 2>/dev/null); then note "finestra di Android chiusa all'avvio: $t"; sleep 4; else break; fi
-done
+wait_calm
 
 log "Installo l'APK: $APK"
 adb install -r -t "$APK" 2>&1 | tee "$OUT/install.txt"
@@ -301,7 +347,7 @@ fi
 # ======================================================================================================== sezioni non costruite
 
 phase "Sezioni non ancora costruite"
-for s in "MOD MANAGER" "MODPACK MANAGER" "WORLD MANAGER" "WORLD CONVERTER" "JAVA TO BEDROCK"; do
+for s in "MODPACK MANAGER" "WORLD MANAGER" "WORLD CONVERTER" "JAVA TO BEDROCK"; do
   go_dash || { fail "$s: non trovo la dashboard"; continue; }
   if ! $UI tap "$s"; then fail "$s: scheda non trovata nella dashboard"; continue; fi
   if $UI wait "TORNA ALLA DASHBOARD" 10; then
@@ -471,7 +517,7 @@ DL_PID=""
 DL_BASE="http://10.0.2.2:$DL_PORT"
 
 dl_start_server() {
-  python3 -I ci/dl_server.py --port $DL_PORT --payload "$SAMPLES/Texture_Verde.mcpack" --out "$OUT" > "$OUT/dl-server-stdout.txt" 2>&1 &
+  python3 -I ci/dl_server.py --port $DL_PORT --payload "$SAMPLES/Texture_Verde.mcpack" --jar "$SAMPLES/Mod_Scaricata.jar" --out "$OUT" >> "$OUT/dl-server-stdout.txt" 2>&1 &
   DL_PID=$!
   local i
   for i in $(seq 1 30); do
@@ -816,6 +862,12 @@ download_tests() {
 }
 
 download_tests
+
+# ======================================================================================================== MOD MANAGER
+
+# La fase sta in un file a parte (ci/mods_phase.sh): usa le funzioni e le variabili di questo script.
+source ci/mods_phase.sh
+mods_tests
 
 # ======================================================================================================== INSTALLER BEDROCK (Minecraft assente)
 

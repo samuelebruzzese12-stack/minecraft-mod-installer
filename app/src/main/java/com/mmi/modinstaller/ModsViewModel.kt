@@ -13,6 +13,7 @@ import com.mmi.modinstaller.data.ModsRepository
 import com.mmi.modinstaller.jar.ContentKind as JavaKind
 import com.mmi.modinstaller.jar.JarReport
 import com.mmi.modinstaller.jar.ModLoader
+import com.mmi.modinstaller.mods.ExportSummary
 import com.mmi.modinstaller.mods.InstallPlan
 import com.mmi.modinstaller.mods.InstallPlanner
 import com.mmi.modinstaller.mods.InstallResult
@@ -700,6 +701,47 @@ class ModsViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeCheck() = _state.update { it.copy(check = null) }
+
+    // ------------------------------------------------------------------ esportazione
+
+    /** Scrive in [target], scelto dall'utente con il selettore di sistema, uno ZIP con i file attivi del profilo. */
+    fun exportZip(target: Uri) {
+        val profile = _state.value.active
+        if (profile == null) {
+            say("Crea prima un profilo.")
+            return
+        }
+        runBusy("Esporto «" + profile.name + "»", "Esportazione annullata: lo ZIP incompleto è stato cancellato.") { cancel, progress ->
+            val outcome = withContext(Dispatchers.IO) {
+                var finished = false
+                try {
+                    val stream = repo.openOutput(target) ?: return@withContext Outcome.Fail("Non riesco a scrivere nel punto scelto.")
+                    val r = stream.use { out ->
+                        manager.exportZip(profile.id, out, cancel) { done, total -> progress(done, total, "Scrivo i file nello ZIP") }
+                    }
+                    finished = r is Outcome.Ok
+                    r
+                } finally {
+                    if (!finished) repo.deleteDocument(target)
+                }
+            }
+            when (outcome) {
+                is Outcome.Ok -> say(exportMessage(outcome.value))
+                is Outcome.Fail -> say(outcome.message + (outcome.detail?.let { " ($it)" } ?: ""))
+            }
+        }
+    }
+
+    private fun exportMessage(s: ExportSummary): String {
+        if (s.files == 0 && s.missing.isEmpty()) return "Il profilo non ha file attivi: lo ZIP è vuoto."
+        val sb = StringBuilder("Esportati " + s.files + " file (" + formatBytes(s.bytes) + ").")
+        if (s.missing.isNotEmpty()) sb.append(" Non c'erano più sul telefono e non sono nello ZIP: " + s.missing.joinToString(", ") + ".")
+        if (s.changed.isNotEmpty()) {
+            sb.append(" Risultano diversi da quando li hai installati (modificati fuori dall'app): " + s.changed.joinToString(", ") + ".")
+        }
+        sb.append(" Estrai le cartelle nella cartella di gioco del tuo programma di avvio. L'app non può verificare che il gioco li carichi.")
+        return sb.toString()
+    }
 
     companion object {
         /** Tetto di sicurezza per «INSTALLA I PRONTI», così un errore di logica non può girare all'infinito. */

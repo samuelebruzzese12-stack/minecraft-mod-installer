@@ -2,6 +2,7 @@ package com.mmi.modinstaller.data
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import com.mmi.modinstaller.core.CancelCheck
 import com.mmi.modinstaller.core.ProgressCallback
 import com.mmi.modinstaller.core.SafetyLimits
@@ -9,6 +10,7 @@ import com.mmi.modinstaller.jar.JarAnalyzer
 import com.mmi.modinstaller.jar.JarLimits
 import com.mmi.modinstaller.jar.JarReport
 import java.io.File
+import java.io.OutputStream
 import java.util.UUID
 
 /**
@@ -44,6 +46,18 @@ class ModsRepository(context: Context, private val paths: AppPaths) {
 
     fun analyze(file: File, displayName: String, cancel: CancelCheck, progress: ProgressCallback?): JarReport =
         JarAnalyzer(jarLimits, paths.sessions).analyze(file, displayName, cancel, progress)
+
+    /** Apre in scrittura il documento scelto dall'utente con il selettore di sistema (es. lo ZIP da esportare). */
+    fun openOutput(uri: Uri): OutputStream? = appContext.contentResolver.openOutputStream(uri, "wt")
+
+    /** Cancella (se il provider lo permette) un documento rimasto a metà, ad esempio dopo un'esportazione fallita. */
+    fun deleteDocument(uri: Uri) {
+        try {
+            DocumentsContract.deleteDocument(appContext.contentResolver, uri)
+        } catch (e: Exception) {
+            // Non tutti i provider lo permettono: resta un file incompleto che l'utente può eliminare da solo.
+        }
+    }
 
     /** Estrae da una raccolta il .jar che si trova a [entryPath]. Restituisce false se non c'è. */
     fun extractFromBundle(archive: File, entryPath: String, target: File, cancel: CancelCheck): Boolean =

@@ -8,7 +8,12 @@ import com.mmi.modinstaller.jar.ModLoader
 import com.mmi.modinstaller.jar.ModVersion
 import java.io.File
 import java.io.IOException
+import java.io.OutputStream
+import java.security.MessageDigest
 import java.util.UUID
+import java.util.zip.Deflater
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 sealed class Outcome<out T> {
     data class Ok<out T>(val value: T) : Outcome<T>()
@@ -23,6 +28,18 @@ sealed class InstallResult {
     data class NotAllowed(val plan: InstallPlan) : InstallResult()
     data class Failed(val message: String, val detail: String? = null) : InstallResult()
 }
+
+/** Cosa è finito nello ZIP di esportazione di un profilo. */
+class ExportSummary(
+    val files: Int,
+    val bytes: Long,
+    /** Quanti file di ogni categoria. */
+    val perCategory: Map<ItemCategory, Int>,
+    /** File attivi registrati ma non più sul telefono: non sono nello ZIP. */
+    val missing: List<String>,
+    /** File presenti ma diversi da come erano quando sono stati installati (modificati fuori dall'app). */
+    val changed: List<String>
+)
 
 /** I dati con cui si crea o si modifica un profilo. */
 data class ProfileDraft(
@@ -475,6 +492,70 @@ class ModManager(
         Digests.deleteRecursively(trashDir(profileId, entry.id))
         Digests.deleteRecursively(undoDir)
         Outcome.Ok(entry.label)
+    }
+
+    // ------------------------------------------------------------------------------------------ esportazione
+
+    /**
+     * Scrive in [out] uno ZIP con i file ATTIVI del profilo, nella disposizione di una cartella di gioco
+     * (`mods/…`, `resourcepacks/…`, `shaderpacks/…`, `datapacks/…`). I file disattivati restano fuori. I file del profilo non
+     * vengono toccati. Chi chiama apre e chiude [out]; se l'esportazione fallisce o viene annullata lo ZIP è incompleto e va
+     * cancellato.
+     */
+    fun exportZip(
+        profileId: String,
+        out: OutputStream,
+        cancel: CancelCheck = {},
+        progress: ((done: Long, total: Long) -> Unit)? = null
+    ): Outcome<ExportSummary> = synchronized(lock) {
+        if (repo.get(profileId) == null) return@synchronized Outcome.Fail("Il profilo non esiste più")
+        val items = repo.items(profileId)
+            .filter { it.enabled }
+            .sortedWith(compareBy<ProfileItem>({ it.category.ordinal }, { it.fileName.lowercase() }))
+        val total = items.sumOf { it.sizeBytes }
+        val missing = ArrayList<String>()
+        val changed = ArrayList<String>()
+        val perCategory = LinkedHashMap<ItemCategory, Int>()
+        var files = 0
+        var bytes = 0L
+        try {
+            val zip = ZipOutputStream(out)
+            // Mod e pacchetti sono già compressi: si scrivono senza ricomprimerli.
+            zip.setLevel(Deflater.NO_COMPRESSION)
+            val buffer = ByteArray(64 * 1024)
+            for (item in items) {
+                cancel()
+                val file = fileOf(profileId, item)
+                if (!file.isFile) {
+                    missing.add(item.displayName)
+                    continue
+                }
+                val digest = MessageDigest.getInstance("SHA-256")
+                zip.putNextEntry(ZipEntry(item.category.folder + "/" + item.fileName))
+                file.inputStream().use { input ->
+                    while (true) {
+                        cancel()
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        zip.write(buffer, 0, n)
+                        digest.update(buffer, 0, n)
+                        bytes += n
+                        progress?.invoke(bytes, total)
+                    }
+                }
+                zip.closeEntry()
+                if (Digests.hex(digest.digest()) != item.sha256) changed.add(item.displayName)
+                files++
+                perCategory[item.category] = (perCategory[item.category] ?: 0) + 1
+            }
+            zip.finish()
+            zip.flush()
+        } catch (e: java.util.concurrent.CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            return@synchronized Outcome.Fail("Non sono riuscito a scrivere lo ZIP", e.message)
+        }
+        Outcome.Ok(ExportSummary(files, bytes, perCategory, missing, changed))
     }
 
     // ------------------------------------------------------------------------------------------ controlli

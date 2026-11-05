@@ -43,9 +43,16 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" > /dev/null 2>&1 || true
           ls "$ANDROID_HOME/platforms" "$ANDROID_HOME/build-tools" || true
 
+      # Gli stessi file Java che la prova su emulatore mette sul telefono: il test EmulatorSamplesTest li legge con l'analizzatore
+      # e il gestore dei profili veri, così le attese dello script (pronto, bloccato, serve conferma…) sono controllate qui.
+      - name: Crea i file di prova per il test sui file Java
+        run: python3 ci/make_samples.py samples-test
+
       - name: Esegui i test (analisi, download e testi dell'app)
         id: coretests
         continue-on-error: true
+        env:
+          MMI_SAMPLES: ${{ github.workspace }}/samples-test
         run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :app:testDebugUnitTest --continue --stacktrace
 
       - name: Compila l'APK
@@ -161,7 +168,7 @@ jobs:
     name: Prova su emulatore Android
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 120
     continue-on-error: true
 
     steps:
@@ -206,7 +213,38 @@ jobs:
       - name: Crea i file di prova
         run: python3 ci/make_samples.py samples
 
-      - name: Prova l'app sull'emulatore
+      # Il runner di GitHub ha solo 2 core: con l'immagine «google_apis» (servizi di Google, Pixel Launcher) l'emulatore andava spesso in
+      # blocco con finestre «… non risponde». Il primo tentativo usa l'immagine di base di Android (senza servizi di Google), più leggera.
+      - name: Prova l'app sull'emulatore (primo tentativo)
+        id: emu1
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: default
+          arch: x86_64
+          profile: pixel_6
+          ram-size: 3072M
+          disable-animations: true
+          emulator-boot-timeout: 900
+          script: bash ci/emulator_smoke.sh
+
+      # Si ripete SOLO se l'emulatore era inutilizzabile (lo script lascia EMULATORE_INUTILIZZABILE e termina con il codice 3) o non è
+      # nemmeno partito (manca problemi.txt). Se la prova ha trovato difetti veri NON si ripete: il risultato resta quello.
+      - name: Il primo tentativo va ripetuto?
+        id: retry
+        if: always()
+        run: |
+          again=no
+          if [ "${{ steps.emu1.outcome }}" != "success" ]; then
+            if [ -f ci-out/EMULATORE_INUTILIZZABILE ] || [ ! -f ci-out/problemi.txt ]; then again=yes; fi
+          fi
+          echo "Primo tentativo: ${{ steps.emu1.outcome }}; da ripetere: $again"
+          echo "again=$again" >> "$GITHUB_OUTPUT"
+          if [ "$again" = yes ] && [ -d ci-out ]; then mv ci-out ci-out-tentativo1; fi
+
+      - name: Prova l'app sull'emulatore (secondo tentativo, con i servizi di Google)
+        if: steps.retry.outputs.again == 'yes'
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -223,14 +261,18 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: prova-emulatore
-          path: ci-out
+          path: |
+            ci-out
+            ci-out-tentativo1
           if-no-files-found: warn
 
       # Gli artifact si scaricano solo dal sito di GitHub: lo stesso materiale viene allegato anche alla Release.
       - name: Comprimi i risultati della prova
         if: always()
         run: |
-          if [ -d ci-out ]; then (cd ci-out && zip -qr ../prova-emulatore.zip .); fi
+          dirs=""
+          for d in ci-out ci-out-tentativo1; do [ -d "$d" ] && dirs="$dirs $d"; done
+          if [ -n "$dirs" ]; then zip -qr prova-emulatore.zip $dirs; fi
           ls -l prova-emulatore.zip || true
 
       - name: Allega i risultati alla Release
