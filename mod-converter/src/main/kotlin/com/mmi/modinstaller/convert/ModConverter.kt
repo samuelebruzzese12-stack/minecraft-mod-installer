@@ -559,11 +559,13 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             for ((eid, ef) in codeEntities) {
                 cancel()
                 if (entitiesOut.any { it.java == eid }) continue
-                val model = ef.model ?: continue
+                // Senza un modello nel codice: un modello Tabula della mod (Ice and Fire: draghi, serpenti marini).
+                val tabula = if (ef.model == null && ef.goals.isNotEmpty()) TabulaReader.forEntity(mod.jar, eid, allNames) else null
+                val model = ef.model ?: tabula?.first ?: continue
                 val tex = ef.texture?.let { t ->
                     val path = t.path.removePrefix("textures/").removeSuffix(".png")
                     if ("assets/${t.ns}/textures/$path.png" in allNames) Rl(t.ns, path) else null
-                } ?: EntityReader.texture(eid.ns, eid.path, allNames) ?: continue
+                } ?: tabula?.let { TabulaReader.texture(eid, it.second, allNames) } ?: EntityReader.texture(eid.ns, eid.path, allNames) ?: continue
                 val bid = bedrockId(eid)
                 val idPart = bid.replace(':', '.')
                 val geoId = "geometry.mmi.$idPart"
@@ -602,7 +604,8 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 entityEntries.add(
                     ConvertedEntry(
                         eid.toString(), bid, mod.lang["it_it"]?.get(out.javaNameKey) ?: en,
-                        "modello dal codice" + (if (model.animations.isNotEmpty()) ", animazioni della mod" else ", camminata generica") +
+                        (if (model.source == "tabula") "modello Tabula della mod" else "modello dal codice") +
+                            (if (model.animations.isNotEmpty() || model.procedural.isNotEmpty()) ", animazioni della mod" else ", camminata generica") +
                             (if (ia > 0) ", IA: $ia comportamenti" else ", IA generica")
                     )
                 )
@@ -695,7 +698,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             for (e in entitiesOut) if (e.mod === mod) entById[e.java.toString()]?.let { components.add(ComponentRegistry.entity(e, it)) }
             components.addAll(ComponentRegistry.recipes(ok, skips))
             for (n in notConverted) components.add(Component("gruppo", n, n, emptyList(), "non convertito", null, "—", emptyList(), listOf(n), ComponentStatus.DATA_KEPT))
-            components.addAll(ComponentRegistry.files(mod, soundsConverted = modSounds.isNotEmpty()))
+            components.addAll(ComponentRegistry.files(mod, soundsConverted = modSounds.isNotEmpty(), entitiesConverted = entityEntries.isNotEmpty()))
             reports.add(
                 ModReport(
                     mod.jar.label, mod.identity.name ?: mod.jar.label, mod.identity.loader, mod.identity.version,

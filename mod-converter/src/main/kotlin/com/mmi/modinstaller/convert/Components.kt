@@ -107,7 +107,7 @@ internal object ComponentRegistry {
     }
 
     /** Le voci del JAR raggruppate per tipo: ogni file finisce in un gruppo, con quello che se n'è fatto. */
-    fun files(mod: JavaModContent, soundsConverted: Boolean = false): List<Component> {
+    fun files(mod: JavaModContent, soundsConverted: Boolean = false, entitiesConverted: Boolean = false): List<Component> {
         class G(val label: String, val status: ComponentStatus, val what: String)
         val groups = LinkedHashMap<String, Pair<G, Int>>()
         fun add(key: String, g: G) { groups[key] = g to ((groups[key]?.second ?: 0) + 1) }
@@ -120,6 +120,7 @@ internal object ComponentRegistry {
                 n.startsWith("META-INF/") || n.endsWith(".mixins.json") || n.endsWith("refmap.json") || n.endsWith(".accesswidener") ->
                     add("meta", G("Descrittori, mixin e modifiche al motore", ComponentStatus.NOT_RECONSTRUCTABLE, "Bedrock non permette agli add-on di cambiare il motore del gioco"))
                 n.startsWith("assets/") && area == "lang" -> add("lang", G("Testi e traduzioni", ComponentStatus.CONVERTED, "tutte le lingue della mod"))
+                n.startsWith("assets/") && area == "models" && parts.getOrNull(3) == "tabula" -> add("tabula", G("Modelli Tabula", ComponentStatus.CONVERTED, "modelli e pose delle creature (camminata, volo, nuoto)"))
                 n.startsWith("assets/") && (area == "blockstates" || area == "models" || area == "items") -> add("models", G("Modelli e stati dei blocchi", ComponentStatus.CONVERTED, "forme, varianti e icone"))
                 n.startsWith("assets/") && area == "textures" -> add("textures", G("Texture", ComponentStatus.CONVERTED, "quelle usate da oggetti, blocchi, armature e creature"))
                 n.startsWith("assets/") && (area == "sounds" || n.endsWith("sounds.json")) -> add(
@@ -131,7 +132,9 @@ internal object ComponentRegistry {
                 n.startsWith("assets/") && area == "particles" -> add("particles", G("Particelle", ComponentStatus.DATA_KEPT, "non ancora convertite"))
                 n.startsWith("data/") && (area == "recipe" || area == "recipes") -> add("recipes", G("Ricette", ComponentStatus.CONVERTED, "quelle che Bedrock sa fare (vedi le ricette saltate)"))
                 n.startsWith("data/") && (area == "loot_table" || area == "loot_tables") && parts.getOrNull(3) == "blocks" -> add("loot", G("Bottini dei blocchi", ComponentStatus.CONVERTED, "anche per stato (lastre doppie, colture mature)"))
-                n.startsWith("data/") && (area == "loot_table" || area == "loot_tables") -> add("loot2", G("Bottini di creature, casse e pesca", ComponentStatus.DATA_KEPT, "non ancora convertiti"))
+                n.startsWith("data/") && (area == "loot_table" || area == "loot_tables") && parts.getOrNull(3) == "entities" && entitiesConverted ->
+                    add("loot3", G("Bottini delle creature", ComponentStatus.CONVERTED, "quelli delle creature convertite"))
+                n.startsWith("data/") && (area == "loot_table" || area == "loot_tables") -> add("loot2", G("Bottini di casse, pesca e altro", ComponentStatus.DATA_KEPT, "non ancora convertiti"))
                 n.startsWith("data/") && (area == "tags") -> add("tags", G("Gruppi (tag)", ComponentStatus.CONVERTED, "usati per ricette e attrezzi"))
                 n.startsWith("data/") && (area == "structure" || area == "structures") -> add("structures", G("Strutture", ComponentStatus.DATA_KEPT, "non ancora convertite"))
                 n.startsWith("data/") && (area == "advancement" || area == "advancements") -> add("adv", G("Progressi", ComponentStatus.DATA_KEPT, "Bedrock non ha progressi per gli add-on"))

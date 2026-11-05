@@ -49,7 +49,8 @@ JAR / profilo / modpack
 | Staccionate, muretti, pannelli | tratto `minecraft:connection`, collisioni alte 1,5 blocchi | Approssimato (muretti sempre bassi) |
 | Pulsanti, pedane | `minecraft:redstone_producer` nello stato premuto | Ricostruito (pedane a peso: segnale pieno) |
 | Colture | età come stato, crescita, farina d'ossa, solo sulla terra arata, semi che le piantano, bottino per età | Ricostruito |
-| Creature | modelli GeckoLib, `LayerDefinition`, Citadel; animazioni; obiettivi Java → obiettivi Bedrock | Approssimato |
+| Creature | modelli GeckoLib, `LayerDefinition`, Citadel e Tabula (draghi di Ice and Fire, con le pose di camminata, volo e nuoto); animazioni; obiettivi Java → obiettivi Bedrock | Approssimato |
+| Suoni | `sounds.json` → `sound_definitions` con i file .ogg; versi delle creature dal codice (ambiente, ferita, morte) | Convertito |
 | Ricette | banco, forno, affumicatore, altoforno, falò, tagliapietre, forgia | Convertito (quelle delle macchine no) |
 
 Versione di destinazione: la conversione segue il Minecraft installato sul telefono. Dalla **1.26.40** i blocchi con
@@ -71,10 +72,9 @@ cosa non include.
 
 ## 5. Cosa manca ancora (registro: «Dati conservati»)
 
-Suoni (`sounds.json` → `sound_definitions`), strutture (`.nbt` → `.mcstructure`), progressi, bottini di creature e
-casse, particelle, biomi e dimensioni, macchine con inventario (entità di blocco + Script API), modelli Tabula (draghi di
-Ice and Fire), modelli Zeta (Quark), anteprima 3D di modelli e animazioni nell'app, esportazione del progetto sorgente,
-ripresa delle conversioni lunghe a metà. **Esecuzione Java**: l'app non contiene un runtime Java; prepara i profili per
+Strutture (`.nbt` → `.mcstructure`), progressi, bottini di casse e pesca, particelle, biomi e dimensioni, macchine con
+inventario (entità di blocco + Script API), modelli Zeta (Quark), suoni dei blocchi, anteprima 3D di modelli e animazioni
+nell'app, esportazione del progetto sorgente, ripresa delle conversioni lunghe a metà. **Esecuzione Java**: l'app non contiene un runtime Java; prepara i profili per
 un launcher Java per Android (MOD MANAGER → esporta).
 
 ## 6. Regole
