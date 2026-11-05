@@ -391,32 +391,38 @@ def fill(index, text):
             last = now
         return last
 
-    typed = text
+    def send(t):
+        # A pezzi brevi, con una pausa: su un emulatore carico una raffica lunga di tasti perde gli ultimi caratteri.
+        # Il testo sta tra apici: nessun carattere ammesso ha un significato speciale per la shell del telefono.
+        for i in range(0, len(t), 12):
+            adb("shell", "input", "text", "'" + t[i:i + 12] + "'")
+            time.sleep(0.3)
+
+    send(text)
     for attempt in range(4):
-        if attempt > 0:
-            current = settled() or ""
-            if current == want:
-                return 0
-            if tap_field(index) is None:
-                return 1
-            adb("shell", "input", "keyevent", "KEYCODE_MOVE_END")
-            if want.startswith(current):
-                # mancano solo gli ultimi caratteri: si aggiungono quelli
-                typed = want[len(current):]
-            else:
-                # svuota e riscrive tutto
-                adb("shell", "input", "keyevent", *(["KEYCODE_DEL"] * (len(current) + 3)))
-                time.sleep(0.8)
-                typed = want
-        # il testo sta tra apici: nessun carattere ammesso ha un significato speciale per la shell del telefono
-        adb("shell", "input", "text", "'" + typed + "'")
-        time.sleep(0.8)
+        time.sleep(0.5)
         got = settled()
         if got is None or got == "" or got == want:
             # Un campo che non espone il suo testo non si può controllare: si dà per buono, come prima.
             return 0
         print("campo %d: scritto «%s» invece di «%s» (tentativo %d)" % (index, got, want, attempt + 1), file=sys.stderr)
-    return 1
+        if want.startswith(got):
+            # Mancano solo gli ultimi caratteri: il cursore è ancora in fondo (toccare di nuovo il campo lo sposterebbe
+            # dove cade il dito), si aggiungono quelli.
+            adb("shell", "input", "keyevent", "KEYCODE_MOVE_END")
+            send(want[len(got):])
+        else:
+            # svuota e riscrive tutto
+            if tap_field(index) is None:
+                return 1
+            time.sleep(0.5)
+            adb("shell", "input", "keyevent", "KEYCODE_MOVE_END")
+            time.sleep(0.3)
+            adb("shell", "input", "keyevent", *(["KEYCODE_DEL"] * (len(got) + 3)))
+            time.sleep(0.8)
+            send(want)
+    got = settled()
+    return 0 if got is None or got == "" or got == want else 1
 
 
 def clear_field(index):
