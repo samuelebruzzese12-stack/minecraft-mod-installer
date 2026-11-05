@@ -95,6 +95,24 @@ object WorldScanner {
         return WorldScanResult.Ok(worlds, archiveBytes)
     }
 
+    /**
+     * Descrive un mondo già estratto (una cartella con `level.dat`, per esempio dentro `saves` di un profilo). Null se la
+     * cartella non è un mondo. Non cambia nulla.
+     */
+    fun scanFolder(dir: File, limits: SafetyLimits = WorldLimits.DEFAULT, cancel: CancelCheck = {}): WorldInfo? {
+        val level = File(dir, "level.dat")
+        if (!dir.isDirectory || !level.isFile) return null
+        val items = ArrayList<Item>()
+        val base = dir.canonicalFile
+        for (f in base.walkTopDown().onEnter { !it.name.startsWith(".") || it == base }) {
+            if (items.size % 2048 == 0) cancel()
+            if (!f.isFile || f.name == "session.lock" || f.name.startsWith(".")) continue
+            items.add(Item(dir.name + "/" + f.relativeTo(base).path.replace(File.separatorChar, '/'), f.length()))
+        }
+        val bytes = if (level.length() <= limits.maxLevelDatBytes) level.readBytes() else null
+        return describe(dir.name, items, bytes, limits)
+    }
+
     private fun readBounded(zip: ZipFile, entry: java.util.zip.ZipEntry, max: Int): ByteArray? = try {
         if (entry.size > max) {
             null
