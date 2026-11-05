@@ -31,19 +31,51 @@ jobs:
     steps:
       - name: Scarica il codice
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      # Quali parti della prova su emulatore girano dopo la compilazione: di solito tutte; lanciando il workflow a mano si possono
-      # scegliere solo quelle che servono (ogni parte usa un emulatore per un'ora circa).
+      # Quali parti della prova su emulatore girano dopo la compilazione (ogni parte usa un emulatore per un'ora circa, e i
+      # minuti di GitHub Actions di un repository privato sono pochi): lanciando il workflow a mano si scelgono; a ogni push
+      # solo «base» più le parti toccate dai file cambiati (tutte se cambia qualcosa di comune).
       - name: Quali parti della prova su emulatore
         id: plan
         env:
           WANT: ${{ inputs.parts }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          python3 -I - "$WANT" >> "$GITHUB_OUTPUT" <<'PY'
+          CHANGED=$( (git diff --name-only "$BEFORE" HEAD 2>/dev/null || true) | tr '\n' ' ')
+          echo "file cambiati: $CHANGED"
+          python3 -I - "$WANT" "$CHANGED" >> "$GITHUB_OUTPUT" <<'PY'
           import json, sys
           allowed = ["base", "mods", "catalog", "modpack", "worlds", "convert"]
-          want = [p.strip() for p in (sys.argv[1] if len(sys.argv) > 1 else "").split(",")]
-          print("parts=" + json.dumps([p for p in allowed if p in want] or allowed))
+          want = [p.strip() for p in (sys.argv[1] if len(sys.argv) > 1 else "").split(",") if p.strip()]
+          changed = (sys.argv[2] if len(sys.argv) > 2 else "").split()
+          if want:
+              parts = [p for p in allowed if p in want] or allowed
+          elif not changed:
+              parts = allowed
+          else:
+              own = {
+                  "convert": ("mod-converter/", "bytecode/", "ci/convert_phase.sh", "ci/validate_addon.py", "ci/bds_test.py",
+                              "JavaToBedrockScreen", "ConvertViewModel", "docs/BLOCKBRIDGE"),
+                  "mods": ("mod-manager/", "ci/mods_phase.sh", "ModsScreen", "ModsViewModel"),
+                  "catalog": ("catalog/", "ci/catalog_phase.sh", "CatalogScreen", "CatalogViewModel"),
+                  "modpack": ("modpack-engine/", "ci/modpack_phase.sh", "ModpackScreen", "ModpackViewModel"),
+                  "worlds": ("world-engine/", "ci/worlds_phase.sh", "WorldsScreen", "WorldsViewModel"),
+              }
+              parts = {"base"}
+              for f in changed:
+                  hit = [p for p, keys in own.items() if any(k in f for k in keys)]
+                  if hit:
+                      parts.update(hit)
+                  elif f.startswith("docs/") or f.endswith(".md") or f.startswith("ci/fetch_") or f.startswith("app/src/test/"):
+                      pass
+                  elif f.startswith("app/src/main/"):
+                      pass                     # il resto dell'app lo prova «base» (navigazione, sezioni, installer)
+                  else:
+                      parts.update(allowed)   # moduli comuni, Gradle, il workflow: tutte
+              parts = [p for p in allowed if p in parts]
+          print("parts=" + json.dumps(parts))
           PY
           grep parts= "$GITHUB_OUTPUT"
 
@@ -452,6 +484,8 @@ jobs:
   bds:
     name: Prove nel server Bedrock ufficiale
     needs: build
+    # Solo quando cambia il convertitore (la parte «convert»): costa circa un'ora di minuti.
+    if: contains(needs.build.outputs.parts, 'convert')
     runs-on: ubuntu-latest
     timeout-minutes: 150
     continue-on-error: true
