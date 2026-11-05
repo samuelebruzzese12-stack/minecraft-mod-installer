@@ -3,6 +3,7 @@ package com.mmi.modinstaller.mods
 import com.mmi.modinstaller.core.CancelCheck
 import com.mmi.modinstaller.core.SafetyLimits
 import com.mmi.modinstaller.core.formatBytes
+import com.mmi.modinstaller.jar.ContentKind
 import com.mmi.modinstaller.jar.JarReport
 import com.mmi.modinstaller.jar.ModLoader
 import com.mmi.modinstaller.jar.ModVersion
@@ -38,7 +39,21 @@ class ExportSummary(
     /** File attivi registrati ma non più sul telefono: non sono nello ZIP. */
     val missing: List<String>,
     /** File presenti ma diversi da come erano quando sono stati installati (modificati fuori dall'app). */
-    val changed: List<String>
+    val changed: List<String>,
+    /** Quanti dei file scritti non sono mod o pacchetti ma impostazioni e altri file dell'istanza (di un modpack). */
+    val extras: Int = 0
+)
+
+/** Un file che sta già nella cartella di un profilo (messo lì da un'installazione di modpack), con la sua analisi. */
+class PlacedFile(
+    val category: ItemCategory,
+    /** Nome del file nella cartella della categoria. */
+    val fileName: String,
+    /** L'analisi del file; null se non è stato possibile leggerlo (si registra lo stesso: il file è nel profilo e va esportato). */
+    val report: JarReport?,
+    /** Da dove viene (nome mostrato all'utente). */
+    val origin: String,
+    val note: String? = null
 )
 
 /** I dati con cui si crea o si modifica un profilo. */
@@ -328,6 +343,20 @@ class ModManager(
         }
     }
 
+    /**
+     * Il file di questi elementi è stato riscritto da un'operazione più recente (un modpack ripreso): le voci precedenti non
+     * possono più rimetterlo com'era e, se restassero, bloccherebbero l'annullamento di quelle ancora più vecchie.
+     */
+    private fun forgetSuperseded(journal: MutableList<JournalEntry>, ids: Set<String>) {
+        val it = journal.listIterator()
+        while (it.hasNext()) {
+            val e = it.next()
+            val kept = e.steps.filter { s -> !((s is JournalStep.Added && s.item.id in ids) || (s is JournalStep.Toggled && s.itemId in ids)) }
+            if (kept.size == e.steps.size) continue
+            if (kept.isEmpty()) it.remove() else it.set(e.copy(steps = kept))
+        }
+    }
+
     private fun dropOld(journal: MutableList<JournalEntry>, dropped: MutableList<JournalEntry>) {
         while (journal.size > maxJournal) dropped.add(journal.removeAt(0))
     }
@@ -407,6 +436,90 @@ class ModManager(
         }
         for (e in dropped) Digests.deleteRecursively(trashDir(profileId, e.id))
         Outcome.Ok(item)
+    }
+
+    // ------------------------------------------------------------------------------------------ file di un modpack
+
+    /**
+     * I file della cartella del profilo che non sono mod o pacchetti gestiti: impostazioni (`config/…`), script e altro che un
+     * modpack porta con sé. Percorsi relativi con `/`, in ordine. Non contano il cestino, i nomi che iniziano con un punto
+     * (temporanei) e i collegamenti simbolici.
+     */
+    fun extraFiles(profileId: String): List<String> {
+        val base = profileDir(profileId)
+        if (!base.isDirectory) return emptyList()
+        val managed = ItemCategory.values().map { it.folder }.toSet()
+        val out = ArrayList<String>()
+        fun walk(dir: File, prefix: String, depth: Int) {
+            if (depth > MAX_EXTRA_DEPTH || out.size >= MAX_EXTRA_FILES) return
+            val children = dir.listFiles()?.sortedBy { it.name } ?: return
+            for (f in children) {
+                if (f.name.startsWith(".")) continue
+                if (java.nio.file.Files.isSymbolicLink(f.toPath())) continue
+                if (depth == 0 && f.name in managed) continue
+                val path = if (prefix.isEmpty()) f.name else prefix + "/" + f.name
+                if (f.isDirectory) walk(f, path, depth + 1) else if (f.isFile && out.size < MAX_EXTRA_FILES) out.add(path)
+            }
+        }
+        walk(base, "", 0)
+        return out
+    }
+
+    /**
+     * Registra come elementi del profilo dei file che sono già nelle sue cartelle: li ha messi lì un'installazione di modpack,
+     * dopo aver verificato l'impronta di ciascuno. Non copia né sposta nulla: calcola le impronte del file sul disco e
+     * controlla che sia quello analizzato. Tutto in un'unica voce della cronologia (si può annullare in blocco). I file
+     * già registrati con lo stesso contenuto restano com'erano. Restituisce gli elementi aggiunti.
+     */
+    fun registerPlaced(
+        profileId: String,
+        label: String,
+        files: List<PlacedFile>,
+        source: String = "modpack",
+        cancel: CancelCheck = {}
+    ): Outcome<List<ProfileItem>> = synchronized(lock) {
+        if (repo.get(profileId) == null) return@synchronized Outcome.Fail("Il profilo non esiste più")
+        val opId = newId()
+        val existing = repo.items(profileId)
+        val added = ArrayList<ProfileItem>()
+        for (p in files) {
+            cancel()
+            val file = File(folder(profileId, p.category), p.fileName)
+            if (!file.isFile) continue
+            val d = try {
+                Digests.of(file, cancel)
+            } catch (e: IOException) {
+                return@synchronized Outcome.Fail("Non riesco a leggere ${p.fileName}", e.message)
+            }
+            val r = p.report
+            if (r != null && r.sha256.isNotEmpty() && d.sha256 != r.sha256) {
+                return@synchronized Outcome.Fail("Il file ${p.fileName} è cambiato dopo il controllo", "Non è stato registrato nulla.")
+            }
+            val same = existing.firstOrNull { it.category == p.category && it.fileName == p.fileName }
+            if (same != null && same.sha256 == d.sha256) continue
+            added.add(
+                ProfileItem(
+                    id = newId(), category = p.category, fileName = p.fileName, enabled = true,
+                    sha256 = d.sha256, sha1 = d.sha1, sizeBytes = d.size, installedAt = clock(),
+                    origin = p.origin, source = source, kind = r?.kind ?: ContentKind.UNKNOWN, mods = r?.mods.orEmpty(),
+                    nested = r?.nested.orEmpty().flatMap { it.mods }, javaMajor = r?.javaMajor, packFormat = r?.pack?.packFormat,
+                    note = p.note
+                )
+            )
+        }
+        if (added.isEmpty()) return@synchronized Outcome.Ok(emptyList())
+        val dropped = ArrayList<JournalEntry>()
+        val saved = repo.modify(profileId) { items, journal ->
+            val replaced = items.filter { old -> added.any { it.category == old.category && it.fileName == old.fileName } }.map { it.id }.toSet()
+            items.removeAll { it.id in replaced }
+            items.addAll(added)
+            if (replaced.isNotEmpty()) forgetSuperseded(journal, replaced)
+            journal.add(JournalEntry(opId, clock(), label, added.map { JournalStep.Added(it) }))
+            dropOld(journal, dropped)
+        }
+        if (!saved) return@synchronized Outcome.Fail("Non sono riuscito a salvare l'elenco", "Controlla lo spazio libero sul telefono.")
+        for (e in dropped) Digests.deleteRecursively(trashDir(profileId, e.id))
+        Outcome.Ok(added)
     }
 
     // ------------------------------------------------------------------------------------------ annulla
@@ -498,9 +611,9 @@ class ModManager(
 
     /**
      * Scrive in [out] uno ZIP con i file ATTIVI del profilo, nella disposizione di una cartella di gioco
-     * (`mods/…`, `resourcepacks/…`, `shaderpacks/…`, `datapacks/…`). I file disattivati restano fuori. I file del profilo non
-     * vengono toccati. Chi chiama apre e chiude [out]; se l'esportazione fallisce o viene annullata lo ZIP è incompleto e va
-     * cancellato.
+     * (`mods/…`, `resourcepacks/…`, `shaderpacks/…`, `datapacks/…`), più le impostazioni e gli altri file dell'istanza se il
+     * profilo viene da un modpack ([extraFiles]). I file disattivati restano fuori. I file del profilo non vengono toccati.
+     * Chi chiama apre e chiude [out]; se l'esportazione fallisce o viene annullata lo ZIP è incompleto e va cancellato.
      */
     fun exportZip(
         profileId: String,
@@ -512,7 +625,8 @@ class ModManager(
         val items = repo.items(profileId)
             .filter { it.enabled }
             .sortedWith(compareBy<ProfileItem>({ it.category.ordinal }, { it.fileName.lowercase() }))
-        val total = items.sumOf { it.sizeBytes }
+        val extraPaths = extraFiles(profileId)
+        val total = items.sumOf { it.sizeBytes } + extraPaths.sumOf { File(profileDir(profileId), it).length() }
         val missing = ArrayList<String>()
         val changed = ArrayList<String>()
         val perCategory = LinkedHashMap<ItemCategory, Int>()
@@ -548,14 +662,36 @@ class ModManager(
                 files++
                 perCategory[item.category] = (perCategory[item.category] ?: 0) + 1
             }
+            // Impostazioni e altri file dell'istanza (ci sono se il profilo viene da un modpack): sono testi, si comprimono.
+            zip.setLevel(Deflater.BEST_SPEED)
+            var extras = 0
+            for (path in extraPaths) {
+                cancel()
+                val file = File(profileDir(profileId), path)
+                if (!file.isFile) continue
+                zip.putNextEntry(ZipEntry(path))
+                file.inputStream().use { input ->
+                    while (true) {
+                        cancel()
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        zip.write(buffer, 0, n)
+                        bytes += n
+                        progress?.invoke(bytes, total)
+                    }
+                }
+                zip.closeEntry()
+                extras++
+                files++
+            }
             zip.finish()
             zip.flush()
+            return@synchronized Outcome.Ok(ExportSummary(files, bytes, perCategory, missing, changed, extras))
         } catch (e: java.util.concurrent.CancellationException) {
             throw e
         } catch (e: IOException) {
             return@synchronized Outcome.Fail("Non sono riuscito a scrivere lo ZIP", e.message)
         }
-        Outcome.Ok(ExportSummary(files, bytes, perCategory, missing, changed))
     }
 
     // ------------------------------------------------------------------------------------------ controlli
@@ -660,6 +796,8 @@ class ModManager(
 
     companion object {
         const val TRASH = ".trash"
+        private const val MAX_EXTRA_DEPTH = 16
+        private const val MAX_EXTRA_FILES = 100_000
         private const val MAX_NAME = 60
         private const val MARGIN_BYTES = 8L * 1024 * 1024
         private val VERSION_TEXT = Regex("[0-9A-Za-z][0-9A-Za-z._+\\-]{0,39}")

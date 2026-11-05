@@ -695,4 +695,182 @@ class ModManagerTest {
         assertTrue(r.toString(), r is Outcome.Fail)
         assertTrue((r as Outcome.Fail).detail!!.contains("disco pieno"))
     }
+
+    // ------------------------------------------------------------------ file di un modpack (già nelle cartelle del profilo)
+
+    /** Mette un file direttamente nella cartella di una categoria, come fa l'installazione di un modpack. */
+    private fun place(category: ItemCategory, name: String, content: String): File =
+        Fx.file(File(root, "$pid/${category.folder}"), name, content.toByteArray())
+
+    private fun placedMod(id: String, content: String = "contenuto $id", note: String? = null): PlacedFile {
+        val f = place(ItemCategory.MOD, "$id.jar", content)
+        val r = Fx.report(f.name, mods = listOf(mod(id, "1.0.0", deps = fabricDeps())), sha256 = Fx.sha256(f.readBytes()))
+        return PlacedFile(ItemCategory.MOD, f.name, r, "$id.jar", note)
+    }
+
+    @Test fun registerPlacedAddsAllFilesInOneUndoableStepWithoutMovingThem() {
+        val pack = place(ItemCategory.RESOURCE_PACK, "Pack.zip", "ZIP")
+        val packReport = Fx.report("Pack.zip", kind = ContentKind.RESOURCE_PACK, sha256 = Fx.sha256(pack.readBytes()))
+        val all = listOf(placedMod("a"), placedMod("b"), PlacedFile(ItemCategory.RESOURCE_PACK, "Pack.zip", packReport, "Pack.zip", "Dal modpack"))
+        val added = (mm.registerPlaced(pid, "Modpack «X»: 3 file", all) as Outcome.Ok).value
+        assertEquals(3, added.size)
+        assertEquals(3, mm.items(pid).size)
+        assertTrue(mm.items(pid).all { it.source == "modpack" && it.enabled })
+        assertEquals("Dal modpack", mm.items(pid).first { it.fileName == "Pack.zip" }.note)
+        assertEquals(ContentKind.RESOURCE_PACK, mm.items(pid).first { it.fileName == "Pack.zip" }.kind)
+        assertEquals("a", mm.items(pid).first { it.fileName == "a.jar" }.mods.single().id)
+        assertEquals(1, mm.journal(pid).size)
+        assertEquals("Modpack «X»: 3 file", mm.journal(pid).single().label)
+        assertEquals(listOf("a.jar", "b.jar"), listing())
+        assertEquals(listOf("Pack.zip"), listing(File(root, "$pid/resourcepacks")))
+
+        assertEquals("Modpack «X»: 3 file", (mm.undo(pid) as Outcome.Ok).value)
+        assertTrue(mm.items(pid).isEmpty())
+        assertEquals(emptyList<String>(), listing())
+        assertEquals(emptyList<String>(), listing(File(root, "$pid/resourcepacks")))
+    }
+
+    @Test fun registerPlacedKeepsAFileItCouldNotReadAndExportsIt() {
+        place(ItemCategory.MOD, "strano.jar", "questo non e uno zip")
+        val placed = PlacedFile(ItemCategory.MOD, "strano.jar", null, "mods/strano.jar", "Non sono riuscito a leggere questo file")
+        val added = (mm.registerPlaced(pid, "Modpack", listOf(placed)) as Outcome.Ok).value
+        assertEquals(ContentKind.UNKNOWN, added.single().kind)
+        assertTrue(added.single().mods.isEmpty())
+        assertEquals("Non sono riuscito a leggere questo file", added.single().note)
+        val out = java.io.ByteArrayOutputStream()
+        mm.exportZip(pid, out)
+        assertEquals("questo non e uno zip", String(zipEntries(out.toByteArray()).getValue("mods/strano.jar")))
+    }
+
+    @Test fun registerPlacedRefusesAFileChangedAfterItWasRead() {
+        val p = placedMod("a")
+        File(root, "$pid/mods/a.jar").writeText("cambiato dopo il controllo")
+        val r = mm.registerPlaced(pid, "Modpack", listOf(p))
+        assertTrue(r.toString(), r is Outcome.Fail)
+        assertTrue(mm.items(pid).isEmpty())
+        assertTrue(mm.journal(pid).isEmpty())
+    }
+
+    @Test fun registerPlacedSkipsMissingAndAlreadyRegisteredFiles() {
+        val a = placedMod("a")
+        assertEquals(1, (mm.registerPlaced(pid, "Primo", listOf(a)) as Outcome.Ok).value.size)
+        val b = placedMod("b")
+        val ghost = PlacedFile(ItemCategory.MOD, "fantasma.jar", null, "fantasma.jar")
+        val second = (mm.registerPlaced(pid, "Secondo", listOf(a, b, ghost)) as Outcome.Ok).value
+        assertEquals(listOf("b.jar"), second.map { it.fileName })
+        assertEquals(2, mm.items(pid).size)
+        assertEquals(2, mm.journal(pid).size)
+        // Se non c'è niente di nuovo non nasce una voce di cronologia vuota.
+        assertTrue((mm.registerPlaced(pid, "Terzo", listOf(a, b)) as Outcome.Ok).value.isEmpty())
+        assertEquals(2, mm.journal(pid).size)
+    }
+
+    @Test fun registerPlacedReplacesTheRecordOfAFileWithNewContentAndUndoStaysPossible() {
+        mm.registerPlaced(pid, "Primo", listOf(placedMod("a", "versione 1"), placedMod("b")))
+        val rewritten = placedMod("a", "versione 2")
+        val added = (mm.registerPlaced(pid, "Secondo", listOf(rewritten)) as Outcome.Ok).value
+        assertEquals(1, added.size)
+        assertEquals(2, mm.items(pid).size)
+        assertEquals(Fx.sha256("versione 2".toByteArray()), mm.items(pid).first { it.fileName == "a.jar" }.sha256)
+        // La voce «Primo» non può più rimettere «a» com'era: non deve più riguardarlo, ma «b» sì.
+        assertEquals(2, mm.journal(pid).size)
+        assertEquals(1, mm.journal(pid).first().steps.size)
+        assertEquals("Secondo", (mm.undo(pid) as Outcome.Ok).value)
+        assertEquals("Primo", (mm.undo(pid) as Outcome.Ok).value)
+        assertTrue(mm.items(pid).isEmpty())
+        assertEquals(emptyList<String>(), listing())
+        assertTrue(mm.undo(pid) is Outcome.Fail)
+    }
+
+    @Test fun registerPlacedDropsAnOlderEntryThatBecomesEmpty() {
+        mm.registerPlaced(pid, "Primo", listOf(placedMod("a", "versione 1")))
+        mm.registerPlaced(pid, "Secondo", listOf(placedMod("a", "versione 2")))
+        assertEquals(listOf("Secondo"), mm.journal(pid).map { it.label })
+        assertTrue(mm.undo(pid) is Outcome.Ok)
+        assertTrue(mm.undo(pid) is Outcome.Fail)
+        assertTrue(mm.items(pid).isEmpty())
+    }
+
+    @Test fun registerPlacedForgetsToggleStepsOfAReplacedItem() {
+        mm.registerPlaced(pid, "Primo", listOf(placedMod("a", "versione 1")))
+        val id = mm.items(pid).single().id
+        assertTrue(mm.setEnabled(pid, id, false) is Outcome.Ok)
+        assertTrue(mm.setEnabled(pid, id, true) is Outcome.Ok)
+        mm.registerPlaced(pid, "Secondo", listOf(placedMod("a", "versione 2")))
+        assertEquals(listOf("Secondo"), mm.journal(pid).map { it.label })
+        assertTrue(mm.undo(pid) is Outcome.Ok)
+        assertTrue(mm.items(pid).isEmpty())
+    }
+
+    @Test fun registerPlacedForAnUnknownProfileFailsAndCanBeCancelled() {
+        assertTrue(mm.registerPlaced("nope", "x", emptyList()) is Outcome.Fail)
+        val a = placedMod("a")
+        try {
+            mm.registerPlaced(pid, "x", listOf(a), cancel = { throw CancellationException("stop") })
+            fail("doveva essere annullata")
+        } catch (e: CancellationException) {
+            // atteso
+        }
+        assertTrue(mm.items(pid).isEmpty())
+        assertTrue(mm.journal(pid).isEmpty())
+    }
+
+    @Test fun extraFilesListsSettingsAndSkipsManagedFoldersHiddenFilesAndTheTrash() {
+        val dir = File(root, pid)
+        Fx.file(dir, "config/sodium.toml", "a".toByteArray())
+        Fx.file(dir, "config/sub/b.json", "b".toByteArray())
+        Fx.file(dir, "options.txt", "c".toByteArray())
+        Fx.file(dir, "mods/dentro.jar", "d".toByteArray())
+        Fx.file(dir, "resourcepacks/x.zip", "e".toByteArray())
+        Fx.file(dir, "shaderpacks/s.zip", "e".toByteArray())
+        Fx.file(dir, "datapacks/d.zip", "e".toByteArray())
+        Fx.file(dir, ".nascosto", "f".toByteArray())
+        Fx.file(dir, ".trash/x/y.bin", "g".toByteArray())
+        Fx.file(dir, "config/.temporaneo", "h".toByteArray())
+        val link = File(dir, "config/collegamento.toml")
+        val linked = try {
+            java.nio.file.Files.createSymbolicLink(link.toPath(), File(dir, "options.txt").toPath())
+            true
+        } catch (e: Exception) {
+            false
+        }
+        assertEquals(listOf("config/sodium.toml", "config/sub/b.json", "options.txt"), mm.extraFiles(pid))
+        if (linked) assertFalse(mm.extraFiles(pid).contains("config/collegamento.toml"))
+        assertTrue(mm.extraFiles("non-esiste").isEmpty())
+    }
+
+    @Test fun extraFilesDoNotGoDeeperThanTheLimit() {
+        val dir = File(root, pid)
+        var deep = "a"
+        repeat(24) { deep += "/a" }
+        Fx.file(dir, "$deep/troppo-in-fondo.txt", "x".toByteArray())
+        Fx.file(dir, "a/a/vicino.txt", "y".toByteArray())
+        assertEquals(listOf("a/a/vicino.txt"), mm.extraFiles(pid))
+    }
+
+    @Test fun exportZipAlsoCarriesTheSettingsOfAModpackProfile() {
+        installed(install(modFile("a", "1.0.0", content = "AAAA")))
+        val off = installed(install(modFile("b", "1.0.0", content = "BBBB")))
+        mm.setEnabled(pid, off.item.id, false)
+        val dir = File(root, pid)
+        Fx.file(dir, "config/a.toml", "x=1".toByteArray())
+        Fx.file(dir, "options.txt", "fov:90".toByteArray())
+        Fx.file(dir, ".trash/zzz/vecchio.bin", "no".toByteArray())
+        val out = java.io.ByteArrayOutputStream()
+        val result = mm.exportZip(pid, out) as Outcome.Ok
+        val entries = zipEntries(out.toByteArray())
+        assertEquals(setOf("mods/a-1.0.0.jar", "config/a.toml", "options.txt"), entries.keys)
+        assertEquals("x=1", String(entries.getValue("config/a.toml")))
+        assertEquals("fov:90", String(entries.getValue("options.txt")))
+        assertEquals(3, result.value.files)
+        assertEquals(2, result.value.extras)
+        assertEquals(4L + 3L + 6L, result.value.bytes)
+        assertEquals(1, result.value.perCategory[ItemCategory.MOD])
+    }
+
+    @Test fun exportZipOfAnOrdinaryProfileHasNoExtras() {
+        installed(install(modFile("a", "1.0.0", content = "AAAA")))
+        val result = mm.exportZip(pid, java.io.ByteArrayOutputStream()) as Outcome.Ok
+        assertEquals(0, result.value.extras)
+    }
 }

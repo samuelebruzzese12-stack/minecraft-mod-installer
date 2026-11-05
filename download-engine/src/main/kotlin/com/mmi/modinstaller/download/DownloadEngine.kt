@@ -33,7 +33,8 @@ sealed class EnqueueResult {
 class DownloadEngine(
     private val store: DocumentStore,
     private val dir: File,
-    private val checker: UrlChecker,
+    /** Le regole sugli indirizzi: chi prepara un piano di download (es. i modpack) le applica prima di accodare. */
+    val checker: UrlChecker,
     private val options: DownloadOptions = DownloadOptions(),
     private val clock: () -> Long = { System.currentTimeMillis() }
 ) {
