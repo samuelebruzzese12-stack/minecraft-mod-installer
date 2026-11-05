@@ -100,7 +100,7 @@ convert_tests() {
       sleep 0.5; shot "conversione: add-on creato"
       CV_WHAT="add-on creato"; cv_texts
       cv_expect "Add-on creato" "$CV_NAME" "Creato" "4 oggetti, 2 blocchi, 1 creature, 3 ricette, 1 minerali" "INSTALLA IN MINECRAFT" \
-        "SALVA UNA COPIA" "RAPPORTO" "CHIUDI"
+        "SALVA UNA COPIA" "RAPPORTO" "CHIUDI" "Il tuo Minecraft è la 1.21.50" "serve la 1.21.80 o successiva"
       cv_absent "Mod lette"
     else
       shot "conversione: nessun esito"; fail "JAVA TO BEDROCK: dopo CREA L'ADD-ON BEDROCK non compare l'esito"; return
@@ -132,6 +132,14 @@ convert_tests() {
     if $UI wait "Rapporto di analisi" 90; then
       sleep 1; shot "conversione: rapporto dell'installer"
       expect "Rapporto di analisi" "$CV_NAME"
+      # Il finto Minecraft è la 1.21.50: l'add-on chiede la 1.21.80, quindi l'installer lo segnala e chiede di forzare (giusto).
+      # Anche la schermata di JAVA TO BEDROCK l'aveva detto (controllato sopra).
+      if $UI scan "Forza l'installazione, a mio rischio" 6; then
+        $UI tap "Forza l'installazione, a mio rischio" > /dev/null; sleep 1
+      else
+        note "JAVA TO BEDROCK: l'installer non ha chiesto di forzare l'add-on (la versione del finto Minecraft è cambiata?)"
+      fi
+      $UI top
       if $UI wait "INSTALLA IN MINECRAFT" 30 && $UI tap "INSTALLA IN MINECRAFT"; then
         for n in $(seq 1 60); do
           after=$(cv_received_count); after=${after:-0}
@@ -184,12 +192,27 @@ PY
     mods_until 15 eval '[ -z "$(cv_incoming)" ]' || fail "JAVA TO BEDROCK: SCARTA non cancella la copia della mod"
   fi
 
-  # ================================================================== 5b) profilo con una mod
+  # ================================================================== 5b) profilo vuoto, poi con una mod installata
   go_dash
   if mods_add Mod_Fabric_Esempio.jar && $UI wait "Nuovo profilo" 45; then
     $UI tap "CREA PROFILO" > /dev/null
     if mods_wait "Java richiesto dal gioco" 25; then
       mods_clear_pending
+      # Profilo senza mod: lo dice
+      go_dash
+      if cv_open && $UI tap "CONVERTI LE MOD DI UN PROFILO" && $UI wait "Quale profilo?" 15; then
+        $UI tap "Fabric 1.20.1 ·" > /dev/null || $UI tap "Fabric" > /dev/null
+        if cv_wait "non ci sono mod attive da convertire" 30; then shot "conversione: profilo vuoto"; $UI tap-exact "OK" > /dev/null 2>&1
+        else shot "conversione: profilo vuoto senza messaggio"; fail "JAVA TO BEDROCK: un profilo senza mod non lo dice"; fi
+      fi
+      # Ora la mod si installa davvero nel profilo
+      mods_add Mod_Fabric_Esempio.jar
+      if mods_wait "Pronto" 30 && $UI tap-exact "INSTALLA"; then
+        mods_until 40 eval '[ -n "$(mods_ids)" ] && adb shell run-as $PKG ls "files/java/profiles/$(mods_ids | head -n 1)/mods" 2>/dev/null | grep -q .' \
+          || fail "JAVA TO BEDROCK: preparazione: la mod non si installa nel profilo"
+      else
+        fail "JAVA TO BEDROCK: preparazione: la mod non è pronta per il profilo"
+      fi
       go_dash
       if cv_open && $UI tap "CONVERTI LE MOD DI UN PROFILO" && $UI wait "Quale profilo?" 15; then
         shot "conversione: scelta del profilo"

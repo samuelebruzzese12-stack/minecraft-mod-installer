@@ -218,7 +218,7 @@ fun MmiApp(
                             onMenu = openMenu,
                             onOpenMods = { vm.openSection(Section.MODS) }
                         )
-                        Section.JAVA_TO_BEDROCK -> JavaToBedrockScreen(conversion, convertModel, vm, openMenu)
+                        Section.JAVA_TO_BEDROCK -> JavaToBedrockScreen(conversion, convertModel, vm, state.minecraft.versionName, openMenu)
                         Section.DOWNLOADS -> DownloadsScreen(downloads, downloadsModel, vm, modsModel, modpackModel, openMenu)
                         Section.DIAGNOSTICS -> DiagnosticsScreen(state, bridge, vm, model, modsModel, openMenu)
                         Section.SETTINGS -> SettingsScreen(state, bridge, vm, model, openMenu)

@@ -40,7 +40,7 @@ import com.mmi.modinstaller.core.formatBytes
  * minerali, armature, creature GeckoLib). Il comportamento scritto in codice Java non si converte e il rapporto lo dice.
  */
 @Composable
-fun JavaToBedrockScreen(state: ConvertState, model: ConvertViewModel, vm: MainViewModel, onMenu: () -> Unit) {
+fun JavaToBedrockScreen(state: ConvertState, model: ConvertViewModel, vm: MainViewModel, minecraftVersion: String?, onMenu: () -> Unit) {
     val context = LocalContext.current
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) model.openFiles(uris)
@@ -88,7 +88,7 @@ fun JavaToBedrockScreen(state: ConvertState, model: ConvertViewModel, vm: MainVi
         val outcome = state.outcome
         if (outcome != null) {
             SectionLabel("Add-on creato")
-            OutcomeCard(outcome, model, install, save) { shareText(context, outcome.report) }
+            OutcomeCard(outcome, model, install, save, versionWarning(minecraftVersion)) { shareText(context, outcome.report) }
         }
 
         val pending = state.pending
@@ -208,11 +208,33 @@ private fun ModCard(r: ModReport) {
     }
 }
 
+/** L'add-on usa il formato di Bedrock 1.21.80: con un Minecraft più vecchio non si carica bene. */
+internal fun versionWarning(installed: String?): String? {
+    val parts = installed?.split('.')?.mapNotNull { it.toIntOrNull() } ?: return null
+    if (parts.size < 3) return null
+    val need = com.mmi.modinstaller.convert.ModConverter.MIN_ENGINE.map { it.toInt() }
+    for (i in 0..2) {
+        if (parts[i] > need[i]) return null
+        if (parts[i] < need[i]) {
+            return "Il tuo Minecraft è la " + parts.take(3).joinToString(".") + ": per questo add-on serve la " +
+                need.joinToString(".") + " o successiva. Aggiorna Minecraft prima di usarlo."
+        }
+    }
+    return null
+}
+
 private fun sample(names: List<String>): String =
     names.take(6).joinToString(", ") + if (names.size > 6) " e altri " + (names.size - 6) else ""
 
 @Composable
-private fun OutcomeCard(o: ConvertOutcome, model: ConvertViewModel, install: (SavedAddon) -> Unit, save: (SavedAddon) -> Unit, onShare: () -> Unit) {
+private fun OutcomeCard(
+    o: ConvertOutcome,
+    model: ConvertViewModel,
+    install: (SavedAddon) -> Unit,
+    save: (SavedAddon) -> Unit,
+    warning: String?,
+    onShare: () -> Unit
+) {
     InfoCard {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(text = o.addon.name, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -229,6 +251,7 @@ private fun OutcomeCard(o: ConvertOutcome, model: ConvertViewModel, install: (Sa
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        if (warning != null) ToneRow(Tone.WARN, warning)
         GreenButton(text = "INSTALLA IN MINECRAFT", onClick = { install(o.addon) }, height = 52.dp)
         ButtonsRow {
             RowButton("SALVA UNA COPIA") { save(o.addon) }
