@@ -1388,6 +1388,10 @@ else
           if $UI wait "Minecraft ha importato il contenuto?" 20; then
             $UI tap "Sì, Minecraft l'ha importato" || fail "aggiornamento: pulsante di conferma non trovato nella versione precedente"
             sleep 2
+          elif $UI has "Sì, importato"; then
+            # Se la finestra si è chiusa al ritorno nell'app, la stessa domanda resta nella scheda della Home (prova 22).
+            $UI tap "Sì, importato" || fail "aggiornamento: pulsante di conferma della scheda non toccabile nella versione precedente"
+            sleep 2
           else
             fail "aggiornamento: la versione precedente non chiede la conferma"
           fi
