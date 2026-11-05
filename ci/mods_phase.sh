@@ -201,11 +201,15 @@ mods_tests() {
     # dell'operazione precedente: un tocco che arriva in quel momento finisce sulla schermata (prova 16). Si aspetta che l'interruttore
     # risulti di nuovo nello stato atteso e, se il file non cambia, si riprova il tocco.
     mods_toggle_to() { # nome-atteso-sul-telefono
-      local t
+      local t want
+      # Interruttore acceso = file attivo (senza «.disabled»). Si tocca solo se lo schermo non mostra già lo stato voluto:
+      # su un emulatore lento un tocco ripetuto mentre l'operazione precedente è ancora in corso la annullerebbe (prova 25).
+      case "$1" in *.disabled) want=1 ;; *) want=0 ;; esac
       for t in 1 2 3; do
         sleep 1.5
-        $UI top; $UI tap-switch 0 > /dev/null
-        if mods_until 10 mods_name_is "$pid" mods "$1"; then return 0; fi
+        $UI top
+        $UI switch-state 0 > /dev/null; [ $? = "$want" ] || $UI tap-switch 0 > /dev/null
+        if mods_until 20 mods_name_is "$pid" mods "$1"; then return 0; fi
       done
       return 1
     }
