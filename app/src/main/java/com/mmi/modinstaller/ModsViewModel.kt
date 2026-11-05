@@ -37,6 +37,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -121,6 +123,13 @@ class ModsViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Operazione lunga in corso (lettura dei file, installazione): è quella che «Annulla» interrompe. */
     private var job: Job? = null
+
+    /**
+     * Le operazioni rapide (interruttore, rimozione, annulla, cambio di profilo…) vanno una alla volta, ciascuna con la sua
+     * rilettura dell'elenco: così la rilettura di un'operazione più vecchia non può arrivare dopo quella di una più nuova e
+     * mostrare uno stato superato (es. l'interruttore acceso con il file già disattivato).
+     */
+    private val quickLock = Mutex()
     private var counter = 0
     private var lastProgressNanos = 0L
     private val reloadLock = Any()
@@ -222,7 +231,7 @@ class ModsViewModel(application: Application) : AndroidViewModel(application) {
     private fun quick(what: String, block: suspend () -> Unit) {
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) { block() }
+                quickLock.withLock { withContext(Dispatchers.IO) { block() } }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {

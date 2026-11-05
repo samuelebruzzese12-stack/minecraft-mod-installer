@@ -213,7 +213,7 @@ mods_tests() {
     if mods_toggle_to "$f"; then
       [ "$(mods_sha "$pid" mods "$f")" = "$fab_sha" ] || fail "MOD MANAGER: dopo la riattivazione il file non è identico all'originale"
     else
-      fail "MOD MANAGER: l'interruttore non riattiva il file sul telefono"
+      shot "mod manager: interruttore che non riattiva"; fail "MOD MANAGER: l'interruttore non riattiva il file sul telefono"
     fi
   else
     shot "mod manager: nessun interruttore"; fail "MOD MANAGER: l'interruttore del file non si trova (come nodo selezionabile)"
