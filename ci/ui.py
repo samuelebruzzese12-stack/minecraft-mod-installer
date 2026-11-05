@@ -10,6 +10,8 @@ Comandi:
   has TESTO              come sopra ma su una schermata nuova
   tap TESTO              tocca il primo elemento che contiene TESTO (scorre fino a 3 volte per trovarlo)
   tap-last TESTO         come tap, ma sceglie l'ULTIMO elemento che contiene TESTO (es. la voce del menu laterale)
+  tap-item TESTO         come tap, ma ignora i campi di testo: serve nel selettore di sistema, dove la ricerca ripete il nome del file
+                         nel proprio campo e «tap» toccherebbe quello invece della riga dell'elenco
   tap-exact TESTO        tocca solo un elemento il cui testo è ESATTAMENTE TESTO (maiuscole a parte) e di cui si vede il centro;
                          altrimenti scorre fino a 3 volte. Serve per «CERCA», «OK», «CHIUDI», che altrove compaiono dentro frasi
   collect FILE [VOLTE]   scorre la pagina dall'alto verso il basso (fino in fondo, al massimo VOLTE volte) e scrive in FILE tutti i
@@ -32,6 +34,10 @@ import time
 import xml.etree.ElementTree as ET
 
 REMOTE = "/data/local/tmp/mmi_ui.xml"
+
+# Le classi che Android usa per i campi di testo: quelli di Compose compaiono come EditText, la ricerca del selettore di sistema
+# (DocumentsUI) come AutoCompleteTextView.
+EDIT_CLASSES = ("android.widget.EditText", "android.widget.AutoCompleteTextView", "android.widget.MultiAutoCompleteTextView")
 
 
 def adb(*args, timeout=60):
@@ -78,17 +84,20 @@ def nodes(path):
             "text": n.get("text") or "",
             "desc": n.get("content-desc") or "",
             "clickable": n.get("clickable") == "true",
+            "cls": n.get("class") or "",
             "box": box,
         })
     return out
 
 
-def find(ns, needle, last=False):
+def find(ns, needle, last=False, skip_fields=False):
     nl = needle.lower()
     best = None
     for i, n in enumerate(ns):
         x1, y1, x2, y2 = n["box"]
         if x2 <= x1 or y2 <= y1:
+            continue
+        if skip_fields and n["cls"] in EDIT_CLASSES:
             continue
         for label in (n["text"], n["desc"]):
             if not label:
@@ -113,11 +122,11 @@ def swipe_up():
     time.sleep(0.8)
 
 
-def tap(needle, scrolls=3, last=False):
+def tap(needle, scrolls=3, last=False, skip_fields=False):
     for i in range(scrolls + 1):
         p = dump("/tmp/mmi_tap.xml")
         if p:
-            n = find(nodes(p), needle, last)
+            n = find(nodes(p), needle, last, skip_fields)
             if n:
                 x1, y1, x2, y2 = n["box"]
                 adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
@@ -252,7 +261,7 @@ def actions(path):
 
 
 def edit_fields(path):
-    """I campi di testo visibili (android.widget.EditText), dall'alto in basso e da sinistra a destra."""
+    """I campi di testo visibili (EDIT_CLASSES), dall'alto in basso e da sinistra a destra."""
     out = []
     screen = None
     for n in ET.parse(path).getroot().iter("node"):
@@ -264,7 +273,7 @@ def edit_fields(path):
             continue
         if outside(box, screen):
             continue
-        if n.get("class") == "android.widget.EditText" and box[2] > box[0] and box[3] > box[1]:
+        if n.get("class") in EDIT_CLASSES and box[2] > box[0] and box[3] > box[1]:
             out.append({"text": n.get("text") or "", "box": box})
     out.sort(key=lambda f: (f["box"][1], f["box"][0]))
     return out
@@ -423,6 +432,8 @@ def main(argv):
         return 0 if tap(argv[2]) else 1
     if cmd == "tap-last":
         return 0 if tap(argv[2], last=True) else 1
+    if cmd == "tap-item":
+        return 0 if tap(argv[2], skip_fields=True) else 1
     if cmd == "tap-exact":
         return 0 if tap_exact(argv[2]) else 1
     if cmd == "collect":

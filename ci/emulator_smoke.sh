@@ -182,30 +182,46 @@ pull_lib() { adb exec-out run-as $PKG cat files/library/library.json > "$1" 2>/d
 lib_has() { pull_lib "$OUT/.lib.tmp" && grep -Eq "$1" "$OUT/.lib.tmp"; }
 
 # Sceglie un file nel selettore di sistema GIÀ APERTO, come farebbe l'utente (il selettore resta quello di Android: l'app non c'entra).
-# Si apre su «Recent», che elenca solo i file che Android ha già indicizzato: all'inizio ne mostra pochi (nella prova 10 ne vedeva 2 su
-# 30). L'elenco vero è la cartella «Downloads»: ci si passa con attese vere, perché su questo emulatore il pannello laterale impiega
-# qualche secondo ad aprirsi (con una pausa fissa il tocco su «Downloads» cadeva nel vuoto). Se il file non si vede nemmeno lì,
-# per la lunghezza dell'elenco, si usa la ricerca del selettore.
+# Si apre su «Recent», che elenca solo i file che Android ha già indicizzato: sull'emulatore appena avviato ne mostra pochi (nelle prove
+# 10 e 11 ne vedeva 2 su una ventina). L'elenco vero è la cartella «Downloads», che si raggiunge dal pannello laterale («Show roots»).
+# Si prova, in quest'ordine: l'elenco com'è, la cartella Downloads, la ricerca per nome. Ogni tocco su un file usa «tap-item», che
+# scorre la lista e IGNORA i campi di testo (la ricerca ripete il nome nel proprio campo, e «tap» avrebbe toccato quello).
+# I tentativi falliti lasciano schermata e testi (fino a 6 per prova) per capire cosa vedeva il selettore.
+PICKER_DIAG=0
+picker_diag() { # etichetta
+  [ "$PICKER_DIAG" -ge 6 ] && return 0
+  PICKER_DIAG=$((PICKER_DIAG+1))
+  shot "selettore: $1"
+}
 picker_choose() { # nome-del-file
   local name="$1" i
   $UI wait "Show roots" 30 > /dev/null 2>&1 || $UI wait "Mostra radici" 3 > /dev/null 2>&1 || true
-  if $UI wait "$name" 3; then $UI tap "$name" && return 0; fi
+  if $UI tap-item "$name" > /dev/null 2>&1; then return 0; fi
+  picker_diag "$name non e in Recent"
   if ! $UI has "Files in Downloads"; then
     for i in 1 2 3; do
       ($UI tap "Show roots" || $UI tap "Mostra radici") > /dev/null 2>&1 || { sleep 2; continue; }
       if $UI wait "Downloads" 8; then
-        $UI tap "Downloads" > /dev/null 2>&1
-        $UI wait "Files in Downloads" 12 > /dev/null 2>&1 && break
+        $UI tap-exact "Downloads" > /dev/null 2>&1 || $UI tap "Downloads" > /dev/null 2>&1
+        if $UI wait "Files in Downloads" 12; then break; fi
+        picker_diag "dopo il tocco su Downloads (tentativo $i)"
+      else
+        picker_diag "pannello delle radici non aperto (tentativo $i)"
       fi
     done
   fi
-  if $UI wait "$name" 5; then $UI tap "$name" && return 0; fi
-  # Elenco lungo: la ricerca del selettore cerca per nome nella cartella in cui ci si trova.
+  if $UI tap-item "$name" > /dev/null 2>&1; then return 0; fi
+  picker_diag "$name non e in Downloads"
+  # La ricerca del selettore: dentro una cartella cerca per nome in quella cartella, da «Recent» in tutte le radici.
   if $UI tap "Search" > /dev/null 2>&1; then
     sleep 1.5
-    $UI fill 0 "$name" > /dev/null 2>&1
+    $UI fill 0 "$name" > /dev/null 2>&1 || picker_diag "campo di ricerca non scrivibile"
     adb shell input keyevent KEYCODE_ENTER > /dev/null 2>&1
-    if $UI wait "$name" 20; then $UI tap "$name" && return 0; fi
+    for i in 1 2 3 4 5 6; do
+      sleep 2
+      if $UI tap-item "$name" > /dev/null 2>&1; then return 0; fi
+    done
+    picker_diag "ricerca senza risultati per $name"
   fi
   return 1
 }

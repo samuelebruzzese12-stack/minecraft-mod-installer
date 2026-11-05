@@ -8,6 +8,11 @@ on:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
+    inputs:
+      parts:
+        description: "Parti della prova su emulatore da eseguire, separate da virgola (base, mods, catalog). Vuoto = tutte"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -20,10 +25,27 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      parts: ${{ steps.plan.outputs.parts }}
 
     steps:
       - name: Scarica il codice
         uses: actions/checkout@v4
+
+      # Quali parti della prova su emulatore girano dopo la compilazione: di solito tutte; lanciando il workflow a mano si possono
+      # scegliere solo quelle che servono (ogni parte usa un emulatore per un'ora circa).
+      - name: Quali parti della prova su emulatore
+        id: plan
+        env:
+          WANT: ${{ inputs.parts }}
+        run: |
+          python3 -I - "$WANT" >> "$GITHUB_OUTPUT" <<'PY'
+          import json, sys
+          allowed = ["base", "mods", "catalog"]
+          want = [p.strip() for p in (sys.argv[1] if len(sys.argv) > 1 else "").split(",")]
+          print("parts=" + json.dumps([p for p in allowed if p in want] or allowed))
+          PY
+          grep parts= "$GITHUB_OUTPUT"
 
       - name: Installa Java 17
         uses: actions/setup-java@v4
@@ -192,7 +214,9 @@ jobs:
 
             - `MinecraftModInstaller.apk` — versione normale
             - `MinecraftModInstaller-debug.apk` — stessa app con le informazioni di debug
-          files: dist/*.apk
+          files: |
+            dist/*.apk
+            catalog-online-report.txt
 
       # Il finto Minecraft serve solo alla prova su emulatore: non entra mai nella Release.
       # Questi passaggi non possono bloccare la consegna dell'APK (vengono dopo e non fanno fallire l'esecuzione).
@@ -225,7 +249,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        part: [base, mods, catalog]
+        part: ${{ fromJSON(needs.build.outputs.parts) }}
 
     steps:
       - name: Scarica il codice
