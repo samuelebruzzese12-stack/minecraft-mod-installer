@@ -665,14 +665,14 @@ dl_open() {
 dl_wait() { $UI wait "$1" "$2" || $UI scan "$1" 4; }
 # Svuota i due campi di testo (indirizzo e impronta).
 dl_clear_fields() { $UI clear-field 0 > /dev/null 2>&1; $UI clear-field 1 > /dev/null 2>&1; }
-# Scrive indirizzo (e impronta) e tocca AGGIUNGI ALLA CODA. Prima del tocco si chiude la tastiera a schermo: copre il pulsante, e un
-# gesto di scorrimento che parte sulla tastiera scrive lettere nel campo (nella prova 14 l'indirizzo divenne «…/mod.jary»).
+# Scrive indirizzo (e impronta) e tocca AGGIUNGI ALLA CODA. La tastiera a schermo resta aperta e può coprire il pulsante: per
+# trovarlo si scorre con gesti che partono sopra la tastiera (MMI_SWIPE_SAFE). Un gesto che parte sulla tastiera scrive lettere nel
+# campo (prova 14: «…/mod.jary»); chiuderla prima del tocco (prova 15) faceva invece perdere caratteri al campo scritto dopo.
 dl_add() { # indirizzo [impronta]
   dl_open || { fail "DOWNLOAD MANAGER: non riesco ad aprire la pagina per aggiungere $1"; return 1; }
   dl_clear_fields
   $UI fill 0 "$1" || { fail "DOWNLOAD MANAGER: il campo dell'indirizzo non si trova o non accetta il testo"; return 1; }
   if [ -n "$2" ]; then $UI fill 1 "$2" || { fail "DOWNLOAD MANAGER: il campo dell'impronta non si trova o non accetta il testo"; return 1; }; fi
-  ime_hide
   MMI_SWIPE_SAFE=1 $UI tap "AGGIUNGI ALLA CODA" || { shot "download: AGGIUNGI ALLA CODA non trovato"; fail "DOWNLOAD MANAGER: pulsante AGGIUNGI ALLA CODA non trovato"; return 1; }
 }
 # Elimina dall'app la prima scheda terminata (completata, non riuscita o annullata), con la conferma. Il pulsante si tocca solo se
@@ -742,7 +742,7 @@ download_tests() {
   $UI clear-field 1; $UI fill 1 "$sha_ok"
   snap; seen "10.0.2.2:$DL_PORT/ok.mcpack" || note "campo indirizzo: il testo scritto non compare nella lettura dell'interfaccia (dipende da come Compose espone il campo)"
   shot "download: campi compilati"
-  $UI tap "AGGIUNGI ALLA CODA"
+  MMI_SWIPE_SAFE=1 $UI tap "AGGIUNGI ALLA CODA"
   if dl_wait "Completato" 60; then
     sleep 1; shot "download: completato"
     expect "ok.mcpack" "10.0.2.2" "SHA-256:" "verificata"
@@ -1103,8 +1103,11 @@ if open_sample "Gun_Mod.zip"; then
     sleep 1; shot "rapporto gun mod"
     expect "Nel file ci sono 2 contenuti" "Gun Mod BP" "Gun Mod RP" "INSTALLA IN MINECRAFT (2)" "2 di 2 selezionati"
     # È un controllo informativo: nell'elenco dei controlli viene dopo gli avvisi e su uno schermo basso finisce sotto il bordo
-    # (prova 14: la pagina non era stata scorsa). Si cerca scorrendo.
+    # (prova 14: la pagina non era stata scorsa). Si cerca scorrendo, con gesti che partono sopra la barra fissa in basso
+    # (INSTALLA IN MINECRAFT): un gesto che parte sulla barra non fa scorrere la pagina (prova 15).
+    export MMI_SWIPE_SAFE=1
     expect_scroll "importali insieme"
+    unset MMI_SWIPE_SAFE
     if $UI has "Dipendenza non trovata"; then fail "Gun_Mod: la dipendenza tra i due pacchetti risulta «non trovata»"; fi
   else
     shot "rapporto gun mod mancante"; fail "il rapporto di Gun_Mod.zip non compare entro 40 s"

@@ -355,17 +355,49 @@ def tap_field(index):
     return fields[index]
 
 
+def field_text(index):
+    """Il testo del campo numero index nella schermata attuale, o None se non si legge."""
+    p = dump("/tmp/mmi_field.xml")
+    if not p:
+        return None
+    fields = edit_fields(p)
+    return fields[index]["text"] if index < len(fields) else None
+
+
 def fill(index, text):
+    """Scrive text nel campo (dopo il testo che c'è già) e controlla che ci sia arrivato tutto: se la tastiera a schermo si apre
+    mentre il telefono riceve i tasti, alcuni caratteri si perdono (nella prova 15 un'impronta di 64 caratteri ne aveva 62).
+    In quel caso svuota il campo e riscrive, fino a tre volte."""
     if not SAFE_TEXT.match(text):
         print("caratteri non ammessi nel testo da scrivere", file=sys.stderr)
         return 2
-    if tap_field(index) is None:
+    field = tap_field(index)
+    if field is None:
         return 1
-    if text:
+    if not text:
+        return 0
+    want = (field["text"] or "") + text
+    for attempt in range(3):
+        if attempt == 0:
+            typed = text
+        else:
+            # svuota e riscrive tutto
+            current = field_text(index) or ""
+            if tap_field(index) is None:
+                return 1
+            adb("shell", "input", "keyevent", "KEYCODE_MOVE_END")
+            adb("shell", "input", "keyevent", *(["KEYCODE_DEL"] * (len(current) + 3)))
+            time.sleep(0.5)
+            typed = want
         # il testo sta tra apici: nessun carattere ammesso ha un significato speciale per la shell del telefono
-        adb("shell", "input", "text", "'" + text + "'")
-        time.sleep(0.6)
-    return 0
+        adb("shell", "input", "text", "'" + typed + "'")
+        time.sleep(0.8)
+        got = field_text(index)
+        if got is None or got == "" or got == want:
+            # Un campo che non espone il suo testo non si può controllare: si dà per buono, come prima.
+            return 0
+        print("campo %d: scritto «%s» invece di «%s» (tentativo %d)" % (index, got, want, attempt + 1), file=sys.stderr)
+    return 1
 
 
 def clear_field(index):
