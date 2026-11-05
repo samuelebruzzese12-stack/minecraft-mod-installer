@@ -1,6 +1,7 @@
 #!/bin/bash
 # Prova su emulatore Android dell'app completa: dashboard, menu, INSTALLER BEDROCK, Java Edition, DOWNLOAD MANAGER,
-# MOD MANAGER (ci/mods_phase.sh), CERCA ONLINE (ci/catalog_phase.sh), Diagnostica, Impostazioni e sezioni non ancora costruite.
+# MOD MANAGER (ci/mods_phase.sh), CERCA ONLINE (ci/catalog_phase.sh), MODPACK MANAGER (ci/modpack_phase.sh), Diagnostica,
+# Impostazioni e sezioni non ancora costruite.
 # Installa l'APK, apre file di prova dal selettore di sistema (come farebbe
 # l'utente) e tocca i pulsanti. Con il FINTO Minecraft (ci/fakeminecraft) controlla anche che il file consegnato
 # dall'app contenga tutto, byte per byte. Alla fine installa l'APK nuovo SOPRA quello della versione precedente per
@@ -287,12 +288,12 @@ wait_storage() {
 
 # ======================================================================================================== quale parte, e il salvavita
 
-# Quale parte della prova eseguire: «base» (tutto tranne MOD MANAGER e CERCA ONLINE), «mods» (solo MOD MANAGER), «catalog» (solo
-# CERCA ONLINE, che si prepara da sé il profilo) o «all» (tutto di fila, una dopo l'altra).
+# Quale parte della prova eseguire: «base» (tutto tranne MOD MANAGER, CERCA ONLINE e MODPACK MANAGER), «mods» (solo MOD MANAGER),
+# «catalog» (solo CERCA ONLINE, che si prepara da sé il profilo), «modpack» (solo MODPACK MANAGER) o «all» (tutto di fila).
 # L'emulatore del runner di GitHub (2 core) è lentissimo: ogni passaggio dura decine di secondi e tutto di fila supera l'ora e mezza.
-# Per questo il workflow lancia le tre parti in tre lavori in parallelo, ciascuno con il suo emulatore.
+# Per questo il workflow lancia le parti in lavori paralleli, ciascuno con il suo emulatore.
 PART=${SMOKE_PART:-all}
-case "$PART" in all|base|mods|catalog) ;; *) echo "SMOKE_PART non valido: $PART (ammessi: all, base, mods, catalog)"; exit 2 ;; esac
+case "$PART" in all|base|mods|catalog|modpack) ;; *) echo "SMOKE_PART non valido: $PART (ammessi: all, base, mods, catalog, modpack)"; exit 2 ;; esac
 runs() { [ "$PART" = all ] || [ "$PART" = "$1" ]; }
 log "Parte della prova: $PART"
 
@@ -432,7 +433,7 @@ fi
 # ======================================================================================================== sezioni non costruite
 
 phase "Sezioni non ancora costruite"
-for s in "MODPACK MANAGER" "WORLD MANAGER" "WORLD CONVERTER" "JAVA TO BEDROCK"; do
+for s in "WORLD MANAGER" "WORLD CONVERTER" "JAVA TO BEDROCK"; do
   go_dash || { fail "$s: non trovo la dashboard"; continue; }
   if ! $UI tap "$s"; then fail "$s: scheda non trovata nella dashboard"; continue; fi
   if $UI wait "TORNA ALLA DASHBOARD" 10; then
@@ -447,16 +448,16 @@ for s in "MODPACK MANAGER" "WORLD MANAGER" "WORLD CONVERTER" "JAVA TO BEDROCK"; 
 done
 
 # Dal menu laterale, poi il pulsante «TORNA ALLA DASHBOARD».
-if go_dash && open_from_menu "MODPACK MANAGER"; then
+if go_dash && open_from_menu "WORLD CONVERTER"; then
   if $UI wait "TORNA ALLA DASHBOARD" 10; then
-    shot "sezione aperta dal menu"; expect "MODPACK MANAGER" "In arrivo"
+    shot "sezione aperta dal menu"; expect "WORLD CONVERTER" "In arrivo"
     $UI tap "TORNA ALLA DASHBOARD"; sleep 1.2; snap
     seen "in un'unica app" || fail "«TORNA ALLA DASHBOARD» non riporta alla dashboard"
   else
-    fail "MODPACK MANAGER: aprendolo dal menu non compare la pagina della sezione"
+    fail "WORLD CONVERTER: aprendolo dal menu non compare la pagina della sezione"
   fi
 else
-  fail "il menu laterale non apre MODPACK MANAGER"
+  fail "il menu laterale non apre WORLD CONVERTER"
 fi
 # Dal menu laterale di una sezione: la voce HOME riporta alla dashboard; «Indietro» col menu aperto chiude solo il menu.
 if go_dash && $UI tap "WORLD MANAGER" && $UI wait "TORNA ALLA DASHBOARD" 10; then
@@ -651,7 +652,11 @@ dl_open() {
       $UI tap "DOWNLOAD MANAGER" > /dev/null; sleep 1.5; snap
       if seen "in un'unica app"; then return 1; fi
     fi
-    if seen "DOWNLOAD MANAGER" && ! seen "TORNA ALLA DASHBOARD"; then $UI top; return 0; fi
+    # Altre pagine nominano il DOWNLOAD MANAGER nei loro testi (MOD MANAGER, i pulsanti dei modpack): si controlla la pagina vera.
+    if seen "DOWNLOAD MANAGER" && ! seen "TORNA ALLA DASHBOARD"; then
+      $UI top; snap
+      if seen "Scarica un file da Internet nella memoria dell'app."; then return 0; fi
+    fi
     back
   done
   return 1
@@ -660,19 +665,26 @@ dl_open() {
 dl_wait() { $UI wait "$1" "$2" || $UI scan "$1" 4; }
 # Svuota i due campi di testo (indirizzo e impronta).
 dl_clear_fields() { $UI clear-field 0 > /dev/null 2>&1; $UI clear-field 1 > /dev/null 2>&1; }
-# Scrive indirizzo (e impronta) e tocca AGGIUNGI ALLA CODA.
+# Scrive indirizzo (e impronta) e tocca AGGIUNGI ALLA CODA. Prima del tocco si chiude la tastiera a schermo: copre il pulsante, e un
+# gesto di scorrimento che parte sulla tastiera scrive lettere nel campo (nella prova 14 l'indirizzo divenne «…/mod.jary»).
 dl_add() { # indirizzo [impronta]
   dl_open || { fail "DOWNLOAD MANAGER: non riesco ad aprire la pagina per aggiungere $1"; return 1; }
   dl_clear_fields
   $UI fill 0 "$1" || { fail "DOWNLOAD MANAGER: il campo dell'indirizzo non si trova o non accetta il testo"; return 1; }
   if [ -n "$2" ]; then $UI fill 1 "$2" || { fail "DOWNLOAD MANAGER: il campo dell'impronta non si trova o non accetta il testo"; return 1; }; fi
-  $UI tap "AGGIUNGI ALLA CODA" || { fail "DOWNLOAD MANAGER: pulsante AGGIUNGI ALLA CODA non trovato"; return 1; }
+  ime_hide
+  MMI_SWIPE_SAFE=1 $UI tap "AGGIUNGI ALLA CODA" || { shot "download: AGGIUNGI ALLA CODA non trovato"; fail "DOWNLOAD MANAGER: pulsante AGGIUNGI ALLA CODA non trovato"; return 1; }
 }
-# Elimina dall'app la prima scheda terminata (completata, non riuscita o annullata), con la conferma.
+# Elimina dall'app la prima scheda terminata (completata, non riuscita o annullata), con la conferma. Il pulsante si tocca solo se
+# il suo centro è sullo schermo e il testo è esattamente «ELIMINA» (altrimenti si scorre).
 dl_remove_card() {
   dl_open || return 1
-  $UI tap "ELIMINA" || return 1
-  $UI wait "Eliminare il file?" 8 || return 1
+  $UI tap-exact "ELIMINA" || return 1
+  if ! $UI wait "Eliminare il file?" 8; then
+    # Un secondo tentativo: il tocco può cadere durante lo scorrimento della pagina.
+    $UI tap-exact "ELIMINA" || return 1
+    $UI wait "Eliminare il file?" 8 || { shot "download: conferma di eliminazione non comparsa"; return 1; }
+  fi
   $UI tap-last "ELIMINA"; sleep 1.5
 }
 # Prova che il file scaricato sul telefono sia identico a quello del server.
@@ -996,6 +1008,16 @@ if runs catalog; then
   # Nella parte «catalog» l'app è appena installata e mai aperta: si apre qui, poi catalog_tests prepara il suo profilo.
   [ "$PART" = catalog ] && { adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3; }
   catalog_tests
+fi
+
+# ======================================================================================================== MODPACK MANAGER
+
+# Anche questa fase sta in un file a parte (ci/modpack_phase.sh) e scarica i file dei modpack di prova dal finto Modrinth.
+source ci/modpack_phase.sh
+if runs modpack; then
+  # Nella parte «modpack» l'app è appena installata e mai aperta: si apre qui.
+  [ "$PART" = modpack ] && { adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3; }
+  modpack_tests
 fi
 
 # ======================================================================================================== INSTALLER BEDROCK (Minecraft assente)

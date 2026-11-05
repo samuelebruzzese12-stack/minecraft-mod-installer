@@ -4,6 +4,8 @@
 Uso: python3 ci/make_samples.py CARTELLA_DI_DESTINAZIONE
 Solo libreria standard. Riproduce le stesse strutture usate dai test del motore di analisi.
 """
+import base64
+import hashlib
 import json
 import os
 import struct
@@ -183,6 +185,129 @@ def java_samples(out):
     }))
 
 
+# ---------------------------------------------------------------------------------------------------- modpack Modrinth (MODPACK MANAGER)
+
+CDN = "http://10.0.2.2:8765/modrinth-cdn/data/"
+
+
+def mrpack_bytes(name, version, summary, files, overrides, minecraft="1.20.1", loader=("fabric-loader", "0.15.11")):
+    """Un modpack Modrinth (.mrpack, formato 1): modrinth.index.json più le cartelle overrides.
+
+    files: elenco di dizionari {path, data, url, client, server, declared}. «declared» sono i byte di cui si pubblica
+    l'impronta (se diversi da «data», il server serve un file alterato e l'app deve scartarlo).
+    overrides: {percorso nello ZIP: byte}."""
+    entries = []
+    for f in files:
+        declared = f.get("declared", f["data"])
+        entries.append({
+            "path": f["path"],
+            "hashes": {"sha1": hashlib.sha1(declared).hexdigest(), "sha512": hashlib.sha512(declared).hexdigest()},
+            "env": {"client": f.get("client", "required"), "server": f.get("server", "required")},
+            "downloads": [f["url"]],
+            "fileSize": f.get("size", len(declared)),
+        })
+    index = {"formatVersion": 1, "game": "minecraft", "versionId": version, "name": name, "summary": summary,
+             "files": entries, "dependencies": {"minecraft": minecraft, loader[0]: loader[1]}}
+    parts = {"modrinth.index.json": json.dumps(index, indent=2).encode("utf-8")}
+    parts.update(overrides)
+    return zip_bytes(parts)
+
+
+def modpack_samples(out):
+    """Modpack per provare il MODPACK MANAGER. I file che i modpack chiedono di scaricare sono quelli di java_samples(), serviti dal
+    finto Modrinth di ci/dl_server.py: l'elenco di cosa servire a quale indirizzo si scrive in modpack-server.json (lo legge il
+    server). Il test «EmulatorModpackSamplesTest» controlla questi file con il lettore, il pianificatore e l'installatore veri."""
+    def read(name):
+        with open(os.path.join(out, name), "rb") as f:
+            return f.read()
+
+    def put(name, data):
+        with open(os.path.join(out, name), "wb") as f:
+            f.write(data)
+
+    serve = []   # cosa deve servire il finto CDN: {path, source | text, mode}
+
+    def cdn(project, version, name, source=None, text=None, data=None, mode="normal"):
+        path = "/modrinth-cdn/data/%s/versions/%s/%s" % (project, version, name)
+        entry = {"path": path, "mode": mode}
+        if source is not None:
+            entry["source"] = source
+        elif data is not None:
+            entry["b64"] = base64.b64encode(data).decode("ascii")
+        else:
+            entry["text"] = text
+        serve.append(entry)
+        return CDN + "%s/versions/%s/%s" % (project, version, name)
+
+    # 1) completo: due mod, un resource pack, un file di impostazioni da scaricare, una mod solo per server (da non scaricare) e
+    #    tre file di impostazioni (comuni, solo client, solo server).
+    solo_server = fabric_mod("soloserver", "Solo Server", "1.0.0")
+    config = b'{"modpack": "prova", "valore": 42}\n'
+    p, v = "ModpackPr1", "VerPack01"
+    put("Modpack_Prova.mrpack", mrpack_bytes(
+        "Modpack di Prova", "1.0.0", "Un modpack inventato per la prova automatica dell'app.",
+        [
+            {"path": "mods/Mod_Fabric_Esempio.jar", "data": read("Mod_Fabric_Esempio.jar"),
+             "url": cdn(p, v, "Mod_Fabric_Esempio.jar", source="Mod_Fabric_Esempio.jar")},
+            {"path": "mods/Libreria_Esempio.jar", "data": read("Libreria_Esempio.jar"),
+             "url": cdn(p, v, "Libreria_Esempio.jar", source="Libreria_Esempio.jar")},
+            {"path": "resourcepacks/Texture_Java.zip", "data": read("Texture_Java.zip"), "client": "optional",
+             "url": cdn(p, v, "Texture_Java.zip", source="Texture_Java.zip")},
+            {"path": "config/prova-modpack.json", "data": config,
+             "url": cdn(p, v, "Config_Modpack.json", data=config)},
+            {"path": "mods/Solo_Server.jar", "data": solo_server, "client": "unsupported", "server": "required",
+             "url": cdn(p, v, "Solo_Server.jar", data=solo_server)},
+        ],
+        {
+            "overrides/config/impostazioni-comuni.txt": b"impostazione comune a tutti\n",
+            "client-overrides/options.txt": b"guiScale:2\n",
+            "server-overrides/server.properties": b"motd=prova\n",
+        }))
+
+    # 2) incompleto: una mod arriva, una libreria non si trova la prima volta (404) ma la seconda sì, e una mod viene servita
+    #    alterata (l'impronta pubblicata è un'altra: l'app deve scartarla ogni volta).
+    p, v = "ModpackPr2", "VerPack02"
+    altered = b"questo non e' il file di cui il modpack ha pubblicato l'impronta"
+    put("Modpack_Incompleto.mrpack", mrpack_bytes(
+        "Modpack Incompleto", "0.1.0", "Un modpack a cui all'inizio manca qualcosa.",
+        [
+            {"path": "mods/Mod_Catalogo.jar", "data": read("Mod_Catalogo.jar"),
+             "url": cdn(p, v, "Mod_Catalogo.jar", source="Mod_Catalogo.jar")},
+            {"path": "mods/Libreria_Catalogo.jar", "data": read("Libreria_Catalogo.jar"),
+             "url": cdn(p, v, "Libreria_Catalogo.jar", source="Libreria_Catalogo.jar", mode="fail_first")},
+            {"path": "mods/Mod_Impronta_Sbagliata.jar", "data": altered, "declared": read("Mod_Fabric_Esempio.jar"),
+             "url": cdn(p, v, "Mod_Impronta_Sbagliata.jar", text=altered.decode("ascii"))},
+        ],
+        {}))
+
+    # 3) lento: una mod veloce e un file «incagliato» (/stuck.bin del server di prova: quasi fermo), per annullare a metà.
+    stuck_declared = b"il contenuto vero non importa: l'installazione viene annullata prima della fine"
+    put("Modpack_Lento.mrpack", mrpack_bytes(
+        "Modpack Lento", "1.0.0", "Un modpack con un file che non finisce mai di arrivare.",
+        [
+            {"path": "mods/Mod_Catalogo.jar", "data": read("Mod_Catalogo.jar"),
+             "url": cdn("ModpackPr3", "VerPack03", "Mod_Catalogo.jar", source="Mod_Catalogo.jar")},
+            {"path": "mods/Lenta.jar", "data": stuck_declared, "size": 2 * 1024 * 1024,
+             "url": "http://10.0.2.2:8765/stuck.bin"},
+        ],
+        {}))
+
+    # 4) un sito che l'utente non ha ancora consentito (https, ma non nell'elenco): serve il consenso. Il nome non esiste mai
+    #    (.invalid): dopo il consenso il file non arriva e il modpack risulta incompleto.
+    foreign = fabric_mod("altrosito", "Altro Sito", "1.0.0")
+    put("Modpack_Altro_Sito.mrpack", mrpack_bytes(
+        "Modpack Altro Sito", "1.0.0", "Un modpack che scarica da un sito non ancora consentito.",
+        [{"path": "mods/Mod_Altro_Sito.jar", "data": foreign, "url": "https://cdn.modpack-test.invalid/Mod_Altro_Sito.jar"}],
+        {}))
+
+    # 5) i modpack stessi, scaricabili dal DOWNLOAD MANAGER (per il pulsante «APRI NEL MODPACK MANAGER»).
+    for name in ("Modpack_Prova.mrpack",):
+        serve.append({"path": "/modrinth-cdn/data/ModpackFile/" + name, "source": name, "mode": "normal"})
+
+    with open(os.path.join(out, "modpack-server.json"), "w") as f:
+        json.dump({"files": serve}, f, indent=2)
+
+
 def main(out):
     os.makedirs(out, exist_ok=True)
 
@@ -250,6 +375,7 @@ def main(out):
         f.write(b"Questo non e' un pacchetto Minecraft.\n")
 
     java_samples(out)
+    modpack_samples(out)
 
     for n in sorted(os.listdir(out)):
         print("%-40s %8d byte" % (n, os.path.getsize(os.path.join(out, n))))

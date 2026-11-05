@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       parts:
-        description: "Parti della prova su emulatore da eseguire, separate da virgola (base, mods, catalog). Vuoto = tutte"
+        description: "Parti della prova su emulatore da eseguire, separate da virgola (base, mods, catalog, modpack). Vuoto = tutte"
         required: false
         default: ""
 
@@ -41,7 +41,7 @@ jobs:
         run: |
           python3 -I - "$WANT" >> "$GITHUB_OUTPUT" <<'PY'
           import json, sys
-          allowed = ["base", "mods", "catalog"]
+          allowed = ["base", "mods", "catalog", "modpack"]
           want = [p.strip() for p in (sys.argv[1] if len(sys.argv) > 1 else "").split(",")]
           print("parts=" + json.dumps([p for p in allowed if p in want] or allowed))
           PY
@@ -70,8 +70,8 @@ jobs:
       - name: Crea i file di prova per il test sui file Java
         run: python3 ci/make_samples.py samples-test
 
-      # Il finto Modrinth della prova su emulatore (ci/dl_server.py --modrinth): lo stesso server, con gli stessi dati. Qui lo prova il
-      # test FakeModrinthChainTest con il catalogo, il motore dei download e il gestore dei profili veri; se i dati non tornano si
+      # Il finto Modrinth della prova su emulatore (ci/dl_server.py --modrinth): lo stesso server, con gli stessi dati. Qui lo provano
+      # i test FakeModrinthChainTest (catalogo) ed EmulatorModpackSamplesTest (modpack) con i motori veri; se i dati non tornano si
       # vede subito, prima di spendere l'emulatore.
       - name: Avvia il finto Modrinth per i test del catalogo
         run: |
@@ -90,6 +90,9 @@ jobs:
         env:
           MMI_SAMPLES: ${{ github.workspace }}/samples-test
           MMI_FAKE_MODRINTH: http://127.0.0.1:8765/modrinth/v2
+          # Per EmulatorModpackSamplesTest (modpack di prova della parte «modpack» dell'emulatore). Il server va appena avviato: un file
+          # dei modpack di prova risponde 404 solo alla prima richiesta.
+          MMI_FAKE_SERVER: http://127.0.0.1:8765
         run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :catalog:test :modpack-engine:test :app:testDebugUnitTest --continue --stacktrace
 
       # Prova COL SERVIZIO VERO: le richieste e le risposte reali di Modrinth (ricerca con i filtri, versioni, dipendenze), un
@@ -237,10 +240,11 @@ jobs:
   # Non blocca la consegna dell'APK (continue-on-error): serve a trovare i difetti che la compilazione non vede.
   #
   # L'emulatore del runner (2 core) è lentissimo: ogni passaggio dura decine di secondi. Tutta la prova di fila superava l'ora e mezza,
-  # quindi si divide in tre parti che girano in parallelo, ciascuna con il suo emulatore:
+  # quindi si divide in parti che girano in parallelo, ciascuna con il suo emulatore:
   #   base    = installer Bedrock, sezioni, impostazioni, download, finto Minecraft, arresto provocato, aggiornamento sopra la versione 5;
   #   mods    = MOD MANAGER (profili, installazione, interruttore, annulla, verifica, raccolte, esportazione);
-  #   catalog = CERCA ONLINE (catalogo Modrinth, con il finto servizio di ci/dl_server.py); si prepara da sé il profilo di partenza.
+  #   catalog = CERCA ONLINE (catalogo Modrinth, con il finto servizio di ci/dl_server.py); si prepara da sé il profilo di partenza;
+  #   modpack = MODPACK MANAGER (modpack .mrpack di prova: completo, incompleto e ripresa, annullamento, consenso, DOWNLOAD MANAGER).
   emulator:
     name: Prova su emulatore Android (${{ matrix.part }})
     needs: build

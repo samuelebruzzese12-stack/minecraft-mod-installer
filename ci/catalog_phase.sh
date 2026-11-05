@@ -347,9 +347,13 @@ catalog_body() {
   [ "$n" -ge 10 ] || fail "CERCA ONLINE: il server ha ricevuto solo $n richieste all'API (ne attendevo almeno 10)"
 
   # ================================================================== pulizia: le schede dei download di questa fase
-  for n in 1 2 3 4 5 6; do dl_remove_card > /dev/null 2>&1 || break; done
+  local removed=0
+  for n in 1 2 3 4 5 6; do dl_remove_card > /dev/null 2>&1 || break; removed=$((removed + 1)); done
   f=$(dl_device_ls | grep -v '^$' | tr '\n' ' ')
-  [ -z "$f" ] || fail "CERCA ONLINE: dopo aver tolto le schede dei download restano file nella cartella dei download: $f"
+  if [ -n "$f" ]; then
+    dl_open > /dev/null 2>&1; shot "catalogo: download rimasti"
+    fail "CERCA ONLINE: dopo aver tolto le schede dei download ($removed tolte) restano file nella cartella dei download: $f"
+  fi
 }
 
 # Quando la fase gira da sola l'app è appena installata: si prepara, con gli stessi passi dell'utente (selettore di sistema, «CREA

@@ -22,6 +22,8 @@ Con --modrinth CARTELLA (la cartella dei file di prova) imita anche l'API pubbli
 pochi progetti inventati, per provare il catalogo dell'app senza internet (vedi «finto Modrinth» più sotto):
   /modrinth/v2/search, /projects, /project/<id>/version, /versions        l'API
   /modrinth-cdn/data/<progetto>/versions/<versione>/<file>                i file (al posto di cdn.modrinth.com)
+  e, se nella stessa cartella c'è modpack-server.json (lo scrive ci/make_samples.py), i file dei modpack di prova: ognuno con il
+  suo percorso e il suo modo («normal»; «fail_first»: la PRIMA richiesta risponde 404, le successive servono il file)
 
 Uso: dl_server.py --port 8765 --payload CARTELLA/Texture_Verde.mcpack [--jar CARTELLA/Mod_Scaricata.jar]
                   [--modrinth CARTELLA] --out CARTELLA-DI-USCITA
@@ -29,6 +31,7 @@ Scrive in --out: dl-expected.txt (NOME DIMENSIONE SHA256), dl-server.log (una ri
 parametri della richiesta e User-Agent; «end» con esito), e con --modrinth anche modrinth-expected.txt.
 """
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -52,6 +55,7 @@ LOG = None
 LOCK = threading.Lock()
 FILES = {}
 DROPPED = set()
+FAILED_ONCE = set()
 
 
 def deterministic(size, seed):
@@ -158,6 +162,26 @@ def build_modrinth(directory):
     version("VerTexC11", "TexCatal1", "1.0.0", "release", ["1.20.1"], ["minecraft"], [("Texture_Catalogo.zip", texture, texture)], [], 9)
 
 
+def build_modpacks(directory):
+    """Registra i file dei modpack di prova: ci/make_samples.py scrive in modpack-server.json cosa servire a quale percorso
+    («source»: un file della cartella; «b64» o «text»: i byte scritti lì; «mode»). Senza quel file non fa nulla."""
+    spec_path = os.path.join(directory, "modpack-server.json")
+    if not os.path.isfile(spec_path):
+        return
+    with open(spec_path) as f:
+        spec = json.load(f)
+    for e in spec["files"]:
+        if "source" in e:
+            with open(os.path.join(directory, e["source"]), "rb") as src:
+                data = src.read()
+        elif "b64" in e:
+            data = base64.b64decode(e["b64"])
+        else:
+            data = e["text"].encode("utf-8")
+        digest = hashlib.sha256(data).hexdigest()
+        FILES[e["path"]] = {"data": data, "mode": e.get("mode", "normal"), "etag": '"' + digest[:16] + '"'}
+
+
 def mr_hit(p):
     return {"project_id": p["id"], "project_type": p["ptype"], "slug": p["slug"], "author": p["author"], "title": p["title"],
             "description": p["description"], "categories": p["loaders"], "display_categories": p["loaders"],
@@ -237,6 +261,13 @@ class Handler(BaseHTTPRequestHandler):
         if f is None:
             self.reply(404, body=b"no")
             return 404, 0
+        if f["mode"] == "fail_first":
+            with LOCK:
+                first = path not in FAILED_ONCE
+                FAILED_ONCE.add(path)
+            if first:
+                self.reply(404, body=b"non ancora")
+                return 404, 0
         data = f["data"]
         size = len(data)
         start = 0
@@ -414,6 +445,7 @@ def main():
             out.write("%s %d %s\n" % (path.lstrip("/"), len(f["data"]), hashlib.sha256(f["data"]).hexdigest()))
     if args.modrinth:
         build_modrinth(args.modrinth)
+        build_modpacks(args.modrinth)
         with open(args.out + "/modrinth-expected.txt", "w") as out:
             for name, digest, size in MR_SERVED:
                 out.write("%s %d %s\n" % (name, size, digest))
