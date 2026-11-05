@@ -96,6 +96,21 @@ class WorldsViewModel(application: Application) : AndroidViewModel(application) 
     private val inbox = FileInbox(application, WorldLimits.DEFAULT)
     private val importer = WorldImporter()
 
+    /**
+     * L'importatore per copiare davvero. Nella build di prova (debug) la pausa dopo ogni file si legge da
+     * `files/dev/world_import_pause_ms.txt`: serve solo alla prova su emulatore, che chiude l'app a metà di un'importazione. Nella
+     * versione vera quel file non conta nulla.
+     */
+    private fun copier(): WorldImporter {
+        if (!BuildConfig.DEBUG) return importer
+        val pause = try {
+            File(getApplication<Application>().filesDir, "dev/world_import_pause_ms.txt").takeIf { it.isFile }?.readText()?.trim()?.toLongOrNull()
+        } catch (e: Exception) {
+            null
+        }
+        return if (pause != null && pause in 1..2_000) WorldImporter(pauseAfterEachFileMs = pause) else importer
+    }
+
     private val _state = MutableStateFlow(WorldsState())
     val state: StateFlow<WorldsState> = _state.asStateFlow()
 
@@ -303,7 +318,7 @@ class WorldsViewModel(application: Application) : AndroidViewModel(application) 
         val token = p.token + "w" + p.selected
         runBusy("Importo «" + world.title + "»", "Importazione annullata: nel profilo non è cambiato nulla.") { cancel, progress ->
             val r = withContext(Dispatchers.IO) {
-                importer.importJava(p.file, world, savesOf(profile.id), p.folderName, token, cancel, progress)
+                copier().importJava(p.file, world, savesOf(profile.id), p.folderName, token, cancel, progress)
             }
             val outcome = outcomeOf(world.title, profile, r.worldDir, r.files, r.bytes, r.resumedFiles, r.fatal)
             _state.update { s ->
@@ -325,7 +340,7 @@ class WorldsViewModel(application: Application) : AndroidViewModel(application) 
                 if (!item.archiveAvailable) return@withContext null
                 val scan = WorldScanner.scan(pend.archive, cancel = cancel) as? WorldScanResult.Ok ?: return@withContext null
                 val world = scan.worlds.firstOrNull { it.root == pend.root } ?: return@withContext null
-                world to importer.importJava(pend.archive, world, savesOf(profile.id), pend.folderName, pend.token, cancel, progress)
+                world to copier().importJava(pend.archive, world, savesOf(profile.id), pend.folderName, pend.token, cancel, progress)
             }
             if (r == null) {
                 say("La copia dell'archivio non c'è più o è cambiata: annulla questa importazione e scegli di nuovo il file.")

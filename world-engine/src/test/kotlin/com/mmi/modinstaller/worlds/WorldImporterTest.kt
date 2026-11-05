@@ -242,6 +242,24 @@ class WorldImporterTest {
         assertTrue(noWorkFolders().isEmpty())
     }
 
+    @Test fun theTestOnlyPauseSlowsTheImportAndCanBeCancelled() {
+        val file = archive(WFx.javaWorld())
+        val world = worldOf(file)
+        val slow = WorldImporter(reserveBytes = 0, pauseAfterEachFileMs = 60)
+        val started = System.currentTimeMillis()
+        val r = slow.importJava(file, world, saves, world.title, "t1")
+        assertTrue(r.fatal, r.ok)
+        assertTrue("con la pausa l'importazione deve durare almeno 60 ms per file", System.currentTimeMillis() - started >= 60L * world.files)
+        var calls = 0
+        try {
+            slow.importJava(file, world, saves, "Altro", "t2", cancel = { if (++calls > 5) throw CancellationException("annullata") })
+            fail("doveva essere annullata durante la pausa")
+        } catch (e: CancellationException) {
+            // atteso
+        }
+        assertTrue(noWorkFolders().isEmpty())
+    }
+
     @Test fun aBadTokenIsRefused() {
         val file = archive(WFx.javaWorld())
         val r = importer.importJava(file, worldOf(file), saves, "M", "../fuori")

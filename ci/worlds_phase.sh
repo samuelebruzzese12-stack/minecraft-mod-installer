@@ -218,11 +218,14 @@ wd_case_interrupt() {
   wd_preview Mondo_Java_Grande.zip || return 1
   WD_WHAT="mondo grande"; wd_texts
   wd_expect "Mondo Grande" "160 regioni" "IMPORTA NEL PROFILO"
+  # Sull'emulatore della CI 20 MB si copiano in un attimo (prova 16: l'importazione finì prima che lo script la vedesse): solo nella
+  # build di prova, una pausa di 150 ms dopo ogni file la fa durare circa 25 secondi.
+  adb shell "run-as $PKG sh -c 'mkdir -p files/dev && printf 150 > files/dev/world_import_pause_ms.txt'" > /dev/null 2>&1
   $UI tap "IMPORTA NEL PROFILO" || { fail "WORLD MANAGER: il pulsante «IMPORTA NEL PROFILO» non si trova (mondo grande)"; return 1; }
   if ! $UI wait "Copio i file del mondo" 120; then
     shot "mondi: avanzamento non comparso"; fail "WORLD MANAGER: durante l'importazione non compare l'avanzamento («Copio i file del mondo»)"; return 1
   fi
-  sleep 1.5; shot "mondi: importazione in corso"
+  sleep 4; shot "mondi: importazione in corso"
   # Android chiude l'app a metà (come quando la si toglie dalle recenti o manca memoria).
   adb shell am force-stop $PKG; sleep 2
   if [ -n "$(wd_profile_with "Mondo Grande")" ]; then
@@ -232,6 +235,8 @@ wd_case_interrupt() {
   [ -n "$(wd_staging)" ] || { fail "WORLD MANAGER: dopo la chiusura a metà non c'è la cartella di lavoro dell'importazione"; return 1; }
   [ -n "$(wd_incoming)" ] || fail "WORLD MANAGER: dopo la chiusura a metà la copia dell'archivio non c'è più (la ripresa non sarebbe possibile)"
 
+  # La ripresa va alla velocità normale.
+  adb shell "run-as $PKG rm -f files/dev/world_import_pause_ms.txt" > /dev/null 2>&1
   adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 4
   go_dash
   wd_open || { fail "WORLD MANAGER: dopo la riapertura dell'app la pagina non si apre"; return 1; }

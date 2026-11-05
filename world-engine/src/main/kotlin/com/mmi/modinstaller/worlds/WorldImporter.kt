@@ -53,7 +53,12 @@ class PendingWorldImport(
 class WorldImporter(
     private val limits: SafetyLimits = WorldLimits.DEFAULT,
     private val reserveBytes: Long = 64L * 1024 * 1024,
-    private val freeSpace: (File) -> Long = { it.usableSpace }
+    private val freeSpace: (File) -> Long = { it.usableSpace },
+    /**
+     * Pausa dopo ogni file, in millisecondi. Sempre 0 nell'app vera; la build di prova la legge da un file di sviluppo, così la
+     * prova su emulatore può chiudere l'app a metà di un'importazione (su un emulatore veloce 20 MB si copiano in un attimo).
+     */
+    private val pauseAfterEachFileMs: Long = 0
 ) {
 
     fun stagingDir(savesDir: File, token: String): File = File(savesDir, STAGING_PREFIX + token)
@@ -155,6 +160,7 @@ class WorldImporter(
                         files++
                         bytes += entry.size.coerceAtLeast(0L)
                         progress(bytes, world.bytes, "Copio i file del mondo: $files di ${world.files}")
+                        pause(cancel)
                     }
                 }
                 pendingLine?.let {
@@ -257,6 +263,16 @@ class WorldImporter(
     }
 
     private fun failed(message: String) = WorldImportResult(null, 0, 0, 0, message)
+
+    private fun pause(cancel: CancelCheck) {
+        var left = pauseAfterEachFileMs
+        while (left > 0) {
+            val step = minOf(left, 50L)
+            Thread.sleep(step)
+            left -= step
+            cancel()
+        }
+    }
 
     private fun lastByte(file: File): Int = java.io.RandomAccessFile(file, "r").use { raf ->
         raf.seek(raf.length() - 1)
