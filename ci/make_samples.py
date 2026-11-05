@@ -371,6 +371,40 @@ def world_samples(out):
     write_zip(os.path.join(out, "Mondo_Java_Grande.zip"),
               java_world_entries("Mondo Grande", "Mondo Grande", regions=160, region_bytes=128 * 1024, seed=3))
 
+def crash_samples(out):
+    """Testi per l'analisi dei crash (DIAGNOSTICA). Le frasi sono quelle che scrive Fabric Loader; le mod nominate sono quelle
+    che la fase MOD MANAGER lascia nel profilo Fabric. EmulatorCrashSamplesTest (mod-manager) li analizza prima con il codice vero."""
+    report = "\n".join([
+        "---- Minecraft Crash Report ----",
+        "// Who set us up the TNT?",
+        "",
+        "Time: 2026-11-05 12:00:00",
+        "Description: Mod loading failures have occurred; consult the issue messages for more details",
+        "",
+        "net.fabricmc.loader.impl.FormattedException: Some of your mods are incompatible with the game or each other!",
+        "More details:",
+        "\t - Mod 'Con Dipendenza' (condipendenza) 1.2.0 requires version 3.0.0 or later of mod 'Libreria Esempio' (libesempio), but only the wrong version is present: 2.1.0!",
+        "\t - Mod 'Esempio Fabric' (esempiofabric) 1.0.0 requires any version of sodium, which is missing!",
+        "\tat net.fabricmc.loader.impl.FormattedException.ofLocalized(FormattedException.java:51)",
+        "",
+        "-- System Details --",
+        "Details:",
+        "\tMinecraft Version: 1.20.1",
+        "\tJava Version: 17.0.8, Eclipse Adoptium",
+        "\tSuspected Mods: Esempio Fabric (esempiofabric)",
+        "\tFabric Mods:",
+        "\t\tesempiofabric: Esempio Fabric 1.0.0",
+        "",
+    ])
+    with open(os.path.join(out, "Crash_Fabric.txt"), "wb") as f:
+        f.write(report.encode("utf-8"))
+    log = "[12:00:00] [main/INFO]: Loading Minecraft 1.20.1 with Fabric Loader 0.15.11\n" * 2000
+    log += "[12:05:00] [Render thread/ERROR]: Unreported exception thrown!\njava.lang.OutOfMemoryError: Java heap space\n"
+    with open(os.path.join(out, "Log_Memoria.log.gz"), "wb") as f:
+        # mtime fisso: lo stesso file a ogni esecuzione
+        f.write(gzip.compress(log.encode("utf-8"), mtime=0))
+
+
 def main(out):
     os.makedirs(out, exist_ok=True)
 
@@ -440,6 +474,7 @@ def main(out):
     java_samples(out)
     modpack_samples(out)
     world_samples(out)
+    crash_samples(out)
 
     for n in sorted(os.listdir(out)):
         print("%-40s %8d byte" % (n, os.path.getsize(os.path.join(out, n))))

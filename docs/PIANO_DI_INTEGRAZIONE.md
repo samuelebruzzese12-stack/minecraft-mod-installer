@@ -20,6 +20,7 @@ Regole che guidano tutto il lavoro (dalla direttiva):
 | Dashboard a 11 sezioni, un'unica UI | Realizzato (fase 1) | emulatore |
 | Archivio centrale esteso, impostazioni, registro errori | Realizzato (fase 1) | test JVM + emulatore |
 | Diagnostica: dispositivo (RAM, CPU, spazio, temperatura), integrità dei dati dell'app, ultimi errori | Realizzato (fase 1) | test JVM + emulatore |
+| Analisi dei crash di Minecraft Java (crash report e log, anche `.log.gz`) | **Parziale (fase 9a)**: riconosce dai messaggi veri di Fabric/Quilt Loader e di Forge/NeoForge le mod mancanti, le versioni sbagliate (di mod, Minecraft, caricatore), le mod incompatibili o duplicate; dalla JVM il Java sbagliato (versione delle classi) e la memoria finita; gli errori dei mixin (con la mod quando il messaggio la nomina) e i driver grafici; ritrova nei profili del MOD MANAGER i file di quelle mod. Il file si legge soltanto (inizio e fine se enorme). Non riconosce tutti i crash possibili: quando il messaggio non è tra quelli noti lo dice e mostra l'eccezione | test JVM (14 + 2 sui testi della prova) + emulatore (parte «mods», dopo il MOD MANAGER) |
 | Download Manager: coda, ripresa (Range), SHA-1/256/512, host consentiti, annullamento | Realizzato (fase 2) | test JVM con server HTTP locale |
 | Analisi JAR **senza eseguire codice**: Fabric, Quilt, Forge, NeoForge, mcmod.info, OptiFine, resource pack, shader, datapack | Realizzato (fase 3) | test JVM con JAR sintetici |
 | Mod Manager a profili indipendenti: importazione (anche multipla/ZIP), SHA-256, dipendenze mancanti, conflitti, backup e annullamento, attiva/disattiva | **Parziale (fase 3)**: fatti profili indipendenti, importazione multipla e raccolte `.zip`, SHA-256, dipendenze mancanti **segnalate (non scaricate)**, incompatibilità dichiarate, cestino del profilo e annulla, interruttore, verifica del profilo, esportazione in ZIP. Da fare: cartella di esportazione scelta una volta, raccolte `.7z`/`.rar` | test JVM + emulatore (esito nel resoconto di ogni build) |
@@ -118,7 +119,7 @@ Profili Java indipendenti (`files/java/profiles/<id>/`), importazione `.jar`/`.z
 Come da tabella: si fa ciò che è reale e verificabile, il resto è dichiarato.
 
 ### Fase 9–10 — diagnostica avanzata, rifinitura
-Analisi dei log di crash, controlli prima dell'avvio, README, APK finale.
+Analisi dei log di crash (**9a, fatta**: in DIAGNOSTICA, «Analisi di un crash (Java)»), controlli prima dell'avvio, README, APK finale.
 
 ## Come si verifica ogni fase
 1. Test JVM (`:core` e moduli nuovi) — in locale e in CI.

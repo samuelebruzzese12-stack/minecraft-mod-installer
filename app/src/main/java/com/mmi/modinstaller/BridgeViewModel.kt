@@ -14,6 +14,13 @@ import com.mmi.modinstaller.core.MemoryPlanner
 import com.mmi.modinstaller.core.PerformanceProfile
 import com.mmi.modinstaller.core.ThemeMode
 import com.mmi.modinstaller.data.AppContainer
+import com.mmi.modinstaller.data.FileInbox
+import com.mmi.modinstaller.mods.CrashAnalysis
+import com.mmi.modinstaller.mods.CrashAnalyzer
+import com.mmi.modinstaller.mods.CrashMatcher
+import com.mmi.modinstaller.mods.CrashModMatch
+import com.mmi.modinstaller.mods.CrashText
+import android.net.Uri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +32,18 @@ import kotlinx.coroutines.withContext
 /** Una voce dello spazio occupato dall'app. */
 data class SpaceItem(val label: String, val bytes: Long)
 
+/** Il risultato dell'analisi di un crash report o di un log scelto dall'utente. */
+data class CrashView(
+    val fileName: String,
+    val bytesRead: Long,
+    /** True se il file era più grande di [CrashText.MAX_READ_BYTES] e la lettura si è fermata prima della fine. */
+    val truncated: Boolean,
+    val compressed: Boolean,
+    val analysis: CrashAnalysis,
+    /** I file dei profili del MOD MANAGER che forniscono le mod nominate. */
+    val matches: List<CrashModMatch>
+)
+
 /** Dati delle sezioni che non riguardano l'installer: dashboard, Java Edition, Diagnostica, Impostazioni. */
 data class BridgeState(
     val settings: AppSettings = AppSettings(),
@@ -35,7 +54,9 @@ data class BridgeState(
     val integrity: IntegrityReport? = null,
     val checking: Boolean = false,
     val errors: List<ErrorRecord> = emptyList(),
-    val errorCount: Int = 0
+    val errorCount: Int = 0,
+    val crash: CrashView? = null,
+    val crashReading: Boolean = false
 )
 
 /**
@@ -149,6 +170,40 @@ class BridgeViewModel(application: Application) : AndroidViewModel(application) 
             _state.update { it.copy(errors = emptyList(), errorCount = 0) }
         }
     }
+
+    /**
+     * Legge il crash report o il log scelto (anche .gz) e lo analizza. Il file non viene copiato né modificato: si legge
+     * soltanto, tenendo in memoria l'inizio e la fine se è molto grande.
+     */
+    fun analyzeCrash(uri: Uri, onMessage: (String) -> Unit) {
+        if (_state.value.crashReading) return
+        _state.update { it.copy(crashReading = true) }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                try {
+                    val name = FileInbox(getApplication(), com.mmi.modinstaller.core.SafetyLimits()).describe(uri).displayName
+                    val read = getApplication<Application>().contentResolver.openInputStream(uri)?.use { CrashText.read(it) }
+                        ?: return@withContext "«$name» non sembra un file di testo: scegli il crash report (.txt) o il log (.log, .log.gz)."
+                    val analysis = CrashAnalyzer.analyze(read.text)
+                    val manager = container.modManager
+                    val profiles = manager.profiles().map { it to manager.items(it.id) }
+                    CrashView(name, read.bytesRead, read.truncated, read.compressed, analysis, CrashMatcher.find(analysis, profiles))
+                } catch (e: Exception) {
+                    container.errors.record("Analisi di un crash", "Lettura non riuscita", e.stackTraceToString())
+                    "Non riesco a leggere il file: " + (e.message ?: e.javaClass.simpleName)
+                }
+            }
+            when (result) {
+                is CrashView -> _state.update { it.copy(crash = result, crashReading = false) }
+                else -> {
+                    _state.update { it.copy(crashReading = false) }
+                    onMessage(result.toString())
+                }
+            }
+        }
+    }
+
+    fun closeCrash() = _state.update { it.copy(crash = null) }
 
     /** Elimina le copie temporanee dei file scelti. [onDone] riceve lo spazio liberato. */
     fun clearTemporaryFiles(onDone: (freedBytes: Long) -> Unit) {

@@ -215,7 +215,7 @@ fun MmiApp(
                             onOpenMods = { vm.openSection(Section.MODS) }
                         )
                         Section.DOWNLOADS -> DownloadsScreen(downloads, downloadsModel, vm, modsModel, modpackModel, openMenu)
-                        Section.DIAGNOSTICS -> DiagnosticsScreen(state, bridge, vm, model, openMenu)
+                        Section.DIAGNOSTICS -> DiagnosticsScreen(state, bridge, vm, model, modsModel, openMenu)
                         Section.SETTINGS -> SettingsScreen(state, bridge, vm, model, openMenu)
                         else -> ComingSoonScreen(state.section, vm, openMenu)
                     }

@@ -997,10 +997,13 @@ runs base && download_tests
 
 # La fase sta in un file a parte (ci/mods_phase.sh): usa le funzioni e le variabili di questo script.
 source ci/mods_phase.sh
+# L'analisi dei crash (DIAGNOSTICA) usa il profilo Fabric lasciato dal MOD MANAGER: si prova subito dopo (ci/crash_phase.sh).
+source ci/crash_phase.sh
 if runs mods; then
   # Nella parte «mods» l'app non è ancora stata aperta (la dashboard la apre la parte «base»).
   [ "$PART" = mods ] && { adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3; }
   mods_tests
+  crash_tests
 fi
 
 # ======================================================================================================== CERCA ONLINE (catalogo Modrinth)
