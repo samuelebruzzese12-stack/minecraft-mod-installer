@@ -123,6 +123,11 @@ only_actions() {
 }
 
 back() { adb shell input keyevent KEYCODE_BACK; sleep 1.2; }
+# La tastiera a schermo copre il 38% in basso: i pulsanti sotto il campo di testo spariscono finché è aperta. Si chiude con «Indietro»
+# SOLO se risulta aperta (altrimenti «Indietro» lascerebbe la pagina). I nomi dei campi del dump cambiano da una versione di Android
+# all'altra: se nessuno compare la tastiera si considera chiusa e restano i gesti di scorrimento «sicuri» (MMI_SWIPE_SAFE).
+ime_shown() { adb shell dumpsys input_method 2>/dev/null | grep -qE "mIsInputViewShown=true|mInputShown=true|isInputViewShown=true"; }
+ime_hide() { if ime_shown; then adb shell input keyevent KEYCODE_BACK; sleep 1.2; fi; }
 app_front() { adb shell am start -n $PKG/.MainActivity > /dev/null 2>&1; sleep 2; }
 
 # Legge la schermata attuale in $CUR; «seen TESTO» dice se il testo compare nell'ultima lettura.

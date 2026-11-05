@@ -44,7 +44,7 @@ mr_asked() { mr_requests "$1" | grep -qF -- "$2"; }                    # prefiss
 cat_wait() { $UI wait "$1" "$2" || { $UI top; $UI wait "$1" 3; } || $UI scan "$1" 4; }
 # Rilegge tutti i testi della pagina, anche quelli sotto lo schermo, in $CAT_TXT.
 cat_texts() { : > "$CAT_TXT"; $UI collect "$CAT_TXT" 8 > /dev/null 2>&1; }
-cat_has() { grep -qF -- "$1" "$CAT_TXT"; }
+cat_has() { grep -qiF -- "$1" "$CAT_TXT"; }   # senza badare alle maiuscole: i titoli di sezione sono in maiuscolo («COSA CERCARE»)
 cat_expect() { local t; for t in "$@"; do cat_has "$t" || fail "CERCA ONLINE: manca «$t» ($CAT_WHAT)"; done; }
 cat_absent() { local t; for t in "$@"; do ! cat_has "$t" || fail "CERCA ONLINE: compare «$t» ma non dovrebbe ($CAT_WHAT)"; done; }
 # Dentro una finestra non si usa cat_texts (scorrerebbe la pagina dietro): ogni testo si cerca nella finestra, scorrendola se è lunga.
@@ -69,6 +69,7 @@ cat_search() { # testo
   if [ -n "$1" ]; then
     $UI fill 0 "$1" || { fail "CERCA ONLINE: il campo del nome non si trova o non accetta «$1»"; return 1; }
   fi
+  ime_hide
   $UI tap-exact "CERCA" || { fail "CERCA ONLINE: il pulsante CERCA non si trova"; return 1; }
 }
 # Apre il piano di download del primo (unico) risultato e aspetta che sia pronto.
@@ -364,23 +365,32 @@ catalog_setup() {
   $UI tap "CREA PROFILO" > /dev/null
   mods_wait "Java richiesto dal gioco" 25 || { shot "catalogo: preparazione, profilo non creato"; fail "CERCA ONLINE: preparazione: il profilo non viene creato"; return 1; }
   mods_wait "Pronto" 25 || { shot "catalogo: preparazione, mod non pronta"; fail "CERCA ONLINE: preparazione: la mod Fabric non risulta «Pronta»"; return 1; }
-  $UI tap "INSTALLA" > /dev/null
+  $UI tap-exact "INSTALLA" > /dev/null
   mods_until 40 mods_has mods "$fab_sha" || { fail "CERCA ONLINE: preparazione: la mod Fabric non è stata installata"; return 1; }
   mods_clear_pending
   mods_add Libreria_Esempio.jar || { fail "CERCA ONLINE: preparazione: non riesco ad aggiungere Libreria_Esempio.jar"; return 1; }
   mods_wait "Pronto" 45 || { shot "catalogo: preparazione, libreria non pronta"; fail "CERCA ONLINE: preparazione: la libreria non risulta «Pronta»"; return 1; }
-  $UI tap "INSTALLA" > /dev/null
+  $UI tap-exact "INSTALLA" > /dev/null
   mods_until 40 mods_has mods "$lib_sha" || { fail "CERCA ONLINE: preparazione: la libreria non è stata installata"; return 1; }
   mods_clear_pending
   mods_add Mod_Con_Dipendenza.jar || { fail "CERCA ONLINE: preparazione: non riesco ad aggiungere Mod_Con_Dipendenza.jar"; return 1; }
   mods_wait "Pronto" 45 || { shot "catalogo: preparazione, mod non pronta (2)"; fail "CERCA ONLINE: preparazione: la mod con libreria non risulta «Pronta» (la libreria c'è)"; return 1; }
-  $UI tap "INSTALLA" > /dev/null
+  $UI tap-exact "INSTALLA" > /dev/null
   mods_until 40 mods_has mods "$dep_sha" || { fail "CERCA ONLINE: preparazione: la mod con libreria non è stata installata"; return 1; }
   mods_clear_pending
   log "catalogo: profilo di partenza pronto ($(mods_count "$(mods_ids | head -n 1)" mods) mod)"
 }
 
+# I gesti di scorrimento partono sopra la tastiera a schermo (vedi ui.py, MMI_SWIPE_SAFE) per tutta la durata di questa fase.
 catalog_tests() {
+  local r
+  export MMI_SWIPE_SAFE=1
+  catalog_tests_inner; r=$?
+  unset MMI_SWIPE_SAFE
+  return $r
+}
+
+catalog_tests_inner() {
   phase "CERCA ONLINE (catalogo Modrinth)"
   local pid
   if [ "$PART" = catalog ]; then

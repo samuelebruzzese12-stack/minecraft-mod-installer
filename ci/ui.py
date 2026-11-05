@@ -27,6 +27,7 @@ Comandi:
   switch-state N         esce 0 se l'interruttore N è acceso, 1 se è spento, 2 se non esiste
   tap-switch N           tocca l'interruttore numero N
 """
+import os
 import re
 import subprocess
 import sys
@@ -117,8 +118,14 @@ def screen_size():
 
 
 def swipe_up():
+    """Scorre la pagina verso il basso. Di solito il gesto parte al 75% dell'altezza; con MMI_SWIPE_SAFE=1 parte al 55%: così non
+    comincia sulla tastiera a schermo (che copre il 38% in basso) e scorre la pagina anche quando un campo di testo è in uso."""
     w, h = screen_size()
-    adb("shell", "input", "swipe", str(w // 2), str(int(h * 0.75)), str(w // 2), str(int(h * 0.30)), "350")
+    if os.environ.get("MMI_SWIPE_SAFE"):
+        start, end = 0.55, 0.15
+    else:
+        start, end = 0.75, 0.30
+    adb("shell", "input", "swipe", str(w // 2), str(int(h * start)), str(w // 2), str(int(h * end)), "350")
     time.sleep(0.8)
 
 

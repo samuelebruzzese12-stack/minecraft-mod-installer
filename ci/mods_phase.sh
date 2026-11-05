@@ -136,7 +136,7 @@ mods_tests() {
   if mods_wait "Pronto" 20; then
     $UI scan "Mod_Fabric_Esempio.jar" 6 > /dev/null; sleep 0.5; shot "mod manager: file pronto"
     expect "Mod_Fabric_Esempio.jar" "Pronto"
-    if $UI tap "INSTALLA"; then :; else fail "MOD MANAGER: pulsante INSTALLA non trovato"; return; fi
+    if $UI tap-exact "INSTALLA"; then :; else fail "MOD MANAGER: pulsante INSTALLA non trovato"; return; fi
   else
     shot "mod manager: file non pronto"; fail "MOD MANAGER: la mod Fabric non risulta «Pronta» nel profilo Fabric 1.20.1"; return
   fi
@@ -260,7 +260,7 @@ mods_tests() {
         if mods_wait "Forge 1.20.1" 25; then
           # Il file in attesa viene ricontrollato con il nuovo profilo attivo: ora è pronto.
           if mods_wait "Pronto" 20; then
-            $UI tap "INSTALLA" > /dev/null
+            $UI tap-exact "INSTALLA" > /dev/null
             if mods_until 40 mods_has mods "$forge_sha"; then
               pid2=$(mods_id_with mods "$forge_sha")
               [ "$pid2" != "$pid" ] || fail "MOD MANAGER: la mod Forge è finita nello stesso profilo della mod Fabric"
@@ -349,7 +349,7 @@ mods_tests() {
   # La libreria che mancava: dopo averla messa il profilo è pulito.
   mods_add Libreria_Esempio.jar
   if mods_wait "Pronto" 45; then
-    $UI tap "INSTALLA" > /dev/null
+    $UI tap-exact "INSTALLA" > /dev/null
     mods_until 40 mods_has mods "$lib_sha" || { shot "mod manager: libreria non installata"; fail "MOD MANAGER: la libreria non è stata installata"; }
   else
     shot "mod manager: libreria non pronta"; fail "MOD MANAGER: la libreria di prova non risulta «Pronta»"
@@ -388,7 +388,7 @@ mods_tests() {
   mods_clear_pending   # le tre schede della raccolta, già installate
   mods_add Texture_Java.zip
   if mods_wait "Texture_Java.zip" 45 && mods_wait "Pronto" 15; then
-    $UI tap "INSTALLA" > /dev/null
+    $UI tap-exact "INSTALLA" > /dev/null
     if mods_until 40 mods_has resourcepacks "$tex_sha"; then
       mods_clear_pending
       $UI scan "Resource pack (1)" 8 || fail "MOD MANAGER: la scheda «Resource pack (1)» non mostra il conteggio"
@@ -442,7 +442,7 @@ mods_tests() {
         if mods_wait "mod.jar" 45; then
           sleep 1; shot "mod manager: arrivato dai download"
           mods_wait "Pronto" 15 || fail "MOD MANAGER: la mod arrivata dai download non risulta «Pronta»"
-          $UI tap "INSTALLA" > /dev/null
+          $UI tap-exact "INSTALLA" > /dev/null
           mods_until 40 mods_has mods "$mod_sha" || { shot "mod manager: mod scaricata non installata"; fail "MOD MANAGER: la mod arrivata dai download non è stata installata"; }
           mods_clear_pending
         else
