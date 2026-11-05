@@ -9,6 +9,7 @@ import com.mmi.modinstaller.core.ProgressCallback
 import com.mmi.modinstaller.core.formatBytes
 import com.mmi.modinstaller.data.AppContainer
 import com.mmi.modinstaller.data.ErrorMessages
+import com.mmi.modinstaller.data.FileInbox
 import com.mmi.modinstaller.data.ModsRepository
 import com.mmi.modinstaller.mods.ModManager
 import com.mmi.modinstaller.mods.Profile
@@ -17,6 +18,7 @@ import com.mmi.modinstaller.worlds.WorldEdition
 import com.mmi.modinstaller.worlds.WorldExporter
 import com.mmi.modinstaller.worlds.WorldImporter
 import com.mmi.modinstaller.worlds.WorldInfo
+import com.mmi.modinstaller.worlds.WorldLimits
 import com.mmi.modinstaller.worlds.WorldScanResult
 import com.mmi.modinstaller.worlds.WorldScanner
 import com.mmi.modinstaller.worlds.WorldVersions
@@ -90,6 +92,8 @@ class WorldsViewModel(application: Application) : AndroidViewModel(application) 
     private val manager: ModManager = container.modManager
     private val paths = container.paths
     private val repo = ModsRepository(application, container.paths)
+    /** Per copiare l'archivio scelto: con i limiti dei mondi (fino a 8 GB), più larghi di quelli dei pacchetti. */
+    private val inbox = FileInbox(application, WorldLimits.DEFAULT)
     private val importer = WorldImporter()
 
     private val _state = MutableStateFlow(WorldsState())
@@ -220,12 +224,12 @@ class WorldsViewModel(application: Application) : AndroidViewModel(application) 
     fun openFile(uri: Uri) {
         runBusy("Controllo del mondo", "Operazione annullata.") { cancel, progress ->
             val result = withContext(Dispatchers.IO) {
-                val picked = repo.describe(uri)
+                val picked = inbox.describe(uri)
                 val token = UUID.randomUUID().toString().replace("-", "").take(12)
                 paths.worldsIncoming.mkdirs()
                 val copy = File(paths.worldsIncoming, "$token.zip")
                 try {
-                    repo.stage(picked, copy, cancel) { done, total, _ -> progress(done, total, "Copio «" + picked.displayName + "»") }
+                    inbox.stage(picked.uri, copy, picked.sizeBytes, cancel) { done, total, _ -> progress(done, total, "Copio «" + picked.displayName + "»") }
                     when (val r = WorldScanner.scan(copy, cancel = cancel)) {
                         is WorldScanResult.Failed -> {
                             copy.delete()
