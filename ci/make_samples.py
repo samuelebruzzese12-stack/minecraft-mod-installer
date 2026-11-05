@@ -300,7 +300,15 @@ def modpack_samples(out):
         [{"path": "mods/Mod_Altro_Sito.jar", "data": foreign, "url": "https://cdn.modpack-test.invalid/Mod_Altro_Sito.jar"}],
         {}))
 
-    # 5) i modpack stessi, scaricabili dal DOWNLOAD MANAGER (per il pulsante «APRI NEL MODPACK MANAGER»).
+    # 5) piccolo e completo: una mod e un'impostazione. Il finto Modrinth lo elenca tra i modpack del catalogo (con Modpack di Prova):
+    #    serve a provare in locale OnlineModpackTest (MMI_ONLINE_FAKE) prima di usarlo contro il servizio vero.
+    put("Modpack_Piccolo.mrpack", mrpack_bytes(
+        "Modpack Piccolo", "1.0.0", "Un modpack con una sola mod.",
+        [{"path": "mods/Mod_Catalogo.jar", "data": read("Mod_Catalogo.jar"),
+          "url": cdn("ModpackPr4", "VerPack04", "Mod_Catalogo.jar", source="Mod_Catalogo.jar")}],
+        {"overrides/config/piccolo.txt": b"piccolo\n"}))
+
+    # 6) i modpack stessi, scaricabili dal DOWNLOAD MANAGER (per il pulsante «APRI NEL MODPACK MANAGER»).
     for name in ("Modpack_Prova.mrpack",):
         serve.append({"path": "/modrinth-cdn/data/ModpackFile/" + name, "source": name, "mode": "normal"})
 

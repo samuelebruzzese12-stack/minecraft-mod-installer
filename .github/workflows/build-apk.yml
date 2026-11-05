@@ -96,16 +96,21 @@ jobs:
         run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :catalog:test :modpack-engine:test :app:testDebugUnitTest --continue --stacktrace
 
       # Prova COL SERVIZIO VERO: le richieste e le risposte reali di Modrinth (ricerca con i filtri, versioni, dipendenze), un
-      # download vero dal suo CDN con verifica dell'impronta, la lettura del .jar scaricato e l'installazione in un profilo.
+      # download vero dal suo CDN con verifica dell'impronta, la lettura del .jar scaricato e l'installazione in un profilo; poi
+      # i MODPACK veri: i .mrpack dei modpack Fabric più scaricati letti e pianificati, e il più piccolo installato per intero.
       # In sola lettura (solo richieste GET). Non blocca nulla: se la rete o il servizio non rispondono il passaggio fallisce
-      # e basta. L'esito e il resoconto compaiono nel riepilogo dell'esecuzione.
+      # e basta. L'esito e i resoconti compaiono nel riepilogo dell'esecuzione e nella Release.
       - name: Prova col servizio vero (Modrinth)
         id: online
         continue-on-error: true
         env:
           MMI_ONLINE: "1"
           MMI_ONLINE_REPORT: ${{ github.workspace }}/online-report.txt
-        run: gradle :catalog:test --tests 'com.mmi.modinstaller.catalog.OnlineModrinthTest' --rerun --stacktrace
+          MMI_ONLINE_MODPACK_REPORT: ${{ github.workspace }}/online-modpack-report.txt
+        run: >-
+          gradle :catalog:test --tests 'com.mmi.modinstaller.catalog.OnlineModrinthTest' --rerun
+          :modpack-engine:test --tests 'com.mmi.modinstaller.modpack.OnlineModpackTest' --rerun
+          --continue --stacktrace
 
       - name: Riepilogo della prova col servizio vero
         if: always()
@@ -120,8 +125,17 @@ jobs:
             else
               echo "(nessun resoconto: la prova non è partita)"
             fi
+            echo "### Modpack veri"
+            if [ -f online-modpack-report.txt ]; then
+              echo '```'
+              cat online-modpack-report.txt
+              echo '```'
+            else
+              echo "(nessun resoconto dei modpack: la prova non è partita)"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
           cp online-report.txt catalog-online-report.txt 2>/dev/null || true
+          cp online-modpack-report.txt modpack-online-report.txt 2>/dev/null || true
 
       - name: Compila l'APK
         run: gradle :app:assembleDebug :app:assembleRelease --stacktrace
@@ -201,6 +215,7 @@ jobs:
             catalog/build/reports/tests/test
             modpack-engine/build/reports/tests/test
             catalog-online-report.txt
+            modpack-online-report.txt
             fake-modrinth-out
             app/build/reports/tests/testDebugUnitTest
           if-no-files-found: ignore
@@ -221,6 +236,7 @@ jobs:
           files: |
             dist/*.apk
             catalog-online-report.txt
+            modpack-online-report.txt
 
       # Il finto Minecraft serve solo alla prova su emulatore: non entra mai nella Release.
       # Questi passaggi non possono bloccare la consegna dell'APK (vengono dopo e non fanno fallire l'esecuzione).

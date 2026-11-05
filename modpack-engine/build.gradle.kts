@@ -27,6 +27,8 @@ dependencies {
     implementation(project(":mod-manager"))
 
     testImplementation(libs.junit)
+    // Solo per la prova col servizio vero (OnlineModpackTest): cerca i modpack su Modrinth con il client del catalogo.
+    testImplementation(project(":catalog"))
 }
 
 tasks.test {

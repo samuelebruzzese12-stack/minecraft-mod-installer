@@ -39,7 +39,11 @@ import java.nio.file.Files
  */
 class OnlineModrinthTest {
 
-    private val report = StringBuilder()
+    companion object {
+        /** Il resoconto di tutte le prove della classe: ogni prova riscrive il file per intero (prima restava solo l'ultima). */
+        private val report = StringBuilder()
+    }
+
     private lateinit var base: File
     private lateinit var api: ModrinthApi
     private lateinit var engine: DownloadEngine

@@ -163,8 +163,10 @@ non può sapere se il modpack, con i suoi file al loro posto, parte davvero; non
 Come è verificato: i test del modulo `modpack-engine` (73) usano il motore dei download vero e un sito HTTP locale (file giusti,
 manomessi, mancanti, siti non consentiti, annullamento, ripresa, file disattivati dall'utente); `EmulatorModpackSamplesTest` prova i
 modpack della prova su emulatore contro il finto Modrinth di `ci/dl_server.py`; la parte «modpack» della prova su emulatore
-(`ci/modpack_phase.sh`) percorre gli stessi casi **dalla schermata**. Un modpack vero scaricato da Modrinth non è stato provato
-dalla CI (il server di sviluppo non raggiunge Internet).
+(`ci/modpack_phase.sh`) percorre gli stessi casi **dalla schermata**. Con i **modpack veri** lavora solo il passaggio «Prova col
+servizio vero (Modrinth)» della CI (`OnlineModpackTest`): scarica i `.mrpack` dei modpack Fabric più scaricati con l'impronta del
+servizio, li legge e ne prepara il piano, e installa per intero il più piccolo (fino a 60 file e 120 MB) controllando ogni file sul
+disco. Il suo esito sta in `modpack-online-report.txt` di ogni build e non va dato per scontato.
 
 Altre schermate dell'installer: **FILE RECENTI**, **MOD INSTALLATI** (rinvia, segna l'esito, elimina), **CRONOLOGIA**, **BACKUP**
 (prima di ogni eliminazione si salva una copia; c'è anche ANNULLA subito dopo), **Informazioni**.
@@ -288,8 +290,8 @@ Lanciando il workflow a mano («Run workflow») il campo **parts** sceglie quali
 
 Se un passaggio si pianta, lo script si ferma da solo dopo 85 minuti, salva schermata e log dell'ultimo punto raggiunto e lo scrive
 tra i problemi. Schermate, dump dell'interfaccia e log di ogni parte sono allegati alla Release (`prova-emulatore-base.zip`,
-`prova-emulatore-mods.zip`, `prova-emulatore-catalog.zip` e `prova-emulatore-modpack.zip`), insieme a `catalog-online-report.txt`, il
-resoconto della prova col servizio vero di Modrinth.
+`prova-emulatore-mods.zip`, `prova-emulatore-catalog.zip` e `prova-emulatore-modpack.zip`), insieme ai resoconti della prova col
+servizio vero di Modrinth: `catalog-online-report.txt` (mod) e `modpack-online-report.txt` (modpack).
 
 Cosa **non** si può provare in CI: Internet vero dall'emulatore (i test usano solo il server locale; l'unico contatto con Modrinth
 vero è il passaggio «Prova col servizio vero (Modrinth)» dei test su JVM), **Minecraft vero** (il finto Minecraft non importa

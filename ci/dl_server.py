@@ -161,6 +161,17 @@ def build_modrinth(directory):
             123456, "resourcepack", [], 9)
     version("VerTexC11", "TexCatal1", "1.0.0", "release", ["1.20.1"], ["minecraft"], [("Texture_Catalogo.zip", texture, texture)], [], 9)
 
+    # Due modpack (il file della versione è il .mrpack di ci/make_samples.py): non compaiono nelle ricerche di mod, pacchetti e
+    # shader; servono a provare in locale la ricerca e la lettura dei modpack (OnlineModpackTest con MMI_ONLINE_FAKE).
+    if os.path.isfile(os.path.join(directory, "Modpack_Piccolo.mrpack")):
+        prova, piccolo = blob("Modpack_Prova.mrpack"), blob("Modpack_Piccolo.mrpack")
+        project("ModpackPr1", "modpack-di-prova", "Modpack di Prova", "Il modpack completo della prova.", "Autore Otto",
+                5000, "modpack", ["fabric"], 10)
+        version("VerPack01", "ModpackPr1", "1.0.0", "release", ["1.20.1"], ["fabric"], [("Modpack_Prova.mrpack", prova, prova)], [], 10)
+        project("ModpackPr4", "modpack-piccolo", "Modpack Piccolo", "Un modpack con una sola mod.", "Autore Otto",
+                4000, "modpack", ["fabric"], 11)
+        version("VerPack04", "ModpackPr4", "1.0.0", "release", ["1.20.1"], ["fabric"], [("Modpack_Piccolo.mrpack", piccolo, piccolo)], [], 11)
+
 
 def build_modpacks(directory):
     """Registra i file dei modpack di prova: ci/make_samples.py scrive in modpack-server.json cosa servire a quale percorso
