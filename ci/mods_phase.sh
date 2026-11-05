@@ -197,11 +197,20 @@ mods_tests() {
     else
       shot "mod manager: annulla non trovato"; fail "MOD MANAGER: dopo la disattivazione non c'è il pulsante «ANNULLA: Disattivato…»"
     fi
-    # Spento e riacceso con l'interruttore.
-    $UI top; $UI tap-switch 0 > /dev/null
-    mods_until 30 mods_name_is "$pid" mods "$f.disabled" || fail "MOD MANAGER: la seconda disattivazione non è arrivata sul telefono"
-    $UI top; $UI tap-switch 0 > /dev/null
-    if mods_until 30 mods_name_is "$pid" mods "$f"; then
+    # Spento e riacceso con l'interruttore. Il file sul telefono cambia prima che l'app tolga la schermata di avanzamento
+    # dell'operazione precedente: un tocco che arriva in quel momento finisce sulla schermata (prova 16). Si aspetta che l'interruttore
+    # risulti di nuovo nello stato atteso e, se il file non cambia, si riprova il tocco.
+    mods_toggle_to() { # nome-atteso-sul-telefono
+      local t
+      for t in 1 2 3; do
+        sleep 1.5
+        $UI top; $UI tap-switch 0 > /dev/null
+        if mods_until 10 mods_name_is "$pid" mods "$1"; then return 0; fi
+      done
+      return 1
+    }
+    mods_toggle_to "$f.disabled" || fail "MOD MANAGER: la seconda disattivazione non è arrivata sul telefono"
+    if mods_toggle_to "$f"; then
       [ "$(mods_sha "$pid" mods "$f")" = "$fab_sha" ] || fail "MOD MANAGER: dopo la riattivazione il file non è identico all'originale"
     else
       fail "MOD MANAGER: l'interruttore non riattiva il file sul telefono"
