@@ -57,7 +57,7 @@ class ConverterTest {
             r.items.map { it.javaId.substringAfter(':') }.sorted()
         )
         assertEquals(
-            listOf("pedestal", "ruby_block", "ruby_crystal", "ruby_lamp", "ruby_leaves", "ruby_ore", "ruby_slab", "tomatoes"),
+            listOf("pedestal", "ruby_block", "ruby_crystal", "ruby_lamp", "ruby_leaves", "ruby_ore", "ruby_slab", "tall_lamp", "tomatoes"),
             r.blocks.map { it.javaId.substringAfter(':') }.sorted()
         )
         assertEquals(listOf("Critter"), r.entities.map { it.name.replace("Bestiolina", "Critter") })
@@ -152,7 +152,7 @@ class ConverterTest {
 
         val crop = json("Test Mod BP/blocks/testmod/tomatoes.json").o("minecraft:block").o("components")
         assertEquals("minecraft:geometry.cross", crop["minecraft:geometry"])
-        assertEquals("alpha_test", (crop.o("minecraft:material_instances")["*"] as Map<*, *>)["render_method"])
+        assertEquals("alpha_test_single_sided", (crop.o("minecraft:material_instances")["*"] as Map<*, *>)["render_method"])
         assertEquals(false, crop["minecraft:collision_box"])
         assertEquals(0.0, crop.o("minecraft:destructible_by_mining")["seconds_to_destroy"])
 
@@ -174,6 +174,9 @@ class ConverterTest {
         val terrain = json("Test Mod RP/textures/terrain_texture.json")
         assertEquals("atlas.terrain", terrain["texture_name"])
         assertTrue(text("Test Mod RP/blocks.json").contains("\"testmod:ruby_block\""))
+        // Forma troppo grande per Bedrock: cubo, e il rapporto lo dice
+        assertEquals("minecraft:geometry.full_block", json("Test Mod BP/blocks/testmod/tall_lamp.json").o("minecraft:block").o("components")["minecraft:geometry"])
+        assertTrue(plan.reports.single().simplified.toString(), plan.reports.single().simplified.any { it.contains("forma più grande di quella che Bedrock accetta") })
         // Il cartello (disegnato dal codice) non c'è
         assertNull(files["Test Mod BP/blocks/testmod/ruby_sign.json"])
     }

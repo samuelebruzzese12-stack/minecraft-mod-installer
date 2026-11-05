@@ -200,6 +200,11 @@ class ModelResolver(private val jars: List<JavaJar>, private val limits: Convert
             if (name !in vars) texture(tex, f.texture)?.let { vars[name] = it }
         }
         if (vars.isEmpty()) return LookResult(null)
+        // Bedrock accetta forme entro 30 pixel dal centro del blocco e non più grandi di 30×30×30: oltre, un cubo.
+        if (!Geometry.fitsBedrock(elements)) {
+            val main = vars.values.first()
+            return LookResult(BlockLook.Cube(JElement.DIRECTIONS.associateWith { main }, false), "forma più grande di quella che Bedrock accetta")
+        }
         // Un solo elemento a cubo intero: è un cubo normale (geometria di Minecraft, più leggera).
         val single = elements.singleOrNull()
         if (single != null && single.isFullCube && single.faces.values.all { it.uv == null || it.uv.contentEquals(defaultUv(single, it)) }) {
@@ -309,6 +314,21 @@ object Geometry {
         val raw = javaVar.removePrefix("#")
         val clean = raw.map { if (it.isLetterOrDigit() || it == '_') it else '_' }.joinToString("")
         return "t_$clean"
+    }
+
+    /** Le regole di Bedrock sulla grandezza di una forma: entro 30 pixel dal centro su ogni asse e al massimo 30 pixel per lato. */
+    fun fitsBedrock(elements: List<JElement>): Boolean {
+        var minX = Double.MAX_VALUE; var maxX = -Double.MAX_VALUE
+        var minY = Double.MAX_VALUE; var maxY = -Double.MAX_VALUE
+        var minZ = Double.MAX_VALUE; var maxZ = -Double.MAX_VALUE
+        for (e in elements) {
+            minX = minOf(minX, e.from[0], e.to[0]); maxX = maxOf(maxX, e.from[0], e.to[0])
+            minY = minOf(minY, e.from[1], e.to[1]); maxY = maxOf(maxY, e.from[1], e.to[1])
+            minZ = minOf(minZ, e.from[2], e.to[2]); maxZ = maxOf(maxZ, e.from[2], e.to[2])
+        }
+        if (maxX - minX > 30 || maxY - minY > 30 || maxZ - minZ > 30) return false
+        if (minX - 8 < -30 || maxX - 8 > 30 || minZ - 8 < -30 || maxZ - 8 > 30 || minY < -30 || maxY > 30) return false
+        return true
     }
 
     /** Il riquadro di collisione che contiene tutti gli elementi, nel formato di Bedrock (origine al centro del blocco). */

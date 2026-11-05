@@ -63,6 +63,9 @@ object TestMod {
             {"from":[12,4,6],"to":[16,10,10],"rotation":{"angle":22.5,"axis":"y","origin":[8,8,8]},"faces":{"north":{"texture":"#0"},"up":{"texture":"#0"}}}]}"""
         )
         tex("block/pedestal", png(alpha = { _, y -> if (y == 0) 128 else 255 }))
+        // Forma troppo grande per Bedrock (alta 40 pixel): diventa un cubo
+        state("tall_lamp", """{"variants":{"":{"model":"testmod:block/tall_lamp"}}}""")
+        model("block/tall_lamp", """{"textures":{"0":"testmod:block/ruby_block"},"elements":[{"from":[4,0,4],"to":[12,40,12],"faces":{"north":{"texture":"#0"}}}]}""")
         // Cartello: lo disegna il codice
         state("ruby_sign", """{"variants":{"":{"model":"testmod:block/ruby_sign"}}}""")
         model("block/ruby_sign", """{"textures":{"particle":"testmod:block/ruby_block"}}""")

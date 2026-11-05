@@ -758,7 +758,8 @@ internal class AddonWriter(
             }
             val transparency = instances.values.distinct().map { t -> textures.require(t, block = true) }
             val render = when {
-                b.look is BlockLook.Cross -> "alpha_test"
+                // Dalla 1.21.70 la forma a X di Minecraft vuole un modo di disegno con le facce posteriori nascoste.
+                b.look is BlockLook.Cross -> "alpha_test_single_sided"
                 transparency.contains(Transparency.TRANSLUCENT) -> "blend"
                 transparency.contains(Transparency.CUTOUT) -> "alpha_test"
                 else -> "opaque"
