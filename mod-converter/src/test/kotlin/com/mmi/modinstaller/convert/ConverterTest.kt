@@ -60,7 +60,7 @@ class ConverterTest {
             listOf("pedestal", "ruby_block", "ruby_crystal", "ruby_lamp", "ruby_leaves", "ruby_log", "ruby_ore", "ruby_slab", "ruby_trapdoor", "tall_lamp", "tomatoes"),
             r.blocks.map { it.javaId.substringAfter(':') }.sorted()
         )
-        assertEquals(listOf("Critter"), r.entities.map { it.name.replace("Bestiolina", "Critter") })
+        assertEquals(listOf("Beetle", "Critter"), r.entities.map { it.name.replace("Bestiolina", "Critter") }.sorted())
         assertEquals(13, r.recipesTotal)
         assertEquals(9, r.recipesConverted)
         assertEquals(1, r.recipeSkips["ricetta di una macchina o di un sistema della mod (funziona solo con il suo codice)"])
@@ -304,6 +304,10 @@ class ConverterTest {
         assertNotNull(files["Test Mod RP/animation_controllers/testmod/critter.controller.json"])
         assertNotNull(files["Test Mod RP/models/entity/testmod/critter.geo.json"])
         assertNotNull(files["Test Mod RP/textures/mmi/testmod/entity/critter.png"])
+        // GeckoLib 5
+        val beetle = json("Test Mod RP/entity/testmod/beetle.entity.json").o("minecraft:client_entity").o("description")
+        assertEquals("geometry.testmod.beetle", beetle.o("geometry")["default"])
+        assertEquals("animation.beetle.walk", beetle.o("animations")["walk"])
     }
 
     /** L'add-on scritto è un .mcaddon che l'INSTALLER BEDROCK di questa app riconosce e può installare. */

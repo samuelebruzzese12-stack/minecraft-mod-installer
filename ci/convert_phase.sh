@@ -135,7 +135,10 @@ convert_tests() {
       # Il finto Minecraft è la 1.21.50: l'add-on chiede la 1.21.80, quindi l'installer lo segnala e chiede di forzare (giusto).
       # Anche la schermata di JAVA TO BEDROCK l'aveva detto (controllato sopra).
       if $UI scan "Forza l'installazione, a mio rischio" 6; then
-        $UI tap "Forza l'installazione, a mio rischio" > /dev/null; sleep 1
+        # Il testo non si tocca: è l'interruttore accanto (l'unico della pagina).
+        $UI tap-switch 0 > /dev/null; sleep 1.5
+        $UI top; snap
+        seen "serve forzare l'installazione" && fail "JAVA TO BEDROCK: l'interruttore «Forza l'installazione» non seleziona l'add-on"
       else
         note "JAVA TO BEDROCK: l'installer non ha chiesto di forzare l'add-on (la versione del finto Minecraft è cambiata?)"
       fi

@@ -39,7 +39,7 @@ internal object EntityReader {
         for (geo in names) {
             val m = GEO.matchEntire(geo) ?: continue
             val ns = m.groupValues[1]
-            val base = m.groupValues[2].substringAfterLast('/')
+            val base = m.groupValues[2].ifEmpty { m.groupValues[3] }.substringAfterLast('/')
             val id = Rl.parse("$ns:$base") ?: continue
             // Le varianti («_baby», …) senza un nome proprio sono parti di un'altra creatura.
             if (langIds.isNotEmpty() && id !in langIds) continue
@@ -48,9 +48,11 @@ internal object EntityReader {
             val geometry = doc["minecraft:geometry"].asJsonList()?.firstOrNull().asJsonObject() ?: continue
             val identifier = geometry["description"].asJsonObject()?.get("identifier") as? String ?: continue
             val texture = texture(ns, base, nameSet) ?: continue
-            // GeckoLib 4: assets/<ns>/animations/…; GeckoLib 5: assets/<ns>/geckolib/animations/…
+            // GeckoLib 4: assets/<ns>/animations/…; GeckoLib 5: assets/<ns>/geckolib/animations/… (anche senza «.animation»)
             val anim = listOf("animations", "geckolib/animations").flatMap { root ->
-                listOf("", "entity/", "entities/", "mob/").map { sub -> "assets/$ns/$root/$sub$base.animation.json" }
+                listOf("", "entity/", "entities/", "mob/").flatMap { sub ->
+                    listOf("assets/$ns/$root/$sub$base.animation.json", "assets/$ns/$root/$sub$base.json")
+                }
             }.firstOrNull { it in nameSet }
             var walk: String? = null
             var idle: String? = null
@@ -73,8 +75,11 @@ internal object EntityReader {
         return out
     }
 
-    /** GeckoLib 4: assets/<ns>/geo/…; GeckoLib 5: assets/<ns>/geckolib/models/…. */
-    private val GEO = Regex("""assets/([a-z0-9_.-]+)/(?:geo|geckolib/models)/(?:entity/|entities/|mob/)?([a-z0-9_./-]+)\.geo\.json""")
+    /**
+     * GeckoLib 4: assets/<ns>/geo/<nome>.geo.json; GeckoLib 5: assets/<ns>/geckolib/models/<nome>.json (anche .geo.json), con o
+     * senza la cartella entity/.
+     */
+    private val GEO = Regex("""assets/([a-z0-9_.-]+)/(?:geo/(?:entity/|entities/|mob/)?([a-z0-9_./-]+)\.geo\.json|geckolib/models/(?:entity/|entities/|mob/)?([a-z0-9_./-]+?)(?:\.geo)?\.json)""")
     private val FLYING = listOf("bird", "bat", "butterfly", "dragonfly", "firefly", "bee", "fly", "owl", "crow", "vulture", "parrot", "moth", "eagle", "hawk")
     private val SWIMMING = listOf("fish", "bass", "shark", "whale", "dolphin", "squid", "eel", "jelly", "salmon", "cod", "trout", "crab", "seal")
 

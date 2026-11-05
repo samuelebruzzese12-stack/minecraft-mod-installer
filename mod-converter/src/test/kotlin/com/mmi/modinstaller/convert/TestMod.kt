@@ -28,7 +28,7 @@ object TestMod {
         e["assets/testmod/lang/en_us.json"] = s(
             """{"item.testmod.ruby":"Ruby","item.testmod.ruby_sword":"Ruby Sword","item.testmod.tomato":"Tomato",
             "block.testmod.ruby_block":"Block of Ruby","block.testmod.ruby_ore":"Ruby Ore","entity.testmod.critter":"Critter",
-            "item.testmod.ruby_helmet":"Ruby Helmet","item.testmod.ruby_pickaxe":"Ruby Pickaxe","block.testmod.ruby_door":"Ruby Door"}"""
+            "item.testmod.ruby_helmet":"Ruby Helmet","item.testmod.ruby_pickaxe":"Ruby Pickaxe","block.testmod.ruby_door":"Ruby Door","entity.testmod.beetle":"Beetle"}"""
         )
         e["assets/testmod/lang/it_it.json"] = s("""{"item.testmod.ruby":"Rubino","block.testmod.ruby_block":"Blocco di rubino","entity.testmod.critter":"Bestiolina"}""")
 
@@ -169,6 +169,13 @@ object TestMod {
             "animation.critter.idle":{"loop":true,"bones":{"body":{"position":[0,0,0]}}}}}"""
         )
         e["assets/testmod/textures/entity/critter.png"] = png(32, 32, color = { _, _ -> Triple(100, 200, 50) })
+        // Creatura GeckoLib 5: assets/<ns>/geckolib/models e geckolib/animations, file .json
+        e["assets/testmod/geckolib/models/entity/beetle.json"] = s(
+            """{"format_version":"1.12.0","minecraft:geometry":[{"description":{"identifier":"geometry.testmod.beetle","texture_width":16,"texture_height":16},
+            "bones":[{"name":"body","pivot":[0,0,0],"cubes":[{"origin":[-2,0,-3],"size":[4,2,6],"uv":[0,0]}]}]}]}"""
+        )
+        e["assets/testmod/geckolib/animations/entity/beetle.json"] = s("""{"format_version":"1.8.0","animations":{"animation.beetle.walk":{"loop":true,"bones":{}}}}""")
+        e["assets/testmod/textures/entity/beetle.png"] = png(16, 16)
         e["assets/testmod/sounds/critter.ogg"] = ByteArray(10)
         e["testmod.mixins.json"] = s("{}")
         return e

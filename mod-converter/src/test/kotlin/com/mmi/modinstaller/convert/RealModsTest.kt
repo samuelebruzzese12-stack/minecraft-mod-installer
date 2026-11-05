@@ -33,6 +33,12 @@ class RealModsTest {
                 for (s in r.simplified) report.append("   semplificato: ").append(s).append('\n')
                 for (s in r.estimates) report.append("   stimato: ").append(s).append('\n')
                 for (s in r.notConverted) report.append("   non convertito: ").append(s).append('\n')
+                // Per capire i casi nuovi: dove la mod tiene i modelli delle creature (se ne ha)
+                val models = java.util.zip.ZipFile(jar).use { z ->
+                    z.entries().asSequence().map { it.name }.filter { (it.contains("/geo/") || it.contains("/geckolib/")) && it.endsWith(".json") }.take(4).toList()
+                }
+                if (models.isNotEmpty()) report.append("   modelli trovati nel JAR (es.): ").append(models.joinToString(", ")).append('\n')
+                if (r.entities.isNotEmpty()) report.append("   creature convertite: ").append(r.entities.size).append(" (es. ").append(r.entities.take(4).joinToString(", ") { it.name }).append(")\n")
                 if (plan.hasContent) {
                     withContent++
                     val file = File(out, jar.name.removeSuffix(".jar") + ".mcaddon")
