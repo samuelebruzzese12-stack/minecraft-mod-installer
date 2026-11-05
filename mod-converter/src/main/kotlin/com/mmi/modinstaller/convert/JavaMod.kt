@@ -57,7 +57,11 @@ class JavaJar private constructor(
     names: List<String>,
     val nested: List<JavaJar>,
     val classCount: Int,
-    val notes: List<String>
+    val notes: List<String>,
+    /** Le voci .class del JAR principale (per l'analisi del bytecode: si leggono una alla volta, al bisogno). */
+    val classEntries: List<String> = emptyList(),
+    /** Tutte le voci del JAR principale (anche quelle che la conversione non usa): servono al registro dei componenti. */
+    val allEntries: List<String> = emptyList()
 ) : java.io.Closeable {
 
     val names: Set<String> = LinkedHashSet(names)
@@ -84,6 +88,19 @@ class JavaJar private constructor(
     }
 
     fun text(name: String, max: Int): String? = bytes(name, max)?.let { String(it, Charsets.UTF_8) }
+
+    /** I byte di una voce .class del JAR principale, o null se manca o è troppo grande. */
+    fun classBytes(entry: String, max: Int = 4 * 1024 * 1024): ByteArray? {
+        memory[entry]?.let { return if (it.size <= max) it else null }
+        val z = zip ?: return null
+        val e = z.getEntry(entry) ?: return null
+        if (e.size > max) return null
+        return try {
+            z.getInputStream(e).use { readLimited(it, max) }
+        } catch (ex: IOException) {
+            null
+        }
+    }
 
     /** Il JSON di una voce, o null se manca o non si legge. */
     fun json(name: String, max: Int): Any? = text(name, max)?.let {
@@ -114,6 +131,8 @@ class JavaJar private constructor(
             val zip = ZipFile(file)
             try {
                 val names = ArrayList<String>()
+                val classEntries = ArrayList<String>()
+                val allEntries = ArrayList<String>()
                 val nested = ArrayList<JavaJar>()
                 val notes = ArrayList<String>()
                 var classes = 0
@@ -129,8 +148,10 @@ class JavaJar private constructor(
                     if (count % 2000 == 0) cancel()
                     if (e.isDirectory) continue
                     val n = e.name
+                    allEntries.add(n)
                     if (n.endsWith(".class")) {
                         classes++
+                        classEntries.add(n)
                     } else if (wanted(n)) {
                         names.add(n)
                     } else if (n.startsWith("META-INF/jars/") && n.endsWith(".jar") && nested.size < limits.maxNestedJars) {
@@ -145,7 +166,7 @@ class JavaJar private constructor(
                         }
                     }
                 }
-                return JavaJar(label, zip, emptyMap(), names, nested, classes + nested.sumOf { it.classCount }, notes)
+                return JavaJar(label, zip, emptyMap(), names, nested, classes + nested.sumOf { it.classCount }, notes, classEntries, allEntries)
             } catch (t: Throwable) {
                 zip.close()
                 throw t
@@ -181,8 +202,13 @@ class JavaJar private constructor(
         }
 
         /** Per le prove: un JAR fatto di voci in memoria. */
-        fun ofEntries(label: String, entries: Map<String, ByteArray>, classCount: Int = 0): JavaJar =
-            JavaJar(label, null, entries, entries.keys.filter { wanted(it) }, emptyList(), classCount, emptyList())
+        fun ofEntries(label: String, entries: Map<String, ByteArray>, classCount: Int = 0): JavaJar {
+            val classEntries = entries.keys.filter { it.endsWith(".class") }
+            return JavaJar(
+                label, null, entries, entries.keys.filter { wanted(it) }, emptyList(), maxOf(classCount, classEntries.size), emptyList(),
+                classEntries, entries.keys.toList()
+            )
+        }
 
         internal fun readLimited(input: InputStream, max: Int): ByteArray? {
             val out = ByteArrayOutputStream()

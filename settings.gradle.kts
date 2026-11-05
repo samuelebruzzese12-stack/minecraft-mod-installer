@@ -23,6 +23,7 @@ include(":mod-manager")
 include(":catalog")
 include(":modpack-engine")
 include(":world-engine")
+include(":bytecode")
 include(":mod-converter")
 include(":app")
 

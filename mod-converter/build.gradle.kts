@@ -24,6 +24,7 @@ kotlin {
 dependencies {
     implementation(project(":core"))
     implementation(project(":jar-analyzer"))
+    implementation(project(":bytecode"))
 
     testImplementation(libs.junit)
 }
