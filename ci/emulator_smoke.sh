@@ -413,7 +413,9 @@ sleep 3
 shot "dashboard"
 expect "Minecraft Mod Installer" "in un'unica app" "Stato" "Minecraft Bedrock" "non trovato" \
   "Contenuti Bedrock gestiti" "Runtime Java" "non integrato" "Errori registrati" "Sezioni" \
-  "INSTALLER BEDROCK" "JAVA EDITION" "Pronto" "Parziale" "In arrivo"
+  "INSTALLER BEDROCK" "JAVA EDITION" "Pronto" "Parziale"
+# Le sezioni ancora da costruire (WORLD CONVERTER, JAVA TO BEDROCK) sono in fondo all'elenco: si cercano scorrendo (prova 16).
+expect_scroll "In arrivo"
 check_theme light "tema predefinito (Automatico, telefono in modalità chiara)"
 
 # ======================================================================================================== menu laterale
