@@ -377,22 +377,41 @@ def fill(index, text):
     if not text:
         return 0
     want = (field["text"] or "") + text
-    for attempt in range(3):
-        if attempt == 0:
-            typed = text
-        else:
-            # svuota e riscrive tutto
-            current = field_text(index) or ""
+
+    def settled():
+        # Su un emulatore lento i tasti arrivano in ritardo: si aspetta che il testo del campo smetta di cambiare (fino a 6 s).
+        last, end = field_text(index), time.time() + 6
+        while time.time() < end:
+            if last == want:
+                return last
+            time.sleep(0.6)
+            now = field_text(index)
+            if now == last:
+                return now
+            last = now
+        return last
+
+    typed = text
+    for attempt in range(4):
+        if attempt > 0:
+            current = settled() or ""
+            if current == want:
+                return 0
             if tap_field(index) is None:
                 return 1
             adb("shell", "input", "keyevent", "KEYCODE_MOVE_END")
-            adb("shell", "input", "keyevent", *(["KEYCODE_DEL"] * (len(current) + 3)))
-            time.sleep(0.5)
-            typed = want
+            if want.startswith(current):
+                # mancano solo gli ultimi caratteri: si aggiungono quelli
+                typed = want[len(current):]
+            else:
+                # svuota e riscrive tutto
+                adb("shell", "input", "keyevent", *(["KEYCODE_DEL"] * (len(current) + 3)))
+                time.sleep(0.8)
+                typed = want
         # il testo sta tra apici: nessun carattere ammesso ha un significato speciale per la shell del telefono
         adb("shell", "input", "text", "'" + typed + "'")
         time.sleep(0.8)
-        got = field_text(index)
+        got = settled()
         if got is None or got == "" or got == want:
             # Un campo che non espone il suo testo non si può controllare: si dà per buono, come prima.
             return 0
@@ -484,7 +503,7 @@ def main(argv):
     if cmd == "tap-item":
         # Un file nel selettore di sistema: nome uguale (non le miniature «Preview the file …»), centro ben visibile (in una
         # griglia l'ultima riga può stare sotto la barra di navigazione) e, se serve, si scorre l'elenco.
-        return 0 if tap(argv[2], scrolls=4, skip_fields=True, onscreen=True, exact=True) else 1
+        return 0 if tap(argv[2], scrolls=12, skip_fields=True, onscreen=True, exact=True) else 1
     if cmd == "tap-exact":
         return 0 if tap_exact(argv[2]) else 1
     if cmd == "collect":
