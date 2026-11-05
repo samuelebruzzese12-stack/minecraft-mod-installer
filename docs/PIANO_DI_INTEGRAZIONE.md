@@ -24,8 +24,8 @@ Regole che guidano tutto il lavoro (dalla direttiva):
 | Analisi JAR **senza eseguire codice**: Fabric, Quilt, Forge, NeoForge, mcmod.info, OptiFine, resource pack, shader, datapack | Realizzato (fase 3) | test JVM con JAR sintetici |
 | Mod Manager a profili indipendenti: importazione (anche multipla/ZIP), SHA-256, dipendenze mancanti, conflitti, backup e annullamento, attiva/disattiva | **Parziale (fase 3)**: fatti profili indipendenti, importazione multipla e raccolte `.zip`, SHA-256, dipendenze mancanti **segnalate (non scaricate)**, incompatibilità dichiarate, cestino del profilo e annulla, interruttore, verifica del profilo, esportazione in ZIP. Da fare: cartella di esportazione scelta una volta, raccolte `.7z`/`.rar` | test JVM + emulatore (esito nel resoconto di ogni build) |
 | Ricerca e installazione da Modrinth (API ufficiale) | **Collegato (fase 3d), verificato solo in parte**: ricerca con filtri (tipo, caricatore, versione di Minecraft), versione adatta al profilo (stabile prima, mai un file senza impronta), dipendenze obbligatorie a catena, scarico con impronta verificata, passaggio al MOD MANAGER. Non aggiorna da sola le mod, non cerca modpack | test JVM con risposte registrate, con un vero server HTTP locale e con un finto Modrinth (`ci/dl_server.py`); emulatore (parte «catalog»); contro il **servizio vero** solo il passaggio «Prova col servizio vero (Modrinth)» della CI. Il server di sviluppo non raggiunge Internet: l'esito di quel passaggio sta nel rapporto di ogni build e non va dato per scontato |
-| CurseForge (ricerca/scarico mod) | **Non attivo**: l'API richiede una chiave personale; i modpack CurseForge si leggono e si installano solo per la parte che non richiede l'API | dichiarato nell'app |
-| Modpack Modrinth `.mrpack` e CurseForge `manifest.json`: lettura, struttura, overrides, download con verifica, ripresa, profilo indipendente | Realizzato (fase 4) | test JVM con modpack sintetici |
+| CurseForge (ricerca/scarico mod) | **Non attivo**: l'API richiede una chiave personale. I modpack CurseForge (`manifest.json`) vengono riconosciuti dall'analisi ma **non installati**: i loro file si scaricano solo attraverso quell'API | dichiarato nell'app |
+| Modpack Modrinth `.mrpack`: lettura, struttura, overrides, download con verifica, ripresa, profilo indipendente | **Parziale (fase 4)**: fatto per i `.mrpack` (anteprima prima di scaricare, consenso ai siti, impronta verificata per ogni file, overrides comuni e solo-client, file solo-server esclusi, registrazione nel MOD MANAGER, esito Completo/Incompleto onesto, ripresa che scarica solo ciò che manca, annullamento che non lascia nulla). Non fatto: modpack CurseForge, servizio in primo piano (se Android chiude l'app a metà, COMPLETA riprende) | test JVM (68 + 5 sui modpack della prova su emulatore, con il finto CDN) + emulatore (parte «modpack»: esito nel resoconto di ogni build) |
 | Mondi Java/Bedrock: riconoscimento (`level.dat`, `region`, `entities`, `poi`, `DIM-1`, `DIM1`, dimensioni personalizzate, `playerdata`, `datapacks`…), importazione **a flusso** (nessun mondo in RAM), checkpoint e ripresa, copia originale immutabile, avanzamento, pulizia | Realizzato (fase 5) | test JVM (anche migliaia di regioni, interruzione e ripresa) + emulatore |
 | Conversione mondi Java→Bedrock | **Fase 6, parziale**: analisi di cosa si converte e cosa no, mappa dei blocchi, rapporto. La conversione completa (Anvil → LevelDB Bedrock) è un progetto a sé: Chunker è un programma Java e su Android servirebbe un runtime Java; la scrittura di LevelDB non esiste nel progetto | dichiarato nell'app; nessun «convertito» senza test |
 | Conversione mod Java→Bedrock | **Fase 7, parziale**: estrazione statica delle funzioni (blocchi, oggetti, ricette, loot, lingue, texture) e classificazione (Compatibile / parziale / non convertibile). Il comportamento in codice Java **non** si converte in Script API | rapporto onesto, nessun codice finto |
@@ -84,8 +84,21 @@ Profili Java indipendenti (`files/java/profiles/<id>/`), importazione `.jar`/`.z
   servizio vero solo dal passaggio dedicato della CI. CurseForge richiede una chiave personale e resta non attivo.
 - *Cosa nessun test può dire:* se un launcher o il gioco carichino davvero i file di un profilo. L'app lo dichiara nella schermata.
 
-### Fase 4 — `:modpack-engine`
-`.mrpack` e `manifest.json` CurseForge → piano di installazione → profilo indipendente → file e overrides al posto giusto → download verificati e ripresi.
+### Fase 4 — `:modpack-engine` e MODPACK MANAGER
+- **Motore** (modulo `:modpack-engine`, 73 test): `ModrinthPackReader` legge l'indice (`modrinth.index.json`) con gli stessi limiti di
+  sicurezza delle altre analisi (percorsi controllati, nessun `..`, impronta obbligatoria, voci non valide scartate e contate);
+  `ModpackPlanner` decide per ogni file *da scaricare / già al suo posto / solo server / bloccato* senza toccare nulla;
+  `ModpackInstaller` crea il profilo, fa scaricare i file al DOWNLOAD MANAGER con l'impronta del modpack (SHA-512 o SHA-1), li mette
+  al loro posto solo dopo averla ricontrollata, applica `overrides/` e `client-overrides/` (non `server-overrides/`) dentro il
+  profilo, legge mod e pacchetti senza eseguirli e li registra nel MOD MANAGER con un'unica voce di cronologia. Non dichiara mai
+  «completo» se manca anche un solo file. `ModpackRepository` tiene l'elenco nella sezione `modpacks` dell'archivio centrale.
+- **Schermata MODPACK MANAGER** (stato **Parziale**): scelta del `.mrpack` (anche da «Apri con», «Condividi» e dal DOWNLOAD MANAGER),
+  anteprima, consenso ai siti nuovi, installazione con avanzamento e Annulla, esito, elenco con APRI IL PROFILO, COMPLETA e TOGLI
+  DALL'ELENCO. Il profilo e la copia del modpack si salvano **prima** di scaricare: se Android chiude l'app a metà il modpack resta
+  nell'elenco come incompleto e COMPLETA scarica solo ciò che manca; se è l'utente ad annullare, sparisce tutto ciò che
+  l'installazione aveva creato.
+- *Limiti dichiarati:* solo modpack Modrinth; nessun servizio in primo piano; non avvia Minecraft e non può sapere se il modpack parte
+  (i file si esportano dal MOD MANAGER in uno ZIP per il launcher).
 
 ### Fase 5 — `:world-importer`
 Riconoscimento Java/Bedrock, importazione a flusso da cartella (SAF) o archivio (ZIP64, `.mcworld`), checkpoint e ripresa, copia originale immutabile, report dei dati non supportati.
@@ -99,5 +112,5 @@ Analisi dei log di crash, controlli prima dell'avvio, README, APK finale.
 ## Come si verifica ogni fase
 1. Test JVM (`:core` e moduli nuovi) — in locale e in CI.
 2. Compilazione APK in CI (`assembleDebug`/`assembleRelease`).
-3. Prova su emulatore Android, in tre lavori paralleli («base»: navigazione, importazione Bedrock, download, aggiornamento; «mods»: MOD MANAGER; «catalog»: CERCA ONLINE): schermate e log salvati nella Release (`prova-emulatore-base.zip`, `prova-emulatore-mods.zip`, `prova-emulatore-catalog.zip`). Ogni difetto trovato dall'emulatore si corregge nell'app **o** nello script, dichiarando quale dei due era sbagliato.
+3. Prova su emulatore Android, in quattro lavori paralleli («base»: navigazione, importazione Bedrock, download, aggiornamento; «mods»: MOD MANAGER; «catalog»: CERCA ONLINE; «modpack»: MODPACK MANAGER): schermate e log salvati nella Release (`prova-emulatore-base.zip`, `prova-emulatore-mods.zip`, `prova-emulatore-catalog.zip`, `prova-emulatore-modpack.zip`). Ogni difetto trovato dall'emulatore si corregge nell'app **o** nello script, dichiarando quale dei due era sbagliato.
 4. Quello che nessuna prova automatica può confermare (Minecraft vero, rete reale, dispositivo fisico) viene detto esplicitamente nel resoconto.

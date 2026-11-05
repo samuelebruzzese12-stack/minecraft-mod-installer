@@ -20,7 +20,7 @@ L'app si apre su una **dashboard** (Minecraft trovato, contenuti gestiti, memori
 | INSTALLER BEDROCK | Pronto | Tutto ciò che è descritto sotto: analisi, rapporto, consegna a Minecraft, elenchi, backup |
 | JAVA EDITION | Parziale | Requisiti del telefono, memoria consigliata per profilo, versione di Java richiesta da ogni Minecraft. **Il gioco Java non si avvia da qui**: nessun runtime Java è integrato |
 | MOD MANAGER | Parziale | Profili Java indipendenti (Fabric, Quilt, Forge, NeoForge): aggiungi `.jar` o raccolte `.zip`, l'app li legge **senza eseguirli**, dice se vanno bene per il profilo, li installa con verifica dell'impronta, li attiva/disattiva, li rimuove, **annulla** l'ultima operazione, verifica il profilo ed **esporta i file attivi in uno ZIP**. **CERCA ONLINE** cerca su **Modrinth** (API ufficiale), sceglie la versione adatta al profilo, calcola le dipendenze obbligatorie, scarica con verifica dell'impronta e passa i file al profilo. **CurseForge non è collegato** (l'API richiede una chiave personale). Non avvia Minecraft Java. Dettagli sotto |
-| MODPACK MANAGER | In arrivo | Pagina che spiega cosa farà e cosa manca; nessun pulsante finto |
+| MODPACK MANAGER | Parziale | Installa un modpack **Modrinth** (`.mrpack`) in un profilo nuovo del MOD MANAGER: anteprima prima di scaricare, consenso ai siti nuovi, **impronta verificata per ogni file**, impostazioni del modpack applicate, esito onesto (*Completo* / *Incompleto* con l'elenco di ciò che manca), ripresa che scarica solo i file mancanti. **I modpack CurseForge non sono supportati**. Non avvia Minecraft Java. Dettagli sotto |
 | WORLD MANAGER, WORLD CONVERTER, JAVA TO BEDROCK | In arrivo | Come sopra. La conversione completa di mondi e mod non sarà promessa senza una verifica reale |
 | DOWNLOAD MANAGER | Pronto | Scarica un file da un indirizzo `https://` di un sito consentito (Modrinth, GitHub, CDN di CurseForge, o un sito che approvi tu): coda, pausa, ripresa da dove era arrivato, verifica dell'impronta (SHA-1/256/512), apertura nell'INSTALLER BEDROCK. Dettagli e limiti sotto |
 | DIAGNOSTICA | Pronto | Telefono (RAM, CPU, spazio, temperatura), controllo dei file preparati, ultimi errori (anche gli arresti inattesi dell'app), rapporto da condividere solo se premi il pulsante |
@@ -75,8 +75,7 @@ Incolla l'indirizzo di un file (facoltativamente la sua impronta SHA) e tocca **
   download si ferma e si riprende con RIPRENDI.
 - I file scaricati stanno nella memoria privata dell'app. «APRI NELL'INSTALLER BEDROCK» li passa allo **stesso** sistema di analisi
   e importazione di sempre; «SALVA UNA COPIA» li copia dove scegli. Un `.jar` (o uno `.zip`, che può essere per Bedrock o per Java) si passa al
-  **MOD MANAGER** con «AGGIUNGI AL MOD MANAGER». I modpack `.mrpack` si scaricano e si conservano, ma per ora non c'è un gestore
-  dei modpack che li usi.
+  **MOD MANAGER** con «AGGIUNGI AL MOD MANAGER»; un modpack `.mrpack` si apre nel **MODPACK MANAGER** con «APRI NEL MODPACK MANAGER».
 - L'app fa solo richieste per **ricevere** file: non invia nulla del tuo telefono.
 
 ### MOD MANAGER (Java Edition)
@@ -121,13 +120,14 @@ cerchi e, se lasci attivo il filtro, il caricatore e la versione di Minecraft de
 
 Cosa non fa: non scarica le dipendenze facoltative né quelle che il servizio non pubblica (le segnala: «va cercato a mano»); non
 segue più di 6 livelli di dipendenze né più di 30 file per scelta; non aggiorna da sola le mod già installate; non cerca modpack
-(arriveranno con il MODPACK MANAGER). Se Modrinth non risponde o limita le richieste, l'app lo scrive e non inventa risultati.
+(un `.mrpack` scaricato si installa dal MODPACK MANAGER). Se Modrinth non risponde o limita le richieste, l'app lo scrive e non
+inventa risultati.
 **CurseForge** non è collegato: la sua API richiede una chiave personale.
 
 Limiti dichiarati: il MOD MANAGER **non avvia Minecraft Java** e non sa se il gioco caricherà davvero i file (i controlli si basano su
 ciò che i file dichiarano di sé, che può essere incompleto o sbagliato); **CurseForge non è collegato** e le dipendenze che non
-passano da Modrinth vanno aggiunte a mano; gli archivi `.7z`/`.rar` non vengono aperti come raccolte; i modpack (`.mrpack`,
-CurseForge) vengono riconosciuti ma non installati.
+passano da Modrinth vanno aggiunte a mano; gli archivi `.7z`/`.rar` non vengono aperti come raccolte; un modpack `.mrpack` aggiunto
+qui viene riconosciuto e rimandato al MODPACK MANAGER; i modpack CurseForge vengono riconosciuti ma non installati.
 
 Come è verificato il catalogo: i test del modulo `catalog` provano la lettura delle risposte, la scelta della versione e il calcolo
 delle dipendenze, e la **catena completa** (ricerca → piano → scarico verificato → analisi del `.jar` → piano del profilo) contro
@@ -135,6 +135,36 @@ un finto Modrinth locale (`ci/dl_server.py`) che imita le risposte dell'API; la 
 la stessa strada **dalla schermata**, contro lo stesso finto server. Il finto server dimostra che l'app legge e usa bene *le risposte
 che immaginiamo*: non dimostra che Modrinth risponda proprio così. Per questo la CI ha un passaggio a parte, «Prova col servizio vero
 (Modrinth)», che interroga il servizio reale: il suo esito è nel rapporto di ogni build, e questo documento non lo dà per scontato.
+
+### MODPACK MANAGER (modpack Modrinth)
+
+1. **SCEGLI UN MODPACK (.mrpack)** (oppure «Apri con» / «Condividi» da un'altra app, o «APRI NEL MODPACK MANAGER» dal DOWNLOAD
+   MANAGER). L'app copia il file nella sua memoria e legge l'indice del modpack (`modrinth.index.json`) **senza eseguire nulla e
+   senza scaricare nulla**.
+2. L'**anteprima** dice: per quale Minecraft e caricatore è fatto, quanti file scaricherà e quanto pesano (dimensioni dichiarate dal
+   modpack), quali file il modpack dichiara «solo server» (non si scaricano), quante impostazioni applicherà, le voci dell'indice
+   scartate perché non valide e i **siti da consentire** (un pulsante «CONSENTI «sito»» per ciascuno: l'app scarica solo da siti
+   `https` consentiti). Proponi tu il nome del profilo.
+3. **INSTALLA IL MODPACK**: l'app crea il profilo e salva una copia del modpack, poi fa scaricare i file al DOWNLOAD MANAGER con
+   l'impronta scritta nel modpack (SHA-512 o SHA-1): un file con l'impronta sbagliata **non entra nel profilo**. Le impostazioni di
+   `overrides/` e `client-overrides/` vanno nel profilo, quelle di `server-overrides/` no. Mod e pacchetti vengono letti (senza
+   eseguirli) e registrati nel MOD MANAGER: da lì si attivano, si disattivano, si verificano e si esportano in uno ZIP (le
+   impostazioni del modpack sono incluse nello ZIP, nelle loro cartelle).
+4. L'**esito** è *Completo* solo se ogni file è al suo posto con l'impronta giusta; altrimenti è *Incompleto* ed elenca cosa manca e
+   perché. **RIPROVA I FILE MANCANTI** (o **COMPLETA** nell'elenco) scarica **solo** ciò che manca: i file già al loro posto non si
+   riscaricano, e una mod che hai disattivato non torna attiva.
+5. **Annulla** durante l'installazione cancella tutto quello che l'installazione aveva creato (profilo, copia del modpack, file
+   scaricati). Se invece è Android a chiudere l'app a metà (non c'è un servizio in primo piano), il modpack resta nell'elenco come
+   incompleto e COMPLETA riprende. **TOGLI DALL'ELENCO** cancella solo la riga e la copia del `.mrpack`: il profilo resta.
+
+Cosa non fa: i **modpack CurseForge** non sono supportati (servono una chiave personale e la loro API); non avvia Minecraft Java e
+non può sapere se il modpack, con i suoi file al loro posto, parte davvero; non installa il caricatore (Fabric, Forge…) né il gioco.
+
+Come è verificato: i test del modulo `modpack-engine` (73) usano il motore dei download vero e un sito HTTP locale (file giusti,
+manomessi, mancanti, siti non consentiti, annullamento, ripresa, file disattivati dall'utente); `EmulatorModpackSamplesTest` prova i
+modpack della prova su emulatore contro il finto Modrinth di `ci/dl_server.py`; la parte «modpack» della prova su emulatore
+(`ci/modpack_phase.sh`) percorre gli stessi casi **dalla schermata**. Un modpack vero scaricato da Modrinth non è stato provato
+dalla CI (il server di sviluppo non raggiunge Internet).
 
 Altre schermate dell'installer: **FILE RECENTI**, **MOD INSTALLATI** (rinvia, segna l'esito, elimina), **CRONOLOGIA**, **BACKUP**
 (prima di ogni eliminazione si salva una copia; c'è anche ANNULLA subito dopo), **Informazioni**.
@@ -231,7 +261,7 @@ piano, scarico con impronta verificata, **file alterato rifiutato**, analisi del
 risultano saltati, non riusciti.
 
 A ogni push GitHub prova anche l'APK su un **emulatore Android** (`ci/emulator_smoke.sh`). Il computer di GitHub ha solo 2 core e
-l'emulatore è lento (ogni passaggio dura decine di secondi), quindi la prova gira in **tre lavori paralleli**, ciascuno con il suo
+l'emulatore è lento (ogni passaggio dura decine di secondi), quindi la prova gira in **quattro lavori paralleli**, ciascuno con il suo
 emulatore (immagine di base di Android; solo se risulta inutilizzabile si ripete con quella dei servizi di Google):
 
 - **base**: apre dashboard, menu e ogni sezione, controlla che quelle non costruite non abbiano pulsanti finti, cambia tema e profilo
@@ -248,10 +278,18 @@ emulatore (immagine di base di Android; solo se risulta inutilizzabile si ripete
 - **catalog**: **CERCA ONLINE** contro il finto Modrinth dello stesso server (ricerca, filtri, errori 500 e 429, piano con
   dipendenze, scarico verificato, file alterato scartato, passaggio al profilo, installazione in ordine). Parte da un profilo
   Fabric 1.20.1 che si prepara da sé con gli stessi passaggi dell'utente (una mod, la sua libreria, una mod che la richiede).
+- **modpack**: il **MODPACK MANAGER** con quattro modpack di prova serviti dallo stesso server: uno completo (anteprima che non
+  tocca né rete né profili, installazione, file nel profilo identici all'originale, mod solo-server non scaricata, impostazioni
+  applicate, MOD MANAGER e VERIFICA PROFILO), uno incompleto (un file che manca la prima volta e uno alterato: la ripresa scarica
+  solo ciò che manca), uno lento da annullare a metà (non deve restare nulla), uno da un sito da consentire; poi l'apertura di un
+  `.mrpack` dal DOWNLOAD MANAGER, TOGLI DALL'ELENCO e i dati dopo la chiusura dell'app.
+
+Lanciando il workflow a mano («Run workflow») il campo **parts** sceglie quali parti eseguire (es. `mods,modpack`; vuoto = tutte).
 
 Se un passaggio si pianta, lo script si ferma da solo dopo 85 minuti, salva schermata e log dell'ultimo punto raggiunto e lo scrive
 tra i problemi. Schermate, dump dell'interfaccia e log di ogni parte sono allegati alla Release (`prova-emulatore-base.zip`,
-`prova-emulatore-mods.zip` e `prova-emulatore-catalog.zip`).
+`prova-emulatore-mods.zip`, `prova-emulatore-catalog.zip` e `prova-emulatore-modpack.zip`), insieme a `catalog-online-report.txt`, il
+resoconto della prova col servizio vero di Modrinth.
 
 Cosa **non** si può provare in CI: Internet vero dall'emulatore (i test usano solo il server locale; l'unico contatto con Modrinth
 vero è il passaggio «Prova col servizio vero (Modrinth)» dei test su JVM), **Minecraft vero** (il finto Minecraft non importa
