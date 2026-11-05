@@ -53,11 +53,11 @@ class ConverterTest {
         assertEquals("Test Mod", r.title)
         assertEquals("Fabric", r.loader)
         assertEquals(
-            listOf("ruby", "ruby_helmet", "ruby_pickaxe", "ruby_sword", "tomato"),
+            listOf("ruby", "ruby_door", "ruby_helmet", "ruby_pickaxe", "ruby_sign", "ruby_sword", "tomato"),
             r.items.map { it.javaId.substringAfter(':') }.sorted()
         )
         assertEquals(
-            listOf("pedestal", "ruby_block", "ruby_crystal", "ruby_lamp", "ruby_leaves", "ruby_ore", "ruby_slab", "tall_lamp", "tomatoes"),
+            listOf("pedestal", "ruby_block", "ruby_crystal", "ruby_lamp", "ruby_leaves", "ruby_ore", "ruby_slab", "ruby_trapdoor", "tall_lamp", "tomatoes"),
             r.blocks.map { it.javaId.substringAfter(':') }.sorted()
         )
         assertEquals(listOf("Critter"), r.entities.map { it.name.replace("Bestiolina", "Critter") })
@@ -71,6 +71,10 @@ class ConverterTest {
         assertEquals(1, r.ores)
         assertEquals(1, r.armorModels)
         assertTrue(r.notConverted.toString(), r.notConverted.contains("Blocchi disegnati dal codice (cartelli, casse, letti…): 1"))
+        assertTrue(r.notConverted.toString(), r.notConverted.contains("Blocchi con forme che l'app non sa ancora riprodurre: 1, es. ruby_door (door_bottom_left)"))
+        assertTrue(r.simplified.toString(), r.simplified.contains("Blocchi che restano solo come oggetti (non si piazzano): 2"))
+        assertEquals("solo oggetto", r.items.single { it.javaId == "testmod:ruby_door" }.detail)
+        assertEquals("Ruby Door", r.items.single { it.javaId == "testmod:ruby_door" }.name)
         assertTrue(r.notConverted.toString(), r.notConverted.contains("Uova delle creature: 1"))
         assertTrue(r.notConverted.toString(), r.notConverted.contains("Oggetti senza un'icona leggibile: 1"))
         assertTrue(r.notConverted.toString(), r.notConverted.any { it.startsWith("Suoni") })
@@ -177,8 +181,13 @@ class ConverterTest {
         // Forma troppo grande per Bedrock: cubo, e il rapporto lo dice
         assertEquals("minecraft:geometry.full_block", json("Test Mod BP/blocks/testmod/tall_lamp.json").o("minecraft:block").o("components")["minecraft:geometry"])
         assertTrue(plan.reports.single().simplified.toString(), plan.reports.single().simplified.any { it.contains("forma più grande di quella che Bedrock accetta") })
-        // Il cartello (disegnato dal codice) non c'è
+        // Il cartello (disegnato dal codice) e la porta non diventano blocchi, ma oggetti con il loro nome
         assertNull(files["Test Mod BP/blocks/testmod/ruby_sign.json"])
+        assertNull(files["Test Mod BP/blocks/testmod/ruby_door.json"])
+        assertEquals("block.testmod.ruby_door", json("Test Mod BP/items/testmod/ruby_door.json").o("minecraft:item").o("components").o("minecraft:display_name")["value"])
+        // Botola: lastra sottile di 3 pixel
+        val trap = json("Test Mod BP/blocks/testmod/ruby_trapdoor.json").o("minecraft:block").o("components")
+        assertEquals(mapOf("origin" to listOf(-8L, 0L, -8L), "size" to listOf(16L, 3L, 16L)), trap["minecraft:collision_box"])
     }
 
     @Test fun shapedGeometryFollowsBedrockConventions() {

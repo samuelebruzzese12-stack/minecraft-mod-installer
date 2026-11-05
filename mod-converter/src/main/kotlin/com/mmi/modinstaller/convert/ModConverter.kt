@@ -209,6 +209,16 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         val converted = LinkedHashMap<Rl, String>()
         val convertedItems = HashSet<Rl>()
         val drawnByCode = HashMap<JavaModContent, Int>()
+        val unknownShapes = HashMap<JavaModContent, MutableList<String>>()
+        val itemOnly = HashMap<JavaModContent, MutableList<JavaItemDef>>()
+
+        /** Un blocco che non si può convertire resta almeno come oggetto, se la mod gli dà un'icona piatta (porte, cartelli…). */
+        fun asItemOnly(mod: JavaModContent, id: Rl) {
+            val def = mod.blockItems[id] ?: return
+            val icon = def.info?.icon ?: return
+            if (!exists(icon)) return
+            itemOnly.getOrPut(mod) { ArrayList() }.add(def)
+        }
         class Pending(val mod: JavaModContent, val blocks: List<Pair<JavaBlockDef, LookResult>>, val items: List<JavaItemDef>)
         val pending = ArrayList<Pending>()
         for (mod in mods) {
@@ -216,9 +226,17 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             val res = resolverModels.getValue(mod)
             val bl = ArrayList<Pair<JavaBlockDef, LookResult>>()
             for (b in mod.blocks) {
-                val raw = b.model?.let { res.blockLook(it) } ?: LookResult(null)
+                // Cartelli, letti, casse, stendardi, teste: in Java li disegna sempre il codice.
+                val byName = DRAWN_BY_CODE.any { b.id.path.endsWith(it) }
+                val raw = if (byName) LookResult(null, drawnByCode = true) else b.model?.let { res.blockLook(it) } ?: LookResult(null)
                 if (raw.drawnByCode) {
                     drawnByCode[mod] = (drawnByCode[mod] ?: 0) + 1
+                    asItemOnly(mod, b.id)
+                    continue
+                }
+                if (raw.unknownShape != null) {
+                    unknownShapes.getOrPut(mod) { ArrayList() }.add(b.id.path.substringAfterLast('/') + " (" + raw.unknownShape.substringAfterLast('/') + ")")
+                    asItemOnly(mod, b.id)
                     continue
                 }
                 val look = raw.look?.let { withExistingTextures(it) } ?: continue
@@ -226,6 +244,11 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 converted[b.id] = unique(bedrockId(b.id))
             }
             val il = ArrayList<JavaItemDef>()
+            for (it in itemOnly[mod].orEmpty()) {
+                il.add(it)
+                converted[it.id] = unique(bedrockId(it.id))
+                convertedItems.add(it.id)
+            }
             for (it in mod.items) {
                 val icon = it.info?.icon ?: continue
                 if (!exists(icon)) continue
@@ -302,8 +325,16 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 )
             }
             val code = drawnByCode[mod] ?: 0
+            val asItems = itemOnly[mod]?.size ?: 0
             if (code > 0) notConverted.add("Blocchi disegnati dal codice (cartelli, casse, letti…): $code")
-            val skippedBlocks = mod.blocks.size - p.blocks.size - code
+            val unknown = unknownShapes[mod].orEmpty()
+            if (unknown.isNotEmpty()) {
+                notConverted.add(
+                    "Blocchi con forme che l'app non sa ancora riprodurre: " + unknown.size + ", es. " + unknown.take(4).joinToString(", ")
+                )
+            }
+            if (asItems > 0) simplified.add("Blocchi che restano solo come oggetti (non si piazzano): $asItems")
+            val skippedBlocks = mod.blocks.size - p.blocks.size - code - unknown.size
             if (skippedBlocks > 0) notConverted.add("Blocchi senza un modello o una texture leggibile: $skippedBlocks")
 
             // ---- oggetti
@@ -311,7 +342,11 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             var armorCount = 0
             for (it in p.items) {
                 val id = converted.getValue(it.id)
-                val key = "item." + it.id.ns + "." + it.id.path.replace('/', '.')
+                val blockOnlyItem = it.id in mod.blockItems
+                // Gli oggetti-blocco in Java hanno il nome sotto «block.…».
+                val itemKey = "item." + it.id.ns + "." + it.id.path.replace('/', '.')
+                val blockKey = "block." + it.id.ns + "." + it.id.path.replace('/', '.')
+                val key = if (mod.lang["en_us"]?.containsKey(itemKey) != true && mod.lang.values.any { l -> l.containsKey(blockKey) }) blockKey else itemKey
                 val name = mod.lang["en_us"]?.get(key) ?: titleCase(it.id.path)
                 names(key, name)
                 val material = materialOf(it.id)
@@ -332,10 +367,10 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 if (it.info?.model3d == true) simplified.add("Oggetti con modello 3D: icona piatta")
                 val fuel = mod.fuels[it.id]?.let { t -> t / 20.0 }
                 itemsOut.add(ItemOut(mod, it.id, id, key, it.info!!.icon, it.kind, material, it.info.handheld, fuel, armorTex))
-                itemEntries.add(ConvertedEntry(it.id.toString(), id, mod.lang["it_it"]?.get(key) ?: name, it.kind.label))
+                itemEntries.add(ConvertedEntry(it.id.toString(), id, mod.lang["it_it"]?.get(key) ?: name, if (blockOnlyItem) "solo oggetto" else it.kind.label))
             }
             if (mod.spawnEggs.isNotEmpty()) notConverted.add("Uova delle creature: ${mod.spawnEggs.size}")
-            val noIcon = mod.items.size - p.items.size
+            val noIcon = mod.items.size - (p.items.size - (itemOnly[mod]?.size ?: 0))
             if (noIcon > 0) notConverted.add("Oggetti senza un'icona leggibile: $noIcon")
 
             // ---- creature con modello GeckoLib
@@ -405,6 +440,8 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
     }
 
     private val ARMOR = setOf(ItemKind.HELMET, ItemKind.CHESTPLATE, ItemKind.LEGGINGS, ItemKind.BOOTS)
+
+    private val DRAWN_BY_CODE = listOf("_sign", "_bed", "_banner", "_wall_banner", "chest", "_skull", "_head", "_wall_skull", "_wall_head")
 
     private fun invert(tags: Map<Rl, List<String>>): Map<String, List<String>> {
         val out = HashMap<String, MutableList<String>>()
@@ -753,7 +790,7 @@ internal class AddonWriter(
                     for ((v, t) in look.textures) instances[Geometry.materialName(v)] = t
                     instances["*"] = look.textures.values.first()
                     val box = Geometry.bounds(look.elements)
-                    if (box != null) collision = linkedMapOf("origin" to box.first.map { n(it) }, "size" to box.second.map { n(it) })
+                    collision = if (box != null) linkedMapOf("origin" to box.first.map { n(it) }, "size" to box.second.map { n(it) }) else false
                 }
             }
             val transparency = instances.values.distinct().map { t -> textures.require(t, block = true) }

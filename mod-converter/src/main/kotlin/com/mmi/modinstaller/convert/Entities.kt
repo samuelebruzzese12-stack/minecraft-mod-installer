@@ -48,8 +48,10 @@ internal object EntityReader {
             val geometry = doc["minecraft:geometry"].asJsonList()?.firstOrNull().asJsonObject() ?: continue
             val identifier = geometry["description"].asJsonObject()?.get("identifier") as? String ?: continue
             val texture = texture(ns, base, nameSet) ?: continue
-            val anim = listOf("assets/$ns/animations/$base.animation.json", "assets/$ns/animations/entity/$base.animation.json",
-                "assets/$ns/animations/entities/$base.animation.json").firstOrNull { it in nameSet }
+            // GeckoLib 4: assets/<ns>/animations/…; GeckoLib 5: assets/<ns>/geckolib/animations/…
+            val anim = listOf("animations", "geckolib/animations").flatMap { root ->
+                listOf("", "entity/", "entities/", "mob/").map { sub -> "assets/$ns/$root/$sub$base.animation.json" }
+            }.firstOrNull { it in nameSet }
             var walk: String? = null
             var idle: String? = null
             if (anim != null) {
@@ -71,7 +73,8 @@ internal object EntityReader {
         return out
     }
 
-    private val GEO = Regex("""assets/([a-z0-9_.-]+)/geo/(?:entity/|entities/|mob/)?([a-z0-9_./-]+)\.geo\.json""")
+    /** GeckoLib 4: assets/<ns>/geo/…; GeckoLib 5: assets/<ns>/geckolib/models/…. */
+    private val GEO = Regex("""assets/([a-z0-9_.-]+)/(?:geo|geckolib/models)/(?:entity/|entities/|mob/)?([a-z0-9_./-]+)\.geo\.json""")
     private val FLYING = listOf("bird", "bat", "butterfly", "dragonfly", "firefly", "bee", "fly", "owl", "crow", "vulture", "parrot", "moth", "eagle", "hawk")
     private val SWIMMING = listOf("fish", "bass", "shark", "whale", "dolphin", "squid", "eel", "jelly", "salmon", "cod", "trout", "crab", "seal")
 

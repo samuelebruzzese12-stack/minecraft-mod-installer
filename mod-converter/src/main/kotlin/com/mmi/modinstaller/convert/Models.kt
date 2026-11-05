@@ -65,7 +65,13 @@ sealed class BlockLook {
 }
 
 /** Il risultato della lettura del modello di un blocco, con le eventuali semplificazioni (per il rapporto). */
-class LookResult(val look: BlockLook?, val simplified: String? = null, val drawnByCode: Boolean = false)
+class LookResult(
+    val look: BlockLook?,
+    val simplified: String? = null,
+    val drawnByCode: Boolean = false,
+    /** Il modello di Minecraft da cui deriva la forma, quando l'app non la sa riprodurre (es. «block/door_bottom_left»). */
+    val unknownShape: String? = null
+)
 
 /**
  * Risolve i modelli Java (`assets/<ns>/models/…`) seguendo la catena dei «parent» e le variabili delle texture (`#all`).
@@ -169,8 +175,28 @@ class ModelResolver(private val jars: List<JavaJar>, private val limits: Convert
                 shape(listOf(JElement.box(listOf(6.0, 0.0, 6.0), listOf(10.0, 16.0, 10.0), all = "#texture")), tex, "solo il palo (non si collega)")
             "template_wall_post", "wall_inventory" ->
                 shape(listOf(JElement.box(listOf(4.0, 0.0, 4.0), listOf(12.0, 16.0, 12.0), all = "#wall")), tex, "solo il pilastro (non si collega)")
-            "template_torch", "template_torch_unlit" ->
+            "template_torch", "template_torch_unlit", "template_torch_wall", "template_torch_wall_unlit" ->
                 shape(listOf(JElement.box(listOf(7.0, 0.0, 7.0), listOf(9.0, 10.0, 9.0), all = "#torch")), tex)
+            "template_trapdoor_bottom", "template_orientable_trapdoor_bottom" ->
+                shape(listOf(JElement.box(listOf(0.0, 0.0, 0.0), listOf(16.0, 3.0, 16.0), all = "#texture")), tex, "botola sempre chiusa")
+            "template_trapdoor_top", "template_orientable_trapdoor_top" ->
+                shape(listOf(JElement.box(listOf(0.0, 13.0, 0.0), listOf(16.0, 16.0, 16.0), all = "#texture")), tex, "botola sempre chiusa")
+            "template_trapdoor_open", "template_orientable_trapdoor_open" ->
+                shape(listOf(JElement.box(listOf(0.0, 0.0, 13.0), listOf(16.0, 16.0, 16.0), all = "#texture")), tex, "botola sempre aperta")
+            "rail_flat", "rail_curved", "template_rail_raised_ne", "template_rail_raised_sw" -> {
+                val rail = JElement(doubleArrayOf(0.0, 1.0, 0.0), doubleArrayOf(16.0, 1.0, 16.0), null, null, 0.0,
+                    linkedMapOf("up" to JFace(null, "#rail", 0, false), "down" to JFace(null, "#rail", 0, false)))
+                shape(listOf(rail), tex, "binario piatto (non curva e non sale)")
+            }
+            "template_glass_pane_post", "template_glass_pane_noside", "template_glass_pane_noside_alt" ->
+                shape(listOf(JElement.box(listOf(7.0, 0.0, 7.0), listOf(9.0, 16.0, 9.0), all = "#pane")), tex, "solo il montante (non si collega)")
+            "template_lantern", "template_hanging_lantern" ->
+                shape(
+                    listOf(
+                        JElement.box(listOf(5.0, 0.0, 5.0), listOf(11.0, 7.0, 11.0), all = "#lantern"),
+                        JElement.box(listOf(6.0, 7.0, 6.0), listOf(10.0, 9.0, 10.0), all = "#lantern")
+                    ), tex
+                )
             "template_farmland" -> {
                 val s = t("dirt"); shape(listOf(JElement.box(listOf(0.0, 0.0, 0.0), listOf(16.0, 15.0, 16.0), byFace = mapOf("up" to "#top", "down" to "#dirt", "side" to "#dirt"))), tex)
                     ?: s?.let { cube(it, it, it, it, it, it) }
@@ -181,9 +207,13 @@ class ModelResolver(private val jars: List<JavaJar>, private val limits: Convert
         if (result != null) return result
         // Modelli che hanno solo la texture delle particelle: il blocco lo disegna il codice (cartelli, casse, letti, stendardi).
         if (tex.keys.all { it == "particle" } || parent?.startsWith("builtin/") == true) return LookResult(null, drawnByCode = true)
-        // Forma che l'app non conosce: un cubo con la texture principale del modello.
-        val main = t("particle") ?: t("all") ?: t("side") ?: t("texture") ?: tex.keys.firstNotNullOfOrNull { t(it) } ?: return LookResult(null)
-        return LookResult(BlockLook.Cube(JElement.DIRECTIONS.associateWith { main }.mapKeys { it.key }, false), "forma semplificata a cubo")
+        // Il modello «block/block» (o nessun genitore) con le texture ma senza elementi: si mostra come un cubo.
+        if (parent == null || family == "block") {
+            val main = t("all") ?: t("side") ?: t("texture") ?: t("particle") ?: tex.keys.firstNotNullOfOrNull { t(it) } ?: return LookResult(null)
+            return LookResult(BlockLook.Cube(JElement.DIRECTIONS.associateWith { main }, false), "forma semplificata a cubo")
+        }
+        // Una forma di Minecraft che l'app non sa ancora riprodurre (porte, cancelli, ancore…): meglio non inventarla.
+        return LookResult(null, unknownShape = parent)
     }
 
     private fun slabFaces() = mapOf("up" to "#top", "down" to "#bottom", "side" to "#side")

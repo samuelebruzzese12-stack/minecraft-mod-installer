@@ -28,7 +28,7 @@ object TestMod {
         e["assets/testmod/lang/en_us.json"] = s(
             """{"item.testmod.ruby":"Ruby","item.testmod.ruby_sword":"Ruby Sword","item.testmod.tomato":"Tomato",
             "block.testmod.ruby_block":"Block of Ruby","block.testmod.ruby_ore":"Ruby Ore","entity.testmod.critter":"Critter",
-            "item.testmod.ruby_helmet":"Ruby Helmet","item.testmod.ruby_pickaxe":"Ruby Pickaxe"}"""
+            "item.testmod.ruby_helmet":"Ruby Helmet","item.testmod.ruby_pickaxe":"Ruby Pickaxe","block.testmod.ruby_door":"Ruby Door"}"""
         )
         e["assets/testmod/lang/it_it.json"] = s("""{"item.testmod.ruby":"Rubino","block.testmod.ruby_block":"Blocco di rubino","entity.testmod.critter":"Bestiolina"}""")
 
@@ -66,9 +66,24 @@ object TestMod {
         // Forma troppo grande per Bedrock (alta 40 pixel): diventa un cubo
         state("tall_lamp", """{"variants":{"":{"model":"testmod:block/tall_lamp"}}}""")
         model("block/tall_lamp", """{"textures":{"0":"testmod:block/ruby_block"},"elements":[{"from":[4,0,4],"to":[12,40,12],"faces":{"north":{"texture":"#0"}}}]}""")
-        // Cartello: lo disegna il codice
+        // Cartello: lo disegna il codice; resta come oggetto (ha un'icona piatta)
         state("ruby_sign", """{"variants":{"":{"model":"testmod:block/ruby_sign"}}}""")
         model("block/ruby_sign", """{"textures":{"particle":"testmod:block/ruby_block"}}""")
+        model("item/ruby_sign", """{"parent":"minecraft:item/generated","textures":{"layer0":"testmod:item/ruby_sign"}}""")
+        tex("item/ruby_sign")
+        // Porta: forma di Minecraft che l'app non riproduce; resta come oggetto
+        state("ruby_door", """{"variants":{"facing=east,half=lower,hinge=left,open=false":{"model":"testmod:block/ruby_door_bottom_left"},
+            "facing=east,half=upper,hinge=left,open=false":{"model":"testmod:block/ruby_door_top_left"}}}""")
+        model("block/ruby_door_bottom_left", """{"parent":"minecraft:block/door_bottom_left","textures":{"bottom":"testmod:block/ruby_door_bottom","top":"testmod:block/ruby_door_top"}}""")
+        model("block/ruby_door_top_left", """{"parent":"minecraft:block/door_top_left","textures":{"bottom":"testmod:block/ruby_door_bottom","top":"testmod:block/ruby_door_top"}}""")
+        tex("block/ruby_door_bottom"); tex("block/ruby_door_top")
+        model("item/ruby_door", """{"parent":"minecraft:item/generated","textures":{"layer0":"testmod:item/ruby_door"}}""")
+        tex("item/ruby_door")
+        // Botola: forma conosciuta (lastra sottile)
+        state("ruby_trapdoor", """{"variants":{"facing=north,half=bottom,open=false":{"model":"testmod:block/ruby_trapdoor_bottom"},
+            "facing=north,half=top,open=false":{"model":"testmod:block/ruby_trapdoor_top"}}}""")
+        model("block/ruby_trapdoor_bottom", """{"parent":"minecraft:block/template_orientable_trapdoor_bottom","textures":{"texture":"testmod:block/ruby_block"}}""")
+        model("block/ruby_trapdoor_top", """{"parent":"minecraft:block/template_orientable_trapdoor_top","textures":{"texture":"testmod:block/ruby_block"}}""")
         // Foglie grigie da colorare con il bioma
         state("ruby_leaves", """{"variants":{"":{"model":"testmod:block/ruby_leaves"}}}""")
         model("block/ruby_leaves", """{"parent":"minecraft:block/leaves","textures":{"all":"testmod:block/ruby_leaves"}}""")

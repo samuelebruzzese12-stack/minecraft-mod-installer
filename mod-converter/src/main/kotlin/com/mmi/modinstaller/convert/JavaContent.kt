@@ -35,6 +35,8 @@ class JavaModContent(
     val biomeModifiers: List<Map<String, Any?>>,
     val fuels: Map<Rl, Int>,
     val spawnEggs: List<Rl>,
+    /** Icona piatta degli oggetti-blocco (porte, cartelli…): serve se il blocco non si può convertire. */
+    val blockItems: Map<Rl, JavaItemDef>,
     val geoModels: List<String>,
     val codeFeatures: List<String>
 )
@@ -115,8 +117,14 @@ object JavaContentReader {
         }
         val items = ArrayList<JavaItemDef>()
         val spawnEggs = ArrayList<Rl>()
+        val blockItems = LinkedHashMap<Rl, JavaItemDef>()
         for ((id, model) in itemModels) {
-            if (id.ns == "minecraft" || id in blockIds) continue
+            if (id.ns == "minecraft") continue
+            if (id in blockIds) {
+                val info = model?.let { resolver.itemIcon(it) }
+                if (info?.icon != null && !info.model3d) blockItems[id] = JavaItemDef(id, model, info, ItemKind.ITEM, KindSource.NONE)
+                continue
+            }
             val info = model?.let { resolver.itemIcon(it) }
             if (info?.spawnEgg == true || id.path.endsWith("_spawn_egg")) {
                 spawnEggs.add(id); continue
@@ -158,7 +166,7 @@ object JavaContentReader {
 
         // ---- cose che vivono nel codice (per il rapporto)
         val code = ArrayList<String>()
-        val geo = all.filter { it.startsWith("assets/") && it.contains("/geo/") && it.endsWith(".json") }
+        val geo = all.filter { it.startsWith("assets/") && (it.contains("/geo/") || it.contains("/geckolib/models/")) && it.endsWith(".json") }
         val entityLang = lang["en_us"]?.keys?.count { it.startsWith("entity.") && namespaces.any { ns -> it.startsWith("entity.$ns.") } } ?: 0
         if (entityLang > 0) code.add("Creature: $entityLang (il loro comportamento è codice Java)")
         val screens = all.count { it.contains("/textures/gui/") && !it.contains("/gui/sprites/") }
@@ -178,7 +186,7 @@ object JavaContentReader {
         if (dims > 0) code.add("Dimensioni o biomi: $dims")
         return JavaModContent(
             jar, identity, namespaces, blocks, items, lang, itemTags, blockTags, recipes, loot, configured, placed, modifiers,
-            fuels, spawnEggs, geo, code
+            fuels, spawnEggs, blockItems, geo, code
         )
     }
 
