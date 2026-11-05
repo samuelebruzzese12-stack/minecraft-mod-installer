@@ -187,6 +187,17 @@ internal class CodeSemantics : Semantics {
             }
         }
 
+        // ---- enum di Minecraft: posizione (ordinal) e durata dei pezzi d'armatura
+        if (receiver is StaticV) {
+            if (name == "ordinal") JavaVanilla.ORDINALS[receiver.owner]?.indexOf(receiver.name)?.takeIf { it >= 0 }?.let { return com.mmi.modinstaller.bytecode.IntV(it) }
+            if (name == "getDurability" && (receiver.owner.endsWith("ArmorItem\$Type") || receiver.owner.endsWith("/ArmorType"))) {
+                val f = (args.firstOrNull() as? com.mmi.modinstaller.bytecode.IntV)?.v
+                val base = JavaVanilla.ARMOR_BASE[receiver.name]
+                if (f != null && base != null) return com.mmi.modinstaller.bytecode.IntV(f * base)
+            }
+            if (name == "getName" || name == "getSerializedName" || name == "name") return StrV(receiver.name.lowercase())
+        }
+
         // ---- Util.make(oggetto, consumer) e simili: il consumer modifica l'oggetto
         if (owner == "net/minecraft/Util" && name == "make" && args.size == 2) {
             val target = args[0]

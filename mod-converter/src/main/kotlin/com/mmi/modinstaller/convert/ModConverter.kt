@@ -5,6 +5,11 @@ import com.mmi.modinstaller.core.Json
 import com.mmi.modinstaller.core.ProgressCallback
 import com.mmi.modinstaller.core.asJsonList
 import com.mmi.modinstaller.core.asJsonObject
+import com.mmi.modinstaller.convert.code.BlockFacts
+import com.mmi.modinstaller.convert.code.CodeAnalyzer
+import com.mmi.modinstaller.convert.code.CodeFactsReader
+import com.mmi.modinstaller.convert.code.ItemFacts
+import com.mmi.modinstaller.convert.code.ModCodeFacts
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -41,7 +46,13 @@ class ModReport(
     val simplified: List<String>,
     /** Cose della mod che non diventano Bedrock. */
     val notConverted: List<String>,
-    val error: String? = null
+    val error: String? = null,
+    /** Cosa si è letto dal codice Java (registrazioni trovate), o null se il codice non si è potuto leggere. */
+    val codeSummary: String? = null,
+    /** Valori presi dal codice invece che stimati (es. «Danni e durata delle armi: 28»). */
+    val fromCode: List<String> = emptyList(),
+    /** Il registro completo dei componenti della mod (BLOCKBRIDGE): uno per voce, con stato e differenze. */
+    val components: List<Component> = emptyList()
 ) {
     val contentCount: Int get() = items.size + blocks.size + entities.size
 
@@ -92,7 +103,8 @@ internal class ItemOut(
     val material: String?,
     val handheld: Boolean,
     val fuelSeconds: Double?,
-    val armorTexture: Rl?
+    val armorTexture: Rl?,
+    val code: ItemFacts? = null
 )
 
 internal class BlockOut(
@@ -107,7 +119,9 @@ internal class BlockOut(
     val toolTags: List<String>,
     val lightEmission: Int,
     val lootPath: String?,
-    val orientation: Orientation = Orientation.NONE
+    val orientation: Orientation = Orientation.NONE,
+    val code: BlockFacts? = null,
+    val friction: Double? = null
 )
 
 /**
@@ -153,13 +167,17 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
     fun analyze(sources: List<ConvertSource>, cancel: CancelCheck = {}, progress: ProgressCallback? = null): ConversionPlan {
         val mods = ArrayList<JavaModContent>()
         val failed = ArrayList<ModReport>()
+        val code = HashMap<JavaModContent, ModCodeFacts?>()
         try {
             for ((i, s) in sources.withIndex()) {
                 cancel()
                 progress?.invoke(i.toLong(), sources.size.toLong(), "Lettura di «${s.label}»")
                 try {
                     val jar = JavaJar.open(s.file, s.label, limits, cancel)
-                    mods.add(JavaContentReader.read(jar, limits))
+                    val mod = JavaContentReader.read(jar, limits)
+                    mods.add(mod)
+                    progress?.invoke(i.toLong(), sources.size.toLong(), "Lettura del codice di «${s.label}»")
+                    code[mod] = readCode(mod, cancel)
                 } catch (e: IOException) {
                     failed.add(failedReport(s.label, e.message ?: "file non leggibile"))
                 } catch (e: IllegalArgumentException) {
@@ -167,7 +185,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 }
             }
             progress?.invoke(sources.size.toLong(), sources.size.toLong(), "Preparazione dell'add-on")
-            return plan(mods, failed, cancel)
+            return plan(mods, failed, cancel, code)
         } catch (t: Throwable) {
             mods.forEach { it.jar.close() }
             throw t
@@ -175,13 +193,33 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
     }
 
     /** Per le prove: un piano da JAR già aperti (anche in memoria). */
-    fun analyzeJars(jars: List<JavaJar>): ConversionPlan = plan(jars.map { JavaContentReader.read(it, limits) }, emptyList()) {}
+    fun analyzeJars(jars: List<JavaJar>): ConversionPlan {
+        val mods = jars.map { JavaContentReader.read(it, limits) }
+        return plan(mods, emptyList(), {}, mods.associateWith { readCode(it) {} })
+    }
+
+    /**
+     * Legge il bytecode della mod (senza eseguirlo) e ne ricava registrazioni e valori. Un errore non ferma la conversione:
+     * la mod si converte come prima, senza i valori del codice, e il rapporto lo dice.
+     */
+    private fun readCode(mod: JavaModContent, cancel: CancelCheck): ModCodeFacts? {
+        if (mod.jar.classEntries.isEmpty()) return null
+        return try {
+            CodeFactsReader.read(CodeAnalyzer.analyze(mod.jar, cancel = cancel))
+        } catch (e: java.util.concurrent.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        } catch (e: StackOverflowError) {
+            null
+        }
+    }
 
     private fun failedReport(label: String, why: String) = ModReport(
         label, label, null, null, emptyList(), emptyList(), 0, 0, emptyMap(), 0, 0, 0, emptyList(), emptyList(), emptyList(), emptyList(), why
     )
 
-    private fun plan(mods: List<JavaModContent>, failed: List<ModReport>, cancel: CancelCheck): ConversionPlan {
+    private fun plan(mods: List<JavaModContent>, failed: List<ModReport>, cancel: CancelCheck, code: Map<JavaModContent, ModCodeFacts?> = emptyMap()): ConversionPlan {
         val resolverModels = mods.associateWith { ModelResolver(listOf(it.jar), limits) }
         val usedIds = HashSet<String>()
         fun unique(id: String): String {
@@ -279,6 +317,10 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         for (p in pending) {
             cancel()
             val mod = p.mod
+            val cf = code[mod]
+            var blocksFromCode = 0
+            var itemsFromCode = 0
+            val fromCode = ArrayList<String>()
             val estimates = LinkedHashSet<String>()
             val simplified = LinkedHashSet<String>()
             val notConverted = ArrayList<String>(mod.codeFeatures)
@@ -303,8 +345,13 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 val name = mod.lang["en_us"]?.get(key) ?: titleCase(b.id.path)
                 names(key, name)
                 val tags = blockTagsOf[b.id.toString()].orEmpty()
-                val props = blockProperties(b.id, tags, look.look!!)
-                if (props.estimated) estimates.add("Durezza dei blocchi stimata (in Java è nel codice)")
+                val props0 = blockProperties(b.id, tags, look.look!!)
+                val bc = cf?.blocks?.get(b.id)
+                val props = if (bc != null && bc.hardness != null) {
+                    blocksFromCode++
+                    BlockProps(bc.hardness, bc.resistance ?: props0.resistance, bc.sound ?: props0.sound, props0.toolTags, bc.light ?: props0.light, false)
+                } else props0
+                if (props.estimated) estimates.add("Durezza dei blocchi stimata (il codice della mod non si è potuto leggere per questi blocchi)")
                 look.simplified?.let { shapeNotes.getOrPut(it) { ArrayList() }.add(name) }
                 val orientedStates = when (b.orientation) { Orientation.FACING -> 4; Orientation.AXIS -> 3; Orientation.NONE -> 1 }
                 if (b.facing && b.orientation == Orientation.NONE) simplified.add("Alcuni blocchi orientabili si piazzano sempre rivolti nello stesso verso")
@@ -317,7 +364,8 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                     lootCount++
                     if (r.simplified) simplified.add("Bottini dei blocchi senza tocco di velluto, fortuna e condizioni speciali")
                 }
-                blocksOut.add(BlockOut(mod, b.id, id, key, look.look, props.hardness, props.resistance, props.sound, props.toolTags, props.light, lootPath, b.orientation))
+                val friction = bc?.friction?.takeIf { Math.abs(it - 0.6) > 1e-6 }?.let { (1.0 - it).coerceIn(0.0, 0.9) }
+                blocksOut.add(BlockOut(mod, b.id, id, key, look.look, props.hardness, props.resistance, props.sound, props.toolTags, props.light, lootPath, b.orientation, bc, friction))
                 blockEntries.add(ConvertedEntry(b.id.toString(), id, mod.lang["it_it"]?.get(key) ?: name, describe(look.look)))
             }
             for ((why, list) in shapeNotes) {
@@ -352,24 +400,33 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 val name = mod.lang["en_us"]?.get(key) ?: titleCase(it.id.path)
                 names(key, name)
                 val material = materialOf(it.id)
-                val armorTex = if (it.kind in ARMOR) armorTexture(mod, it.id, it.kind) else null
+                val ic = cf?.items?.get(it.id)
+                val kind = kindFromCode(ic) ?: it.kind
+                val armorTex = if (kind in ARMOR) armorTexture(mod, it.id, kind) else null
                 if (armorTex != null) armorCount++
-                if (it.kind != ItemKind.ITEM) {
+                val known = when (kind) {
+                    ItemKind.FOOD, ItemKind.DRINK -> ic?.food?.nutrition != null
+                    in ARMOR -> ic?.armorDefense != null
+                    ItemKind.ITEM -> true
+                    else -> ic?.durability != null && ic.attackDamage != null
+                }
+                if (ic != null) itemsFromCode++
+                if (!known) {
                     estimates.add(
-                        when (it.kind) {
-                            ItemKind.FOOD, ItemKind.DRINK -> "Valori del cibo stimati (in Java sono nel codice)"
-                            in ARMOR -> "Protezione e durata delle armature stimate dal materiale"
-                            else -> "Danni, velocità e durata degli attrezzi stimati dal materiale"
+                        when (kind) {
+                            ItemKind.FOOD, ItemKind.DRINK -> "Valori di alcuni cibi stimati (non letti dal codice)"
+                            in ARMOR -> "Protezione e durata di alcune armature stimate dal materiale (non lette dal codice)"
+                            else -> "Danni, velocità e durata di alcuni attrezzi stimati dal materiale (non letti dal codice)"
                         }
                     )
-                    if (it.kindSource == KindSource.NAME) estimates.add("Alcuni attrezzi e armature riconosciuti dal nome")
+                    if (it.kindSource == KindSource.NAME && ic == null) estimates.add("Alcuni attrezzi e armature riconosciuti dal nome")
                 }
                 if (it.kind in ARMOR && armorTex == null) simplified.add("Armature indossabili ma senza il disegno sul corpo (texture non trovata)")
                 if (it.info?.layered == true) simplified.add("Icone a più strati: si usa il primo")
                 if (it.info?.model3d == true) simplified.add("Oggetti con modello 3D: icona piatta")
                 val fuel = mod.fuels[it.id]?.let { t -> t / 20.0 }
-                itemsOut.add(ItemOut(mod, it.id, id, key, it.info!!.icon, it.kind, material, it.info.handheld, fuel, armorTex))
-                itemEntries.add(ConvertedEntry(it.id.toString(), id, mod.lang["it_it"]?.get(key) ?: name, if (blockOnlyItem) "solo oggetto" else it.kind.label))
+                itemsOut.add(ItemOut(mod, it.id, id, key, it.info!!.icon, kind, material, it.info.handheld || kind in TOOLS, fuel, armorTex, ic))
+                itemEntries.add(ConvertedEntry(it.id.toString(), id, mod.lang["it_it"]?.get(key) ?: name, if (blockOnlyItem) "solo oggetto" else kind.label))
             }
             if (mod.spawnEggs.isNotEmpty()) notConverted.add("Uova delle creature: ${mod.spawnEggs.size}")
             val noIcon = mod.items.size - (p.items.size - (itemOnly[mod]?.size ?: 0))
@@ -399,9 +456,87 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                     )
                 )
             }
+            // ---- creature: i fatti del codice (attributi, IA) per quelle GeckoLib, e quelle con il modello scritto nel codice
+            val codeEntities = cf?.entities.orEmpty()
+            for (e in entitiesOut) if (e.mod === mod && e.facts == null) e.facts = codeEntities[e.java]
+            val allNames = mod.jar.allNames().toHashSet()
+            for ((eid, ef) in codeEntities) {
+                cancel()
+                if (entitiesOut.any { it.java == eid }) continue
+                val model = ef.model ?: continue
+                val tex = ef.texture?.let { t ->
+                    val path = t.path.removePrefix("textures/").removeSuffix(".png")
+                    if ("assets/${t.ns}/textures/$path.png" in allNames) Rl(t.ns, path) else null
+                } ?: EntityReader.texture(eid.ns, eid.path, allNames) ?: continue
+                val bid = bedrockId(eid)
+                val idPart = bid.replace(':', '.')
+                val geoId = "geometry.mmi.$idPart"
+                val geometry = CodeEntities.geometry(geoId, model)
+                @Suppress("UNCHECKED_CAST")
+                val bones = ((geometry["minecraft:geometry"] as List<Map<String, Any?>>)[0]["bones"] as List<Any?>)
+                if (bones.isEmpty()) continue
+                val (gw, gh) = CodeEntities.extent(bones)
+                val anims = CodeEntities.animations("mmi.$idPart", model)
+                val motion = CodeEntities.motion(ef)
+                val out = EntityOut(
+                    mod, eid, bid, "entity.${eid.ns}.${eid.path.replace('/', '.')}", "", geoId, tex, null,
+                    anims.byRole["walk"], anims.byRole["idle"], ef.width ?: gw.coerceIn(0.3, 4.0), ef.height ?: gh.coerceIn(0.3, 5.0),
+                    motion == CodeEntities.Motion.FLY, motion == CodeEntities.Motion.SWIM
+                )
+                out.facts = ef
+                out.geometryDoc = geometry
+                out.animationsDoc = anims.doc
+                out.byRole = anims.byRole
+                out.controllerDoc = CodeEntities.controller(EntityReader.controllerId(out), anims)
+                if (anims.generic) out.notes.add("Camminata generica (la mod non ha animazioni a fotogrammi)")
+                if (model.animations.isEmpty() && anims.byRole["idle"] == null) out.notes.add("Animazioni scritte nel codice (setupAnim) non convertite")
+                entitiesOut.add(out)
+                val en = mod.lang["en_us"]?.get(out.javaNameKey) ?: titleCase(eid.path)
+                val enKey = "entity.$bid.name"
+                val eggKey = "item.spawn_egg.entity.$bid.name"
+                languages.getOrPut("en_US") { LinkedHashMap() }[enKey] = en
+                languages.getOrPut("en_US") { LinkedHashMap() }[eggKey] = "$en Spawn Egg"
+                for ((codeLang, map) in mod.lang) {
+                    val bedrock = LANGUAGES[codeLang] ?: continue
+                    val v = map[out.javaNameKey] ?: continue
+                    languages.getOrPut(bedrock) { LinkedHashMap() }[enKey] = v
+                    languages.getOrPut(bedrock) { LinkedHashMap() }[eggKey] = if (codeLang == "it_it") "Uovo di $v" else "$v Spawn Egg"
+                }
+                val ia = ef.goals.count { CodeEntities.behavior(it) != null }
+                entityEntries.add(
+                    ConvertedEntry(
+                        eid.toString(), bid, mod.lang["it_it"]?.get(out.javaNameKey) ?: en,
+                        "modello dal codice" + (if (model.animations.isNotEmpty()) ", animazioni della mod" else ", camminata generica") +
+                            (if (ia > 0) ", IA: $ia comportamenti" else ", IA generica")
+                    )
+                )
+            }
+            // Uova e bottini delle creature.
+            val eggFacts = cf?.items?.values?.filter { it.spawnEggEntity != null && it.eggColors != null }.orEmpty()
+            for (e in entitiesOut) {
+                if (e.mod !== mod) continue
+                eggFacts.firstOrNull { it.spawnEggEntity == e.java }?.eggColors?.let { (a, b) ->
+                    e.eggColors = String.format("#%06x", a and 0xFFFFFF) to String.format("#%06x", b and 0xFFFFFF)
+                }
+                if (e.lootPath == null) {
+                    val table = listOf("loot_table", "loot_tables").firstNotNullOfOrNull { folder ->
+                        mod.jar.json("data/${e.java.ns}/$folder/entities/${e.java.path}.json", limits.maxJsonBytes)?.asJsonObject()
+                    }
+                    if (table != null) {
+                        val conv = lootConv.convert(table)
+                        val path = "loot_tables/entities/${e.java.ns}/${e.java.path}.json"
+                        lootOut[path] = conv.table
+                        e.lootPath = path
+                    }
+                }
+            }
             if (entityEntries.isNotEmpty()) {
                 notConverted.removeAll { it.startsWith("Creature:") }
-                simplified.add("Creature: aspetto e animazioni della mod, comportamento generico (non attaccano, non hanno versi né cibi speciali, si fanno nascere con l'uovo)")
+                val withIa = entitiesOut.count { it.mod === mod && it.facts?.goals?.isNotEmpty() == true }
+                simplified.add(
+                    if (withIa > 0) "Creature: IA tradotta nei comportamenti Bedrock equivalenti per $withIa creature; versi, attacchi speciali e cibi particolari restano nel codice Java"
+                    else "Creature: aspetto e animazioni della mod, comportamento generico (non attaccano, non hanno versi né cibi speciali, si fanno nascere con l'uovo)"
+                )
                 val javaCount = mod.lang.values.flatMap { it.keys }.filter { it.startsWith("entity.") }.toSet().size
                 if (javaCount > entityEntries.size) notConverted.add("Creature senza un modello leggibile (disegnate dal codice): " + (javaCount - entityEntries.size))
             }
@@ -427,11 +562,19 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             }
             if (ores > 0) simplified.add("I minerali compaiono solo nei chunk nuovi del mondo")
 
+            if (itemsFromCode > 0) fromCode.add("Oggetti con tipo e valori letti dal codice: $itemsFromCode")
+            if (blocksFromCode > 0) fromCode.add("Blocchi con durezza, resistenza, luce e suono letti dal codice: $blocksFromCode")
+            val codeSummary = cf?.let { f ->
+                val c = f.analysis.counts
+                "Codice letto (senza eseguirlo): " + listOf("item" to "oggetti", "block" to "blocchi", "entity_type" to "creature", "sound_event" to "suoni", "block_entity_type" to "blocchi-macchina", "menu" to "menu")
+                    .mapNotNull { (k, label) -> c[k]?.let { "$it $label" } }.joinToString(", ").ifEmpty { "nessuna registrazione di contenuto" } +
+                    (if (f.analysis.exhausted) " (lettura parziale: codice molto grande)" else "")
+            } ?: if (mod.jar.classEntries.isEmpty()) null else "Il codice della mod non si è potuto leggere"
             reports.add(
                 ModReport(
                     mod.jar.label, mod.identity.name ?: mod.jar.label, mod.identity.loader, mod.identity.version,
                     itemEntries, blockEntries, ok, mod.recipes.size, skips, lootCount, ores, armorCount, entityEntries,
-                    estimates.toList(), simplified.toList(), notConverted
+                    estimates.toList(), simplified.toList(), notConverted, null, codeSummary, fromCode
                 )
             )
         }
@@ -442,6 +585,26 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
     }
 
     private val ARMOR = setOf(ItemKind.HELMET, ItemKind.CHESTPLATE, ItemKind.LEGGINGS, ItemKind.BOOTS)
+    private val TOOLS = setOf(ItemKind.SWORD, ItemKind.PICKAXE, ItemKind.AXE, ItemKind.SHOVEL, ItemKind.HOE)
+
+    /** Il tipo di oggetto dalla classe Java da cui deriva (più affidabile dei gruppi e del nome). */
+    private fun kindFromCode(ic: ItemFacts?): ItemKind? {
+        if (ic == null) return null
+        return when (ic.role) {
+            "sword" -> ItemKind.SWORD
+            "pickaxe" -> ItemKind.PICKAXE
+            "axe" -> ItemKind.AXE
+            "shovel" -> ItemKind.SHOVEL
+            "hoe" -> ItemKind.HOE
+            "armor" -> when (ic.armorSlot) {
+                "helmet" -> ItemKind.HELMET; "chestplate" -> ItemKind.CHESTPLATE; "leggings" -> ItemKind.LEGGINGS; "boots" -> ItemKind.BOOTS
+                else -> null
+            }
+            "food" -> ItemKind.FOOD
+            "item", "block_item" -> if (ic.food != null) ItemKind.FOOD else ItemKind.ITEM
+            else -> if (ic.food != null) ItemKind.FOOD else null
+        }
+    }
 
     private val DRAWN_BY_CODE = listOf("_sign", "_bed", "_banner", "_wall_banner", "chest", "_skull", "_head", "_wall_skull", "_wall_head")
 
@@ -710,9 +873,25 @@ internal class AddonWriter(
     val rpUuid: String = UUID.nameUUIDFromBytes(("mmi-rp:" + name.lowercase()).toByteArray()).toString()
     private val bpModule = UUID.nameUUIDFromBytes(("mmi-bp-module:" + name.lowercase()).toByteArray()).toString()
     private val rpModule = UUID.nameUUIDFromBytes(("mmi-rp-module:" + name.lowercase()).toByteArray()).toString()
-    private val version = listOf(1L, 0L, (System.currentTimeMillis() / 60000L) % 100_000_000L)
+    /**
+     * Versione dei pacchetti: [1, giorni dal 2025-01-01, minuto del giorno]. Cresce a ogni conversione (così Minecraft
+     * aggiorna l'add-on già importato) e ogni numero resta sotto 65536: Minecraft ignora i pacchetti con numeri più grandi
+     * (verificato nel server Bedrock ufficiale).
+     */
+    private val version = versionNow()
+
+    private fun versionNow(): List<Long> {
+        val minutes = System.currentTimeMillis() / 60000L - EPOCH_2025_MINUTES
+        val days = (minutes / 1440L).coerceIn(0L, 65535L)
+        return listOf(1L, days, (minutes % 1440L).coerceIn(0L, 1439L))
+    }
     var count = 0
         private set
+
+    private companion object {
+        /** Minuti dal 1970-01-01 al 2025-01-01 (UTC). */
+        const val EPOCH_2025_MINUTES = 1735689600L / 60L
+    }
 
     private val bp = "$name BP/"
     private val rp = "$name RP/"
@@ -819,17 +998,21 @@ internal class AddonWriter(
         // ---- creature
         for (e in plan.entities) {
             cancel()
-            val geo = EntityReader.geometryBytes(e.mod, e, limits) ?: continue
             val path = e.bedrockId.replace(':', '/')
+            val geo = e.geometryDoc?.let { json(it) } ?: EntityReader.geometryBytes(e.mod, e, limits) ?: continue
             sink(rp + "models/entity/$path.geo.json", geo)
-            e.animEntry?.let { a ->
+            if (e.animationsDoc != null) {
+                sink(rp + "animations/$path.animation.json", json(e.animationsDoc))
+            } else e.animEntry?.let { a ->
                 e.mod.jar.json(a, limits.maxJsonBytes)?.asJsonObject()?.let { doc -> sink(rp + "animations/$path.animation.json", json(EntityReader.cleanAnimations(doc))) }
             }
-            EntityReader.controller(e)?.let { sink(rp + "animation_controllers/$path.controller.json", json(it)) }
+            (e.controllerDoc ?: if (e.geometryDoc == null) EntityReader.controller(e) else null)?.let { sink(rp + "animation_controllers/$path.controller.json", json(it)) }
             textures.require(e.texture, block = false)
-            val egg = EntityReader.eggColors(e.mod.jar.bytes("assets/${e.texture.ns}/textures/${e.texture.path}.png", limits.maxPngBytes))
+            val egg = e.eggColors ?: EntityReader.eggColors(e.mod.jar.bytes("assets/${e.texture.ns}/textures/${e.texture.path}.png", limits.maxPngBytes))
             sink(rp + "entity/$path.entity.json", json(EntityReader.client(e, egg)))
-            sink(bp + "entities/$path.json", json(EntityReader.behavior(e)))
+            val f = e.facts
+            val behavior = if (f != null) CodeEntities.behaviorDoc(e.bedrockId, f, e.width, e.height, e.lootPath).first else EntityReader.behavior(e)
+            sink(bp + "entities/$path.json", json(behavior))
         }
 
         // ---- ricette, bottini, minerali
@@ -908,7 +1091,7 @@ internal class AddonWriter(
         val c = LinkedHashMap<String, Any?>()
         c["minecraft:icon"] = textureKey
         c["minecraft:display_name"] = linkedMapOf("value" to it.nameKey)
-        val stats = Stats.of(it.kind, it.material)
+        val stats = Stats.withCode(Stats.of(it.kind, it.material), it.code)
         val tags = ArrayList<String>(extraTags)
         val category: String
         when (it.kind) {
@@ -952,15 +1135,21 @@ internal class AddonWriter(
             }
             ItemKind.FOOD, ItemKind.DRINK -> {
                 category = "items"
-                c["minecraft:max_stack_size"] = if (it.kind == ItemKind.DRINK) 16L else 64L
-                c["minecraft:food"] = linkedMapOf("nutrition" to 4L, "saturation_modifier" to 0.6, "can_always_eat" to (it.kind == ItemKind.DRINK))
+                val food = it.code?.food
+                c["minecraft:max_stack_size"] = (it.code?.maxStack ?: if (it.kind == ItemKind.DRINK) 16 else 64).toLong()
+                c["minecraft:food"] = linkedMapOf(
+                    "nutrition" to (food?.nutrition ?: 4).toLong(),
+                    "saturation_modifier" to (food?.saturation?.let { Math.round(it * 1000.0) / 1000.0 } ?: 0.6),
+                    "can_always_eat" to (food?.alwaysEdible ?: (it.kind == ItemKind.DRINK))
+                )
                 c["minecraft:use_animation"] = if (it.kind == ItemKind.DRINK) "drink" else "eat"
-                c["minecraft:use_modifiers"] = linkedMapOf("use_duration" to 1.6, "movement_modifier" to 0.35)
+                c["minecraft:use_modifiers"] = linkedMapOf("use_duration" to (if (food?.fast == true) 0.8 else 1.6), "movement_modifier" to 0.35)
             }
             else -> {
                 category = "items"
-                c["minecraft:max_stack_size"] = 64L
+                c["minecraft:max_stack_size"] = (it.code?.maxStack ?: if (it.code?.durability != null) 1 else 64).toLong().coerceIn(1L, 64L)
                 if (it.handheld) c["minecraft:hand_equipped"] = true
+                it.code?.durability?.let { d -> if (d > 0) c["minecraft:durability"] = linkedMapOf("max_durability" to d.toLong()) }
             }
         }
         it.fuelSeconds?.let { s -> c["minecraft:fuel"] = linkedMapOf("duration" to maxOf(0.05, s)) }
@@ -1001,9 +1190,11 @@ internal class AddonWriter(
         c["minecraft:display_name"] = b.nameKey
         c["minecraft:geometry"] = geometry
         c["minecraft:material_instances"] = materials
-        c["minecraft:destructible_by_mining"] = linkedMapOf("seconds_to_destroy" to b.hardness)
+        c["minecraft:destructible_by_mining"] = if (b.hardness < 0) false else linkedMapOf("seconds_to_destroy" to b.hardness)
         c["minecraft:destructible_by_explosion"] = linkedMapOf("explosion_resistance" to b.resistance)
-        if (b.lightEmission > 0) c["minecraft:light_emission"] = b.lightEmission.toLong()
+        if (b.lightEmission > 0) c["minecraft:light_emission"] = b.lightEmission.toLong().coerceIn(0L, 15L)
+        b.friction?.let { c["minecraft:friction"] = Math.round(it * 1000.0) / 1000.0 }
+        if (b.resistance < 0) c["minecraft:destructible_by_explosion"] = false
         if (b.look !is BlockLook.Cube) {
             c["minecraft:light_dampening"] = 0L
             if (collision != null) {
@@ -1055,6 +1246,21 @@ internal class Stats(
     val slot: String?, val tier: String?
 ) {
     companion object {
+        /** I valori letti dal codice della mod sostituiscono le stime. */
+        fun withCode(s: Stats, ic: ItemFacts?): Stats {
+            if (ic == null) return s
+            return Stats(
+                ic.durability?.takeIf { it > 0 }?.toLong() ?: s.durability,
+                ic.attackDamage?.let { Math.round(it).toLong().coerceAtLeast(0) } ?: s.damage,
+                ic.tier?.speed?.let { Math.round(it).toLong().coerceAtLeast(1) } ?: s.speed,
+                ic.armorDefense?.toLong() ?: s.protection,
+                s.enchantSlot,
+                ic.enchantability?.toLong()?.takeIf { it > 0 } ?: s.enchantValue,
+                s.slot,
+                s.tier
+            )
+        }
+
         fun of(kind: ItemKind, material: String?): Stats {
             val mat = when (material) { "golden" -> "gold"; "wooden" -> "wood"; null -> "iron"; else -> material }
             val toolDurability = mapOf("wood" to 59L, "stone" to 131L, "iron" to 250L, "gold" to 32L, "diamond" to 1561L, "netherite" to 2031L, "copper" to 190L)

@@ -24,7 +24,19 @@ internal class EntityOut(
     val height: Double,
     val flying: Boolean,
     val swimming: Boolean
-)
+) {
+    /** Quello che il codice dice della creatura (attributi, IA, dimensioni), se si è potuto leggere. */
+    var facts: com.mmi.modinstaller.convert.code.EntityFacts? = null
+    /** Creature ricostruite dal codice Java: geometria, animazioni e controllore già pronti. */
+    var geometryDoc: Map<String, Any?>? = null
+    var animationsDoc: Map<String, Any?>? = null
+    var controllerDoc: Map<String, Any?>? = null
+    /** Ruolo («walk», «idle», «look»…) → animazione Bedrock. */
+    var byRole: Map<String, String> = emptyMap()
+    var eggColors: Pair<String, String>? = null
+    var lootPath: String? = null
+    val notes = ArrayList<String>()
+}
 
 internal object EntityReader {
 
@@ -83,7 +95,7 @@ internal object EntityReader {
     private val FLYING = listOf("bird", "bat", "butterfly", "dragonfly", "firefly", "bee", "fly", "owl", "crow", "vulture", "parrot", "moth", "eagle", "hawk")
     private val SWIMMING = listOf("fish", "bass", "shark", "whale", "dolphin", "squid", "eel", "jelly", "salmon", "cod", "trout", "crab", "seal")
 
-    private fun texture(ns: String, base: String, names: Set<String>): Rl? {
+    fun texture(ns: String, base: String, names: Set<String>): Rl? {
         val direct = listOf("entity/$base", "entity/$base/$base", "entities/$base", "entity/${base}_texture")
         for (d in direct) if ("assets/$ns/textures/$d.png" in names) return Rl(ns, d)
         val folder = "assets/$ns/textures/entity/$base/"
@@ -138,7 +150,6 @@ internal object EntityReader {
         c["minecraft:physics"] = linkedMapOf<String, Any?>()
         c["minecraft:pushable"] = linkedMapOf("is_pushable" to true, "is_pushable_by_piston" to true)
         c["minecraft:nameable"] = linkedMapOf<String, Any?>()
-        c["minecraft:leashable"] = linkedMapOf("soft_distance" to 4.0, "hard_distance" to 6.0, "max_distance" to 10.0)
         c["minecraft:behavior.panic"] = linkedMapOf("priority" to 1L, "speed_multiplier" to 1.25)
         when {
             e.swimming -> {
@@ -185,8 +196,12 @@ internal object EntityReader {
 
     fun client(e: EntityOut, egg: Pair<String, String>): Map<String, Any?> {
         val animations = LinkedHashMap<String, Any?>()
-        e.walk?.let { animations["walk"] = it }
-        e.idle?.let { animations["idle"] = it }
+        if (e.byRole.isNotEmpty()) {
+            for ((role, id) in e.byRole) animations[role] = id
+        } else {
+            e.walk?.let { animations["walk"] = it }
+            e.idle?.let { animations["idle"] = it }
+        }
         val description = linkedMapOf<String, Any?>(
             "identifier" to e.bedrockId,
             "materials" to linkedMapOf("default" to "entity_alphatest"),
@@ -194,9 +209,14 @@ internal object EntityReader {
             "geometry" to linkedMapOf("default" to e.geoIdentifier)
         )
         if (animations.isNotEmpty()) {
-            animations["move"] = controllerId(e)
+            val animate = ArrayList<Any?>()
+            if (e.controllerDoc != null || (e.byRole.isEmpty() && (e.walk != null || e.idle != null))) {
+                animations["move"] = controllerId(e)
+                animate.add("move")
+            }
+            if (animations.containsKey("look")) animate.add("look")
             description["animations"] = animations
-            description["scripts"] = linkedMapOf("animate" to listOf("move"))
+            if (animate.isNotEmpty()) description["scripts"] = linkedMapOf("animate" to animate)
         }
         description["render_controllers"] = listOf("controller.render.default")
         description["spawn_egg"] = linkedMapOf("base_color" to egg.first, "overlay_color" to egg.second)

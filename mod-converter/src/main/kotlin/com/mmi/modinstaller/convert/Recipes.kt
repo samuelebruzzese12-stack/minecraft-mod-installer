@@ -292,6 +292,12 @@ class RecipeConverter(private val resolver: ItemResolver) {
         val addition = single(o["addition"])
         val (result, _) = resolver.result(o["result"])
         val id = identifier(rl)
+        // Bedrock vuole che modello, oggetto base e materiale abbiano i gruppi del tavolo da forgia (verificato nel server
+        // Bedrock: senza, la ricetta si scarta). Gli oggetti di Minecraft li hanno già; quelli della mod li ricevono qui.
+        for ((item, tag) in listOf(template to "minecraft:transform_templates", base to "minecraft:transformable_items", addition to "minecraft:transform_materials")) {
+            if (!item.startsWith("minecraft:")) resolver.customTags.getOrPut(tag) { LinkedHashSet() }.add(item)
+            else if (item !in VANILLA_SMITHING.getValue(tag)) throw Skip("il tavolo da forgia di Bedrock accetta solo oggetti del gruppo «$tag» (es. il lingotto di netherite)")
+        }
         val body = linkedMapOf<String, Any?>(
             "description" to linkedMapOf("identifier" to id), "tags" to listOf("smithing_table"),
             "template" to template, "base" to base, "addition" to addition, "result" to result.id
@@ -300,6 +306,16 @@ class RecipeConverter(private val resolver: ItemResolver) {
     }
 
     private fun fileName(id: String) = id.replace(':', '/') + ".json"
+
+    /** Oggetti di Minecraft Bedrock che hanno già i gruppi del tavolo da forgia (aggiornamento al netherite). */
+    private val VANILLA_SMITHING = mapOf(
+        "minecraft:transform_templates" to setOf("minecraft:netherite_upgrade_smithing_template"),
+        "minecraft:transform_materials" to setOf("minecraft:netherite_ingot"),
+        "minecraft:transformable_items" to setOf(
+            "minecraft:diamond_sword", "minecraft:diamond_pickaxe", "minecraft:diamond_axe", "minecraft:diamond_shovel", "minecraft:diamond_hoe",
+            "minecraft:diamond_helmet", "minecraft:diamond_chestplate", "minecraft:diamond_leggings", "minecraft:diamond_boots"
+        )
+    )
 }
 
 /** Converte la tabella dei bottini di un blocco (cosa lascia quando lo rompi). */

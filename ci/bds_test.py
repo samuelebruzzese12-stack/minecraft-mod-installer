@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""Prova gli add-on convertiti da JAVA TO BEDROCK nel server Bedrock ufficiale di Mojang (Bedrock Dedicated Server).
+
+Uso: python3 -I ci/bds_test.py CARTELLA_BDS USCITA FILE.mcaddon [FILE2.mcaddon ...]
+
+Per ogni add-on: un mondo nuovo con l'add-on e un pacchetto di prova (GameTest, esperimento «Beta APIs» solo nel mondo di
+prova), il server parte, carica i pacchetti e fa le prove dentro il gioco vero:
+  * registrazione: ogni blocco, oggetto e creatura dell'add-on esiste per il gioco (BlockTypes/ItemTypes/EntityTypes);
+  * blocchi: ognuno si piazza nel mondo e resta quel blocco;
+  * oggetti: pila massima, durata e cibo hanno nel gioco i valori scritti dalla conversione;
+  * creature: ognuna nasce, è ancora viva dopo un secondo e ha la vita prevista;
+  * registro dei contenuti (content log) senza errori.
+Scrive USCITA/<add-on>.json con gli esiti e USCITA/riepilogo.txt. Esce con 1 se qualcosa non va.
+Usare il server Bedrock implica accettare l'EULA di Minecraft e l'informativa sulla privacy di Microsoft.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import time
+import uuid
+import zipfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import lenbt  # noqa: E402
+
+BATCH = 180          # blocchi per prova (una prova = una struttura 14×14 con 1+ strati)
+TIMEOUT = 240        # secondi al massimo per add-on
+
+
+def read_addon(path):
+    """Cartelle BP/RP dell'add-on, manifest e contenuto (identificatori e valori attesi)."""
+    z = zipfile.ZipFile(path)
+    names = z.namelist()
+    packs = {}
+    for n in names:
+        if n.endswith("manifest.json") and n.count("/") == 1:
+            m = json.loads(z.read(n))
+            kind = m["modules"][0]["type"]
+            packs[kind] = (n.split("/")[0], m)
+    blocks, items, entities = [], [], []
+    bp = packs.get("data", (None,))[0]
+    for n in names:
+        if not bp or not n.startswith(bp + "/") or not n.endswith(".json"):
+            continue
+        rel = n[len(bp) + 1:]
+        try:
+            d = json.loads(z.read(n))
+        except Exception:
+            continue
+        if rel.startswith("blocks/") and "minecraft:block" in d:
+            blocks.append(d["minecraft:block"]["description"]["identifier"])
+        elif rel.startswith("items/") and "minecraft:item" in d:
+            it = d["minecraft:item"]
+            c = it.get("components", {})
+            items.append({
+                "id": it["description"]["identifier"],
+                "stack": c.get("minecraft:max_stack_size"),
+                "durability": (c.get("minecraft:durability") or {}).get("max_durability"),
+                "nutrition": (c.get("minecraft:food") or {}).get("nutrition"),
+            })
+        elif rel.startswith("entities/") and "minecraft:entity" in d:
+            e = d["minecraft:entity"]
+            h = (e.get("components", {}).get("minecraft:health") or {}).get("max")
+            entities.append({"id": e["description"]["identifier"], "health": h})
+    return z, packs, blocks, items, entities
+
+
+TEST_JS = r'''
+import { system, world, BlockTypes, ItemTypes, EntityTypes, ItemStack } from "@minecraft/server";
+import * as gt from "@minecraft/server-gametest";
+const DATA = __DATA__;
+function log(o) { console.warn("BBTEST " + JSON.stringify(o)); }
+
+gt.register("bb", "registrazione", (test) => {
+  const mb = DATA.blocks.filter((id) => !BlockTypes.get(id));
+  const mi = DATA.items.filter((i) => !ItemTypes.get(i.id)).map((i) => i.id);
+  const me = DATA.entities.filter((e) => !EntityTypes.get(e.id)).map((e) => e.id);
+  log({ test: "registrazione", blocks: DATA.blocks.length, items: DATA.items.length, entities: DATA.entities.length, missingBlocks: mb, missingItems: mi, missingEntities: me });
+  if (mb.length + mi.length + me.length > 0) test.fail("non registrati: " + (mb.length + mi.length + me.length)); else test.succeed();
+}).structureName("bb:plat").maxTicks(40).tag("bb");
+
+gt.register("bb", "oggetti", (test) => {
+  const bad = [];
+  for (const it of DATA.items) {
+    try {
+      const s = new ItemStack(it.id, 1);
+      if (it.stack != null && s.maxAmount !== it.stack) bad.push(it.id + " pila " + s.maxAmount + "≠" + it.stack);
+      if (it.durability != null) {
+        const d = s.getComponent("minecraft:durability");
+        if (!d || d.maxDurability !== it.durability) bad.push(it.id + " durata " + (d ? d.maxDurability : "-") + "≠" + it.durability);
+      }
+      if (it.nutrition != null) {
+        const f = s.getComponent("minecraft:food");
+        if (!f || f.nutrition !== it.nutrition) bad.push(it.id + " cibo " + (f ? f.nutrition : "-") + "≠" + it.nutrition);
+      }
+    } catch (e) { bad.push(it.id + ": " + e); }
+  }
+  log({ test: "oggetti", checked: DATA.items.length, bad: bad });
+  if (bad.length) test.fail(bad.length + " oggetti diversi"); else test.succeed();
+}).structureName("bb:plat").maxTicks(40).tag("bb");
+
+for (let k = 0; k * DATA.batch < DATA.blocks.length; k++) {
+  const part = DATA.blocks.slice(k * DATA.batch, (k + 1) * DATA.batch);
+  gt.register("bb", "blocchi_" + k, (test) => {
+    const bad = [];
+    part.forEach((id, i) => {
+      const loc = { x: 1 + (i % 14), y: 1 + Math.floor(i / 196), z: 1 + (Math.floor(i / 14) % 14) };
+      try {
+        test.setBlockType(id, loc);
+        const b = test.getBlock(loc);
+        if (!b || b.typeId !== id) bad.push(id + " → " + (b ? b.typeId : "niente"));
+      } catch (e) { bad.push(id + ": " + e); }
+    });
+    log({ test: "blocchi_" + k, placed: part.length - bad.length, total: part.length, bad: bad });
+    if (bad.length) test.fail(bad.length + " blocchi non piazzati"); else test.succeed();
+  }).structureName("bb:plat").maxTicks(60).tag("bb");
+}
+
+if (DATA.entities.length) gt.register("bb", "creature", (test) => {
+  const spawned = [];
+  const bad = [];
+  DATA.entities.forEach((e, i) => {
+    try { spawned.push([e, test.spawn(e.id, { x: 1 + (i % 7) * 2, y: 1, z: 1 + (Math.floor(i / 7) % 7) * 2 })]); }
+    catch (err) { bad.push(e.id + " non nasce: " + err); }
+  });
+  test.runAfterDelay(20, () => {
+    for (const [e, ent] of spawned) {
+      if (!ent.isValid) { bad.push(e.id + " sparita"); continue; }
+      const h = ent.getComponent("minecraft:health");
+      if (e.health != null && h && Math.abs(h.effectiveMax - e.health) > 0.01) bad.push(e.id + " vita " + h.effectiveMax + "≠" + e.health);
+    }
+    log({ test: "creature", spawned: spawned.length, total: DATA.entities.length, bad: bad });
+    if (bad.length) test.fail(bad.length + " creature con problemi"); else test.succeed();
+  });
+}).structureName("bb:plat").maxTicks(200).tag("bb");
+
+system.runTimeout(() => log({ test: "pronto" }), 20);
+'''
+
+
+def test_pack(dest, blocks, items, entities):
+    os.makedirs(os.path.join(dest, "scripts"), exist_ok=True)
+    os.makedirs(os.path.join(dest, "structures", "bb"), exist_ok=True)
+    pid = str(uuid.uuid4())
+    manifest = {
+        "format_version": 2,
+        "header": {"name": "Prova BLOCKBRIDGE", "description": "prove automatiche", "uuid": pid, "version": [1, 0, 0], "min_engine_version": [1, 21, 90]},
+        "modules": [
+            {"type": "data", "uuid": str(uuid.uuid4()), "version": [1, 0, 0]},
+            {"type": "script", "language": "javascript", "uuid": str(uuid.uuid4()), "version": [1, 0, 0], "entry": "scripts/main.js"},
+        ],
+        "dependencies": [{"module_name": "@minecraft/server", "version": "2.0.0"}, {"module_name": "@minecraft/server-gametest", "version": "1.0.0-beta"}],
+    }
+    json.dump(manifest, open(os.path.join(dest, "manifest.json"), "w"))
+    layers = max(1, min(4, (min(len(blocks), BATCH) + 195) // 196))
+    size = (16, layers + 3, 16)
+    data = []
+    for x in range(size[0]):
+        for y in range(size[1]):
+            for z in range(size[2]):
+                data.append(1 if y == 0 else 0)
+    open(os.path.join(dest, "structures", "bb", "plat.mcstructure"), "wb").write(
+        lenbt.mcstructure(size, data, [("minecraft:air", {}), ("minecraft:stone", {})]))
+    payload = json.dumps({"blocks": blocks, "items": items, "entities": entities, "batch": BATCH})
+    open(os.path.join(dest, "scripts", "main.js"), "w", encoding="utf-8").write(TEST_JS.replace("__DATA__", payload))
+    return pid
+
+
+def set_props(bds, level):
+    p = os.path.join(bds, "server.properties")
+    s = open(p).read()
+    repl = {"level-name": level, "online-mode": "false", "allow-list": "false", "allow-cheats": "true", "enable-lan-visibility": "false",
+            "content-log-console-output-enabled": "true", "content-log-file-enabled": "false", "content-log-level": "info"}
+    for k, v in repl.items():
+        s = re.sub(r"^%s=.*$" % re.escape(k), "%s=%s" % (k, v), s, flags=re.M)
+    open(p, "w").write(s)
+
+
+def run_server(bds, level, deadline):
+    """Avvia il server, lancia le prove quando è pronto, ferma quando le prove hanno finito. Restituisce le righe di uscita."""
+    set_props(bds, level)
+    env = dict(os.environ, LD_LIBRARY_PATH=bds)
+    proc = subprocess.Popen(["./bedrock_server"], cwd=bds, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, text=True, bufsize=1)
+    lines = []
+    state = {"started": False, "launched": False, "done": 0, "expected": None}
+
+    def reader():
+        for line in proc.stdout:
+            lines.append(line.rstrip("\n"))
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+    try:
+        while time.time() < deadline and proc.poll() is None:
+            time.sleep(0.5)
+            text = "\n".join(lines)
+            if not state["launched"] and "Server started." in text and "BBTEST" in text:
+                proc.stdin.write("gametest runset bb\n"); proc.stdin.flush()
+                state["launched"] = True
+            m = re.search(r"Running (\d+) tests? with tag 'bb'", text)
+            if m:
+                state["expected"] = int(m.group(1))
+            done = text.count("onTestPassed:") + text.count("onTestFailed:")
+            if state["expected"] is not None and done >= state["expected"]:
+                break
+            if "No tests found" in text:
+                break
+    finally:
+        if proc.poll() is None:
+            try:
+                proc.stdin.write("stop\n"); proc.stdin.flush()
+            except Exception:
+                pass
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        t.join(timeout=5)
+    return lines
+
+
+def prepare_template(bds):
+    """Un mondo vuoto creato dal server, con l'esperimento delle GameTest acceso (solo per il mondo di prova)."""
+    tpl = os.path.join(bds, "worlds", "bb_template")
+    if os.path.exists(os.path.join(tpl, "level.dat")):
+        return tpl
+    os.makedirs(os.path.join(bds, "worlds"), exist_ok=True)
+    set_props(bds, "bb_template")
+    env = dict(os.environ, LD_LIBRARY_PATH=bds)
+    p = subprocess.Popen(["./bedrock_server"], cwd=bds, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, text=True)
+    out = []
+    start = time.time()
+    while time.time() - start < 90:
+        line = p.stdout.readline()
+        if not line:
+            break
+        out.append(line)
+        if "Server started." in line:
+            break
+    p.stdin.write("stop\n"); p.stdin.flush()
+    try:
+        p.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        p.kill()
+    lenbt.set_experiments(os.path.join(tpl, "level.dat"), ["gametest"])
+    return tpl
+
+
+ERROR_RE = re.compile(r"(\[[A-Za-z ]+\]\[(error|warning)\])|( ERROR\] )", re.I)
+
+
+def test_addon(bds, addon, out_dir):
+    name = os.path.basename(addon).rsplit(".", 1)[0]
+    z, packs, blocks, items, entities = read_addon(addon)
+    tpl = prepare_template(bds)
+    level = "bb_" + re.sub(r"[^a-zA-Z0-9]", "_", name)[:40]
+    world = os.path.join(bds, "worlds", level)
+    shutil.rmtree(world, ignore_errors=True)
+    shutil.copytree(tpl, world)
+    wbp, wrp = [], []
+    for kind, (folder, m) in packs.items():
+        sub = "behavior_packs" if kind in ("data", "script") else "resource_packs"
+        dest = os.path.join(world, sub, folder.replace(" ", "_"))
+        for n in z.namelist():
+            if n.startswith(folder + "/") and not n.endswith("/"):
+                target = os.path.join(dest, n[len(folder) + 1:])
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                open(target, "wb").write(z.read(n))
+        (wbp if sub == "behavior_packs" else wrp).append({"pack_id": m["header"]["uuid"], "version": m["header"]["version"]})
+    tid = test_pack(os.path.join(world, "behavior_packs", "bb_test"), blocks, items, entities)
+    wbp.append({"pack_id": tid, "version": [1, 0, 0]})
+    json.dump(wbp, open(os.path.join(world, "world_behavior_packs.json"), "w"))
+    json.dump(wrp, open(os.path.join(world, "world_resource_packs.json"), "w"))
+    lines = run_server(bds, level, time.time() + TIMEOUT)
+    results = []
+    for l in lines:
+        if "BBTEST " in l:
+            try:
+                results.append(json.loads(l.split("BBTEST ", 1)[1]))
+            except ValueError:
+                pass
+    passed = [l.split("onTestPassed:", 1)[1].strip() for l in lines if "onTestPassed:" in l]
+    failed = [l.split("onTestFailed:", 1)[1].strip() for l in lines if "onTestFailed:" in l]
+    loaded = any("Pack Stack" in l and "bb_test" in l for l in lines) or any("Prova BLOCKBRIDGE" in l for l in lines)
+    errors = [l for l in lines if ERROR_RE.search(l) and "BBTEST" not in l and "onTestFailed" not in l]
+    report = {
+        "addon": os.path.basename(addon), "blocks": len(blocks), "items": len(items), "entities": len(entities),
+        "passed": passed, "failed": failed, "results": results, "content_log": errors[:200], "content_log_count": len(errors),
+        "packs_loaded": loaded,
+    }
+    json.dump(report, open(os.path.join(out_dir, name + ".json"), "w"), indent=1, ensure_ascii=False)
+    open(os.path.join(out_dir, name + ".log"), "w").write("\n".join(lines))
+    shutil.rmtree(world, ignore_errors=True)
+    return report
+
+
+def main():
+    bds, out_dir = sys.argv[1], sys.argv[2]
+    addons = sys.argv[3:]
+    os.makedirs(out_dir, exist_ok=True)
+    summary = []
+    bad = 0
+    for a in addons:
+        r = test_addon(bds, a, out_dir)
+        ok = not r["failed"] and r["passed"] and r["content_log_count"] == 0
+        if not ok:
+            bad += 1
+        line = "== %s: %s — blocchi %d, oggetti %d, creature %d; prove superate %d, fallite %d; errori nel registro dei contenuti %d" % (
+            r["addon"], "OK" if ok else "PROBLEMI", r["blocks"], r["items"], r["entities"], len(r["passed"]), len(r["failed"]), r["content_log_count"])
+        summary.append(line)
+        for res in r["results"]:
+            for key in ("missingBlocks", "missingItems", "missingEntities", "bad"):
+                if res.get(key):
+                    summary.append("   %s %s: %s" % (res.get("test"), key, "; ".join(map(str, res[key][:8]))))
+        for e in r["content_log"][:8]:
+            summary.append("   registro: " + e[:300])
+        print(summary[-1] if len(summary) == 1 else "\n".join(summary[-(1 + len(r["content_log"][:8])):]), flush=True)
+    open(os.path.join(out_dir, "riepilogo.txt"), "w").write("\n".join(summary) + "\n")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
