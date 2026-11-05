@@ -27,6 +27,10 @@ class AppPaths(context: Context) {
      */
     val worldsIncoming: File = File(context.filesDir, "worlds/incoming")
 
+    /** JAVA TO BEDROCK: copie delle mod scelte (si cancellano dopo la conversione) e add-on Bedrock creati. */
+    val convertIncoming: File = File(context.filesDir, "convert/incoming")
+    val convertedAddons: File = File(context.filesDir, "convert/addons")
+
     /** Copie di sicurezza create prima di eliminare un pacchetto. */
     val backups: File = File(context.filesDir, "backups")
 
@@ -45,6 +49,8 @@ class AppPaths(context: Context) {
         javaProfiles.mkdirs()
         modpacks.mkdirs()
         worldsIncoming.mkdirs()
+        convertIncoming.mkdirs()
+        convertedAddons.mkdirs()
         backups.mkdirs()
         libraryFile.parentFile?.mkdirs()
         sessions.mkdirs()

@@ -3,3 +3,5 @@
 # -keep class org.apache.commons.compress.** { *; }
 # -keep class com.github.junrar.** { *; }
 # -dontwarn org.slf4j.**
+# JAVA TO BEDROCK legge le sue tabelle (oggetti di Bedrock, nomi Java→Bedrock) come risorse accanto alle classi:
+# -keep class com.mmi.modinstaller.convert.** { *; }

@@ -1086,3 +1086,28 @@ internal class TextureCollector(private val mods: List<JavaModContent>, private 
 
     val missing: List<Rl> get() = textures.filter { it.value.bytes == null }.keys.toList()
 }
+
+/** Il rapporto della conversione in testo semplice (da condividere o da leggere senza l'app). */
+object ConversionText {
+    fun of(reports: List<ModReport>, addonName: String?): String {
+        val b = StringBuilder()
+        b.append("JAVA TO BEDROCK — ").append(addonName ?: "rapporto").append('\n')
+        b.append("Bedrock non esegue codice Java: passano il contenuto (oggetti, blocchi, texture, nomi, ricette, bottini, minerali, ")
+            .append("armature, creature con modello GeckoLib), non il comportamento scritto in codice.\n")
+        for (r in reports) {
+            b.append("\n== ").append(r.title)
+            if (r.version != null) b.append(' ').append(r.version)
+            if (r.loader != null) b.append(" (").append(r.loader).append(')')
+            b.append('\n').append(r.verdict).append('\n')
+            if (r.error != null) continue
+            b.append("Oggetti: ").append(r.items.size).append(" · Blocchi: ").append(r.blocks.size).append(" · Creature: ").append(r.entities.size)
+                .append(" · Ricette: ").append(r.recipesConverted).append(" su ").append(r.recipesTotal)
+                .append(" · Bottini: ").append(r.lootTables).append(" · Minerali: ").append(r.ores).append('\n')
+            for ((why, n) in r.recipeSkips.entries.sortedByDescending { it.value }) b.append("- ricette non convertite (").append(n).append("): ").append(why).append('\n')
+            for (s in r.simplified) b.append("- semplificato: ").append(s).append('\n')
+            for (s in r.estimates) b.append("- stimato: ").append(s).append('\n')
+            for (s in r.notConverted) b.append("- non convertito: ").append(s).append('\n')
+        }
+        return b.toString()
+    }
+}

@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       parts:
-        description: "Parti della prova su emulatore da eseguire, separate da virgola (base, mods, catalog, modpack, worlds). Vuoto = tutte"
+        description: "Parti della prova su emulatore da eseguire, separate da virgola (base, mods, catalog, modpack, worlds, convert). Vuoto = tutte"
         required: false
         default: ""
 
@@ -41,7 +41,7 @@ jobs:
         run: |
           python3 -I - "$WANT" >> "$GITHUB_OUTPUT" <<'PY'
           import json, sys
-          allowed = ["base", "mods", "catalog", "modpack", "worlds"]
+          allowed = ["base", "mods", "catalog", "modpack", "worlds", "convert"]
           want = [p.strip() for p in (sys.argv[1] if len(sys.argv) > 1 else "").split(",")]
           print("parts=" + json.dumps([p for p in allowed if p in want] or allowed))
           PY
@@ -93,7 +93,7 @@ jobs:
           # Per EmulatorModpackSamplesTest (modpack di prova della parte «modpack» dell'emulatore). Il server va appena avviato: un file
           # dei modpack di prova risponde 404 solo alla prima richiesta.
           MMI_FAKE_SERVER: http://127.0.0.1:8765
-        run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :catalog:test :modpack-engine:test :world-engine:test :app:testDebugUnitTest --continue --stacktrace
+        run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :catalog:test :modpack-engine:test :world-engine:test :mod-converter:test :app:testDebugUnitTest --continue --stacktrace
 
       # Prova COL SERVIZIO VERO: le richieste e le risposte reali di Modrinth (ricerca con i filtri, versioni, dipendenze), un
       # download vero dal suo CDN con verifica dell'impronta, la lettura del .jar scaricato e l'installazione in un profilo; poi
@@ -112,6 +112,36 @@ jobs:
           :modpack-engine:test --tests 'com.mmi.modinstaller.modpack.OnlineModpackTest' --rerun
           --continue --stacktrace
 
+      # JAVA TO BEDROCK con MOD VERE: alcune mod scaricate da Modrinth (contenuto, creature GeckoLib, solo codice, librerie) vengono
+      # convertite con il motore vero e gli add-on controllati con gli schemi JSON ufficiali di Mojang (bedrock-samples) e con i
+      # controlli sui riferimenti di ci/validate_addon.py. Non blocca nulla; il resoconto va nel riepilogo e nella Release.
+      - name: Schemi ufficiali di Minecraft Bedrock (Mojang/bedrock-samples)
+        id: schemas
+        continue-on-error: true
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/Mojang/bedrock-samples.git bedrock-samples
+          cd bedrock-samples && git sparse-checkout set --no-cone '/metadata/json_schemas/*' '/metadata/vanilladata_modules/*' '/version.json'
+          python3 -c "import json; print('bedrock-samples', json.load(open('version.json'))['latest'])"
+          pip install --quiet jsonschema
+
+      - name: Prova di conversione con mod vere (Modrinth)
+        id: convert
+        continue-on-error: true
+        env:
+          MMI_REAL_MODS: ${{ github.workspace }}/real-mods
+          MMI_REAL_OUT: ${{ github.workspace }}/real-mods-out
+        run: |
+          python3 -I ci/fetch_real_mods.py real-mods
+          gradle :mod-converter:test --tests 'com.mmi.modinstaller.convert.RealModsTest' --rerun --stacktrace
+          {
+            cat real-mods/mod-scaricate.txt; echo
+            cat real-mods-out/rapporto.txt; echo
+            echo "== Controllo degli add-on con gli schemi ufficiali di Mojang"
+            python3 -I ci/validate_addon.py bedrock-samples real-mods-out/*.mcaddon
+          } > convert-online-report.txt 2>&1; status=$?
+          cat convert-online-report.txt
+          exit $status
+
       - name: Riepilogo della prova col servizio vero
         if: always()
         continue-on-error: true
@@ -124,6 +154,14 @@ jobs:
               echo '```'
             else
               echo "(nessun resoconto: la prova non è partita)"
+            fi
+            echo "### JAVA TO BEDROCK con mod vere: ${{ steps.convert.outcome }}"
+            if [ -f convert-online-report.txt ]; then
+              echo '```'
+              cat convert-online-report.txt
+              echo '```'
+            else
+              echo "(nessun resoconto della conversione)"
             fi
             echo "### Modpack veri"
             if [ -f online-modpack-report.txt ]; then
@@ -215,6 +253,8 @@ jobs:
             catalog/build/reports/tests/test
             modpack-engine/build/reports/tests/test
             world-engine/build/reports/tests/test
+            mod-converter/build/reports/tests/test
+            convert-online-report.txt
             catalog-online-report.txt
             modpack-online-report.txt
             fake-modrinth-out
@@ -238,6 +278,7 @@ jobs:
             dist/*.apk
             catalog-online-report.txt
             modpack-online-report.txt
+            convert-online-report.txt
 
       # Il finto Minecraft serve solo alla prova su emulatore: non entra mai nella Release.
       # Questi passaggi non possono bloccare la consegna dell'APK (vengono dopo e non fanno fallire l'esecuzione).
@@ -317,6 +358,15 @@ jobs:
       - name: Crea i file di prova
         run: python3 ci/make_samples.py samples
 
+      # La parte «convert» controlla l'add-on creato sul telefono con gli schemi ufficiali di Mojang.
+      - name: Schemi ufficiali di Minecraft Bedrock (per la parte «convert»)
+        if: matrix.part == 'convert'
+        continue-on-error: true
+        run: |
+          git clone -q --depth 1 --filter=blob:none --sparse https://github.com/Mojang/bedrock-samples.git bedrock-samples
+          cd bedrock-samples && git sparse-checkout set --no-cone '/metadata/json_schemas/*' '/metadata/vanilladata_modules/*'
+          pip install --quiet jsonschema
+
       # Il runner di GitHub ha solo 2 core: con l'immagine «google_apis» (servizi di Google, Pixel Launcher) l'emulatore andava spesso in
       # blocco con finestre «… non risponde». Il primo tentativo usa l'immagine di base di Android (senza servizi di Google), più leggera.
       - name: Prova l'app sull'emulatore (primo tentativo)
@@ -331,7 +381,7 @@ jobs:
           ram-size: 3072M
           disable-animations: true
           emulator-boot-timeout: 900
-          script: SMOKE_PART=${{ matrix.part }} bash ci/emulator_smoke.sh
+          script: SMOKE_PART=${{ matrix.part }} BEDROCK_SAMPLES=${{ github.workspace }}/bedrock-samples bash ci/emulator_smoke.sh
 
       # Si ripete SOLO se l'emulatore era inutilizzabile (lo script lascia EMULATORE_INUTILIZZABILE e termina con il codice 3) o non è
       # nemmeno partito (manca problemi.txt). Se la prova ha trovato difetti veri NON si ripete: il risultato resta quello.
@@ -358,7 +408,7 @@ jobs:
           ram-size: 3072M
           disable-animations: true
           emulator-boot-timeout: 900
-          script: SMOKE_PART=${{ matrix.part }} bash ci/emulator_smoke.sh
+          script: SMOKE_PART=${{ matrix.part }} BEDROCK_SAMPLES=${{ github.workspace }}/bedrock-samples bash ci/emulator_smoke.sh
 
       - name: Salva schermate e log
         if: always()

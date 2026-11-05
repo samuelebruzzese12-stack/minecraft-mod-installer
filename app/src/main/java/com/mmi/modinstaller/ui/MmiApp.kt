@@ -57,6 +57,7 @@ import com.mmi.modinstaller.MainViewModel
 import com.mmi.modinstaller.ModpackViewModel
 import com.mmi.modinstaller.ModsViewModel
 import com.mmi.modinstaller.WorldsViewModel
+import com.mmi.modinstaller.ConvertViewModel
 import com.mmi.modinstaller.PickPurpose
 import com.mmi.modinstaller.Screen
 import com.mmi.modinstaller.Section
@@ -71,7 +72,8 @@ fun MmiApp(
     modsModel: ModsViewModel,
     catalogModel: CatalogViewModel,
     modpackModel: ModpackViewModel,
-    worldsModel: WorldsViewModel
+    worldsModel: WorldsViewModel,
+    convertModel: ConvertViewModel
 ) {
     val state by vm.state.collectAsState()
     val bridge by model.state.collectAsState()
@@ -80,6 +82,7 @@ fun MmiApp(
     val catalog by catalogModel.state.collectAsState()
     val modpacks by modpackModel.state.collectAsState()
     val worlds by worldsModel.state.collectAsState()
+    val conversion by convertModel.state.collectAsState()
     // La pagina «CERCA ONLINE» è dentro il MOD MANAGER: si apre dal suo pulsante e si chiude con «indietro».
     var showCatalog by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
@@ -113,6 +116,7 @@ fun MmiApp(
         if (state.section == Section.MODS) modsModel.onSectionOpened()
         if (state.section == Section.MODPACKS) modpackModel.onSectionOpened()
         if (state.section == Section.WORLDS) worldsModel.onSectionOpened()
+        if (state.section == Section.JAVA_TO_BEDROCK) convertModel.onSectionOpened()
         if (state.section != Section.MODS) showCatalog = false
     }
 
@@ -120,7 +124,7 @@ fun MmiApp(
 
     BackHandler(enabled = state.section != Section.HOME || state.busy != null || state.dialog != null) {
         // Durante un'operazione sui file Java «indietro» non lascia la schermata: l'operazione si interrompe con Annulla.
-        if (mods.busy == null && modpacks.busy == null && worlds.busy == null) vm.back()
+        if (mods.busy == null && modpacks.busy == null && worlds.busy == null && conversion.busy == null) vm.back()
     }
     // Dichiarati dopo l'altro: «indietro» chiude prima il menu e poi la pagina CERCA ONLINE, senza uscire dal MOD MANAGER.
     BackHandler(enabled = showCatalog && state.section == Section.MODS) {
@@ -214,6 +218,7 @@ fun MmiApp(
                             onMenu = openMenu,
                             onOpenMods = { vm.openSection(Section.MODS) }
                         )
+                        Section.JAVA_TO_BEDROCK -> JavaToBedrockScreen(conversion, convertModel, vm, openMenu)
                         Section.DOWNLOADS -> DownloadsScreen(downloads, downloadsModel, vm, modsModel, modpackModel, openMenu)
                         Section.DIAGNOSTICS -> DiagnosticsScreen(state, bridge, vm, model, modsModel, openMenu)
                         Section.SETTINGS -> SettingsScreen(state, bridge, vm, model, openMenu)
@@ -226,6 +231,7 @@ fun MmiApp(
                     else if (modsBusy != null) BusyOverlay(modsBusy) { modsModel.cancelBusy() }
                     else if (modpackBusy != null) BusyOverlay(modpackBusy) { modpackModel.cancelBusy() }
                     else if (worlds.busy != null) BusyOverlay(worlds.busy!!) { worldsModel.cancelBusy() }
+                    else if (conversion.busy != null) BusyOverlay(conversion.busy!!) { convertModel.cancelBusy() }
                 }
             }
         }

@@ -59,7 +59,7 @@ class SectionTest {
     @Test
     fun theEnginesNotBuiltYetAreMarkedComingSoon() {
         val soon = Section.values().filter { it.availability == Availability.SOON }.map { it.name }.toSet()
-        assertEquals(setOf("CONVERTER", "JAVA_TO_BEDROCK"), soon)
+        assertEquals(setOf("CONVERTER"), soon)
     }
 
     @Test

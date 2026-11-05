@@ -241,14 +241,6 @@ private fun planFor(section: Section): SectionPlan = when (section) {
         "Non è ancora stato costruito. Una conversione completa richiede un motore dedicato (come Chunker, che usa Java) " +
             "che questa app non include: non mostrerà mai «convertito al 100%» senza una verifica reale."
     )
-    Section.JAVA_TO_BEDROCK -> SectionPlan(
-        listOf(
-            "Analizzare in modo statico una mod Java per capire cosa usa (blocchi, oggetti, ricette, texture)",
-            "Preparare un rapporto di cosa potrebbe avere un equivalente in Bedrock"
-        ),
-        "Non è ancora stato costruito. Il codice Java di una mod non si può tradurre automaticamente in un add-on " +
-            "Bedrock: l'app non promette conversioni complete."
-    )
     else -> SectionPlan(emptyList(), "")
 }
 

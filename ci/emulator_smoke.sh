@@ -294,7 +294,7 @@ wait_storage() {
 # L'emulatore del runner di GitHub (2 core) è lentissimo: ogni passaggio dura decine di secondi e tutto di fila supera l'ora e mezza.
 # Per questo il workflow lancia le parti in lavori paralleli, ciascuno con il suo emulatore.
 PART=${SMOKE_PART:-all}
-case "$PART" in all|base|mods|catalog|modpack|worlds) ;; *) echo "SMOKE_PART non valido: $PART (ammessi: all, base, mods, catalog, modpack, worlds)"; exit 2 ;; esac
+case "$PART" in all|base|mods|catalog|modpack|worlds|convert) ;; *) echo "SMOKE_PART non valido: $PART (ammessi: all, base, mods, catalog, modpack, worlds, convert)"; exit 2 ;; esac
 runs() { [ "$PART" = all ] || [ "$PART" = "$1" ]; }
 log "Parte della prova: $PART"
 
@@ -414,7 +414,7 @@ shot "dashboard"
 expect "Minecraft Mod Installer" "in un'unica app" "Stato" "Minecraft Bedrock" "non trovato" \
   "Contenuti Bedrock gestiti" "Runtime Java" "non integrato" "Errori registrati" "Sezioni" \
   "INSTALLER BEDROCK" "JAVA EDITION" "Pronto" "Parziale"
-# Le sezioni ancora da costruire (WORLD CONVERTER, JAVA TO BEDROCK) sono in fondo all'elenco: si cercano scorrendo (prova 16).
+# La sezione ancora da costruire (WORLD CONVERTER) è in fondo all'elenco: si cerca scorrendo (prova 16).
 expect_scroll "In arrivo"
 check_theme light "tema predefinito (Automatico, telefono in modalità chiara)"
 
@@ -436,7 +436,7 @@ fi
 # ======================================================================================================== sezioni non costruite
 
 phase "Sezioni non ancora costruite"
-for s in "WORLD CONVERTER" "JAVA TO BEDROCK"; do
+for s in "WORLD CONVERTER"; do
   go_dash || { fail "$s: non trovo la dashboard"; continue; }
   if ! $UI tap "$s"; then fail "$s: scheda non trovata nella dashboard"; continue; fi
   if $UI wait "TORNA ALLA DASHBOARD" 10; then
@@ -463,7 +463,7 @@ else
   fail "il menu laterale non apre WORLD CONVERTER"
 fi
 # Dal menu laterale di una sezione: la voce HOME riporta alla dashboard; «Indietro» col menu aperto chiude solo il menu.
-if go_dash && $UI tap "JAVA TO BEDROCK" && $UI wait "TORNA ALLA DASHBOARD" 10; then
+if go_dash && $UI tap "WORLD CONVERTER" && $UI wait "TORNA ALLA DASHBOARD" 10; then
   $UI tap "Apri il menu"; sleep 1.5
   back; snap
   if seen "IMPOSTAZIONI"; then fail "menu: aperto da una sezione, Indietro non lo chiude"; fi
@@ -1033,6 +1033,23 @@ source ci/worlds_phase.sh
 if runs worlds; then
   [ "$PART" = worlds ] && { adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3; }
   worlds_tests
+fi
+
+# ======================================================================================================== JAVA TO BEDROCK
+
+# La fase sta in ci/convert_phase.sh. Consegna l'add-on creato al finto Minecraft: nella parte «convert» lo si installa subito.
+source ci/convert_phase.sh
+if runs convert && [ "$PART" = convert ]; then
+  adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3
+  if [ -n "$FAKE_APK" ]; then
+    adb install -r -t "$FAKE_APK" > "$OUT/install-fake.txt" 2>&1
+    grep -q Success "$OUT/install-fake.txt" || fail "JAVA TO BEDROCK: installazione del finto Minecraft non riuscita"
+    adb shell input keyevent KEYCODE_HOME; sleep 2
+    app_front
+  else
+    fail "finto Minecraft non disponibile: la consegna dell'add-on non è stata provata"
+  fi
+  convert_tests
 fi
 
 # ======================================================================================================== INSTALLER BEDROCK (Minecraft assente)

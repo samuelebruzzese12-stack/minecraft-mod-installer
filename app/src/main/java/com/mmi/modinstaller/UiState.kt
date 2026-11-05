@@ -30,7 +30,7 @@ enum class Section(val title: String, val availability: Availability, val summar
     MODPACKS("MODPACK MANAGER", Availability.PARTIAL, "Installa modpack Modrinth (.mrpack) in un profilo, con verifica dei file e ripresa"),
     WORLDS("WORLD MANAGER", Availability.PARTIAL, "Mondi Java in un profilo (un file alla volta, con ripresa); i Bedrock all'INSTALLER BEDROCK"),
     CONVERTER("WORLD CONVERTER", Availability.SOON, "Conversione di mondi tra Java e Bedrock"),
-    JAVA_TO_BEDROCK("JAVA TO BEDROCK", Availability.SOON, "Analisi e conversione delle mod Java"),
+    JAVA_TO_BEDROCK("JAVA TO BEDROCK", Availability.PARTIAL, "Porta in Bedrock il contenuto delle mod Java (oggetti, blocchi, ricette, creature); il codice no"),
     DOWNLOADS("DOWNLOAD MANAGER", Availability.READY, "Scarica file da siti consentiti, con ripresa e verifica"),
     DIAGNOSTICS("DIAGNOSTICA", Availability.READY, "Dispositivo, integrità dei file, errori recenti e analisi dei crash di Minecraft Java"),
     SETTINGS("IMPOSTAZIONI", Availability.READY, "Tema e profilo prestazioni")
