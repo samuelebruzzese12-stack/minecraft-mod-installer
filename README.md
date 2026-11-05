@@ -189,7 +189,7 @@ disco. Il suo esito sta in `modpack-online-report.txt` di ogni build e non va da
    ogni altro file.
 
 Cosa non fa: **non converte** i mondi tra Java e Bedrock (WORLD CONVERTER non c'è ancora), non apre il gioco, non ripara i mondi
-danneggiati e non legge il contenuto delle regioni (conta i file, non i chunk). Come è verificato: 34 test del modulo
+danneggiati e non legge il contenuto delle regioni (conta i file, non i chunk). Come è verificato: 35 test del modulo
 `world-engine` (mondi sintetici: dimensioni, mondi annidati, percorsi pericolosi, `level.dat` illeggibili, interruzione e ripresa,
 file rovinati nella cartella di lavoro, CRC sbagliati, spazio insufficiente, annullamento, esportazione e reimportazione) più
 `EmulatorWorldSamplesTest` sui mondi della prova su emulatore, e la parte «worlds» della prova su emulatore (`ci/worlds_phase.sh`),
