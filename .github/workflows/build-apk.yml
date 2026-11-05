@@ -48,12 +48,55 @@ jobs:
       - name: Crea i file di prova per il test sui file Java
         run: python3 ci/make_samples.py samples-test
 
+      # Il finto Modrinth della prova su emulatore (ci/dl_server.py --modrinth): lo stesso server, con gli stessi dati. Qui lo prova il
+      # test FakeModrinthChainTest con il catalogo, il motore dei download e il gestore dei profili veri; se i dati non tornano si
+      # vede subito, prima di spendere l'emulatore.
+      - name: Avvia il finto Modrinth per i test del catalogo
+        run: |
+          mkdir -p fake-modrinth-out
+          nohup python3 -I ci/dl_server.py --port 8765 --payload samples-test/Texture_Verde.mcpack --modrinth samples-test --out fake-modrinth-out > fake-modrinth-out/stdout.txt 2>&1 &
+          for i in $(seq 1 30); do
+            if python3 -I -c "import socket; socket.create_connection(('127.0.0.1', 8765), 1).close()" 2>/dev/null; then break; fi
+            sleep 0.5
+          done
+          cat fake-modrinth-out/stdout.txt
+          curl -s "http://127.0.0.1:8765/modrinth/v2/search?query=&facets=%5B%5B%22project_type%3Amod%22%5D%5D" | head -c 300; echo
+
       - name: Esegui i test (analisi, download e testi dell'app)
         id: coretests
         continue-on-error: true
         env:
           MMI_SAMPLES: ${{ github.workspace }}/samples-test
-        run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :app:testDebugUnitTest --continue --stacktrace
+          MMI_FAKE_MODRINTH: http://127.0.0.1:8765/modrinth/v2
+        run: gradle :core:test :download-engine:test :jar-analyzer:test :mod-manager:test :catalog:test :app:testDebugUnitTest --continue --stacktrace
+
+      # Prova COL SERVIZIO VERO: le richieste e le risposte reali di Modrinth (ricerca con i filtri, versioni, dipendenze), un
+      # download vero dal suo CDN con verifica dell'impronta, la lettura del .jar scaricato e l'installazione in un profilo.
+      # In sola lettura (solo richieste GET). Non blocca nulla: se la rete o il servizio non rispondono il passaggio fallisce
+      # e basta. L'esito e il resoconto compaiono nel riepilogo dell'esecuzione.
+      - name: Prova col servizio vero (Modrinth)
+        id: online
+        continue-on-error: true
+        env:
+          MMI_ONLINE: "1"
+          MMI_ONLINE_REPORT: ${{ github.workspace }}/online-report.txt
+        run: gradle :catalog:test --tests 'com.mmi.modinstaller.catalog.OnlineModrinthTest' --rerun --stacktrace
+
+      - name: Riepilogo della prova col servizio vero
+        if: always()
+        continue-on-error: true
+        run: |
+          {
+            echo "## Prova col servizio vero (Modrinth): ${{ steps.online.outcome }}"
+            if [ -f online-report.txt ]; then
+              echo '```'
+              cat online-report.txt
+              echo '```'
+            else
+              echo "(nessun resoconto: la prova non è partita)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          cp online-report.txt catalog-online-report.txt 2>/dev/null || true
 
       - name: Compila l'APK
         run: gradle :app:assembleDebug :app:assembleRelease --stacktrace
@@ -130,6 +173,9 @@ jobs:
             download-engine/build/reports/tests/test
             jar-analyzer/build/reports/tests/test
             mod-manager/build/reports/tests/test
+            catalog/build/reports/tests/test
+            catalog-online-report.txt
+            fake-modrinth-out
             app/build/reports/tests/testDebugUnitTest
           if-no-files-found: ignore
 
@@ -164,12 +210,22 @@ jobs:
 
   # Prova l'APK appena compilato su un emulatore Android: schermate, pulsanti, apertura di file di prova.
   # Non blocca la consegna dell'APK (continue-on-error): serve a trovare i difetti che la compilazione non vede.
+  #
+  # L'emulatore del runner (2 core) è lentissimo: ogni passaggio dura decine di secondi. Tutta la prova di fila superava l'ora e mezza,
+  # quindi si divide in tre parti che girano in parallelo, ciascuna con il suo emulatore:
+  #   base    = installer Bedrock, sezioni, impostazioni, download, finto Minecraft, arresto provocato, aggiornamento sopra la versione 5;
+  #   mods    = MOD MANAGER (profili, installazione, interruttore, annulla, verifica, raccolte, esportazione);
+  #   catalog = CERCA ONLINE (catalogo Modrinth, con il finto servizio di ci/dl_server.py); si prepara da sé il profilo di partenza.
   emulator:
-    name: Prova su emulatore Android
+    name: Prova su emulatore Android (${{ matrix.part }})
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 120
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [base, mods, catalog]
 
     steps:
       - name: Scarica il codice
@@ -201,6 +257,7 @@ jobs:
       # l'emulatore la installa, ci lavora, poi installa sopra quella nuova e controlla che i dati restino.
       # Se non si riesce a scaricarla la prova di aggiornamento viene saltata e il rapporto lo dice.
       - name: Scarica la versione precedente (per la prova di aggiornamento)
+        if: matrix.part == 'base'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -227,7 +284,7 @@ jobs:
           ram-size: 3072M
           disable-animations: true
           emulator-boot-timeout: 900
-          script: bash ci/emulator_smoke.sh
+          script: SMOKE_PART=${{ matrix.part }} bash ci/emulator_smoke.sh
 
       # Si ripete SOLO se l'emulatore era inutilizzabile (lo script lascia EMULATORE_INUTILIZZABILE e termina con il codice 3) o non è
       # nemmeno partito (manca problemi.txt). Se la prova ha trovato difetti veri NON si ripete: il risultato resta quello.
@@ -254,13 +311,13 @@ jobs:
           ram-size: 3072M
           disable-animations: true
           emulator-boot-timeout: 900
-          script: bash ci/emulator_smoke.sh
+          script: SMOKE_PART=${{ matrix.part }} bash ci/emulator_smoke.sh
 
       - name: Salva schermate e log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: prova-emulatore
+          name: prova-emulatore-${{ matrix.part }}
           path: |
             ci-out
             ci-out-tentativo1
@@ -272,8 +329,8 @@ jobs:
         run: |
           dirs=""
           for d in ci-out ci-out-tentativo1; do [ -d "$d" ] && dirs="$dirs $d"; done
-          if [ -n "$dirs" ]; then zip -qr prova-emulatore.zip $dirs; fi
-          ls -l prova-emulatore.zip || true
+          if [ -n "$dirs" ]; then zip -qr prova-emulatore-${{ matrix.part }}.zip $dirs; fi
+          ls -l prova-emulatore-${{ matrix.part }}.zip || true
 
       - name: Allega i risultati alla Release
         if: always()
@@ -281,4 +338,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
-          files: prova-emulatore.zip
+          files: prova-emulatore-${{ matrix.part }}.zip

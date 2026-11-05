@@ -22,8 +22,8 @@ Regole che guidano tutto il lavoro (dalla direttiva):
 | Diagnostica: dispositivo (RAM, CPU, spazio, temperatura), integrità dei dati dell'app, ultimi errori | Realizzato (fase 1) | test JVM + emulatore |
 | Download Manager: coda, ripresa (Range), SHA-1/256/512, host consentiti, annullamento | Realizzato (fase 2) | test JVM con server HTTP locale |
 | Analisi JAR **senza eseguire codice**: Fabric, Quilt, Forge, NeoForge, mcmod.info, OptiFine, resource pack, shader, datapack | Realizzato (fase 3) | test JVM con JAR sintetici |
-| Mod Manager a profili indipendenti: importazione (anche multipla/ZIP), SHA-256, dipendenze mancanti, conflitti, backup e annullamento, attiva/disattiva | Realizzato (fase 3) | test JVM + emulatore |
-| Ricerca e installazione da Modrinth (API ufficiale) | Realizzato (fase 3), prova in rete solo su dispositivo | test con risposte registrate; **non verificabile dal server di sviluppo** (rete bloccata) |
+| Mod Manager a profili indipendenti: importazione (anche multipla/ZIP), SHA-256, dipendenze mancanti, conflitti, backup e annullamento, attiva/disattiva | **Parziale (fase 3)**: fatti profili indipendenti, importazione multipla e raccolte `.zip`, SHA-256, dipendenze mancanti **segnalate (non scaricate)**, incompatibilità dichiarate, cestino del profilo e annulla, interruttore, verifica del profilo, esportazione in ZIP. Da fare: cartella di esportazione scelta una volta, raccolte `.7z`/`.rar` | test JVM + emulatore (esito nel resoconto di ogni build) |
+| Ricerca e installazione da Modrinth (API ufficiale) | **Collegato (fase 3d), verificato solo in parte**: ricerca con filtri (tipo, caricatore, versione di Minecraft), versione adatta al profilo (stabile prima, mai un file senza impronta), dipendenze obbligatorie a catena, scarico con impronta verificata, passaggio al MOD MANAGER. Non aggiorna da sola le mod, non cerca modpack | test JVM con risposte registrate, con un vero server HTTP locale e con un finto Modrinth (`ci/dl_server.py`); emulatore (parte «catalog»); contro il **servizio vero** solo il passaggio «Prova col servizio vero (Modrinth)» della CI. Il server di sviluppo non raggiunge Internet: l'esito di quel passaggio sta nel rapporto di ogni build e non va dato per scontato |
 | CurseForge (ricerca/scarico mod) | **Non attivo**: l'API richiede una chiave personale; i modpack CurseForge si leggono e si installano solo per la parte che non richiede l'API | dichiarato nell'app |
 | Modpack Modrinth `.mrpack` e CurseForge `manifest.json`: lettura, struttura, overrides, download con verifica, ripresa, profilo indipendente | Realizzato (fase 4) | test JVM con modpack sintetici |
 | Mondi Java/Bedrock: riconoscimento (`level.dat`, `region`, `entities`, `poi`, `DIM-1`, `DIM1`, dimensioni personalizzate, `playerdata`, `datapacks`…), importazione **a flusso** (nessun mondo in RAM), checkpoint e ripresa, copia originale immutabile, avanzamento, pulizia | Realizzato (fase 5) | test JVM (anche migliaia di regioni, interruzione e ripresa) + emulatore |
@@ -66,7 +66,23 @@ Modulo Kotlin puro (come `:core`, testabile sulla JVM) + sezione DOWNLOAD MANAGE
   nuovo, chiusura dell'app a metà, apertura del file scaricato nell'INSTALLER BEDROCK) e tutte le prove precedenti invariate.
 
 ### Fase 3 — `:jar-analyzer` e `:mod-manager`
-Profili Java indipendenti (`files/java/profiles/<id>/`), importazione `.jar`/`.zip`/multipla, riconoscimento di versione Minecraft e loader dai metadati, dipendenze mancanti e conflitti noti, SHA-256, backup prima di ogni modifica, annulla, attiva/disattiva, ricerca Modrinth.
+Profili Java indipendenti (`files/java/profiles/<id>/`), importazione `.jar`/`.zip`/multipla, riconoscimento di versione Minecraft e loader dai metadati, dipendenze mancanti e conflitti noti, SHA-256, cestino prima di ogni modifica, annulla, attiva/disattiva.
+
+- **3a — `:jar-analyzer`** (fatto): legge `.jar`/`.zip` come archivi, **senza eseguire codice**: Fabric, Quilt, Forge, NeoForge, `mcmod.info`,
+  OptiFine, resource/data/shader pack, modpack Modrinth e CurseForge, raccolte di mod; intervalli di versione Maven e SemVer; versione
+  di Java dalle classi; stessi limiti di sicurezza dell'analisi Bedrock. 77 test.
+- **3b — `:mod-manager`** (fatto): profili, piano di installazione (*Pronto / Serve conferma / Non installabile / Già installato*),
+  installazione con copia in temporaneo, verifica SHA-256 e rinomina atomica, cestino per ciò che viene sostituito o rimosso,
+  annulla (le ultime 30 operazioni), interruttore `.disabled`, riconciliazione con il disco (il disco è la verità), verifica del
+  profilo, esportazione in ZIP. 147 test (+8 sui file della prova su emulatore).
+- **3c — schermata MOD MANAGER** (fatto): profili, aggiunta di file dal selettore, da «Apri con», da «Condividi» e dal DOWNLOAD MANAGER;
+  stato della sezione **Parziale** (gestisce i file, non avvia il gioco).
+- **3d — Modrinth** (fatto; modulo `:catalog`, 86 test): ricerca e dipendenze tramite l'API ufficiale v2 con un client HTTP sostituibile
+  nei test (solo `https` verso `api.modrinth.com`, nessuna redirezione seguita, limiti di dimensione, 429 con attesa, 5xx e risposte
+  illeggibili spiegati). Il catalogo non scarica da solo: i file passano dal DOWNLOAD MANAGER con l'impronta pubblicata dal
+  servizio (se non corrisponde il file non si tiene) e poi dal controllo del MOD MANAGER. Provato contro un **finto Modrinth**; contro il
+  servizio vero solo dal passaggio dedicato della CI. CurseForge richiede una chiave personale e resta non attivo.
+- *Cosa nessun test può dire:* se un launcher o il gioco carichino davvero i file di un profilo. L'app lo dichiara nella schermata.
 
 ### Fase 4 — `:modpack-engine`
 `.mrpack` e `manifest.json` CurseForge → piano di installazione → profilo indipendente → file e overrides al posto giusto → download verificati e ripresi.
@@ -83,5 +99,5 @@ Analisi dei log di crash, controlli prima dell'avvio, README, APK finale.
 ## Come si verifica ogni fase
 1. Test JVM (`:core` e moduli nuovi) — in locale e in CI.
 2. Compilazione APK in CI (`assembleDebug`/`assembleRelease`).
-3. Prova su emulatore Android: navigazione, importazione Bedrock (regressione), importazione di file Java di prova, schermate nuove (schermate e log salvati nella Release).
+3. Prova su emulatore Android, in tre lavori paralleli («base»: navigazione, importazione Bedrock, download, aggiornamento; «mods»: MOD MANAGER; «catalog»: CERCA ONLINE): schermate e log salvati nella Release (`prova-emulatore-base.zip`, `prova-emulatore-mods.zip`, `prova-emulatore-catalog.zip`). Ogni difetto trovato dall'emulatore si corregge nell'app **o** nello script, dichiarando quale dei due era sbagliato.
 4. Quello che nessuna prova automatica può confermare (Minecraft vero, rete reale, dispositivo fisico) viene detto esplicitamente nel resoconto.

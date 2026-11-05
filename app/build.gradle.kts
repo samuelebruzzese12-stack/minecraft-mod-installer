@@ -87,6 +87,7 @@ dependencies {
     implementation(project(":download-engine"))
     implementation(project(":jar-analyzer"))
     implementation(project(":mod-manager"))
+    implementation(project(":catalog"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

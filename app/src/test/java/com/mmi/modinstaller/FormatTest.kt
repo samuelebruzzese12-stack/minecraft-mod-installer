@@ -145,4 +145,27 @@ class FormatTest {
         assertEquals("\u2014", Format.dateTime(0L))
         assertTrue(Format.dateTime(1_700_000_000_000L).matches(Regex("\\d\\d/\\d\\d/\\d{4} \\d\\d:\\d\\d")))
     }
+
+    @Test
+    fun countShortensBigNumbersInItalian() {
+        assertEquals("0", Format.count(0L))
+        assertEquals("950", Format.count(950L))
+        assertEquals("1.234", Format.count(1_234L))
+        assertEquals("9.999", Format.count(9_999L))
+        assertEquals("10 mila", Format.count(10_000L))
+        assertEquals("12,3 mila", Format.count(12_345L))
+        assertEquals("999,9 mila", Format.count(999_900L))
+        // Vicino al milione non deve comparire «1000 mila»
+        assertEquals("1 milione", Format.count(999_950L))
+        assertEquals("1 milione", Format.count(1_000_000L))
+        assertEquals("1,5 milioni", Format.count(1_500_000L))
+        assertEquals("3,4 milioni", Format.count(3_400_000L))
+        assertEquals("120 milioni", Format.count(120_000_000L))
+    }
+
+    @Test
+    fun countNeverShowsNegativeNumbers() {
+        assertEquals("0", Format.count(-5L))
+        assertEquals("0", Format.count(Long.MIN_VALUE))
+    }
 }

@@ -92,6 +92,20 @@ object Format {
 
     fun plural(count: Int, one: String, many: String): String = if (count == 1) "$count $one" else "$count $many"
 
+    /**
+     * Numero grande in forma breve: 950 → «950», 1234 → «1.234», 12.345 → «12,3 mila», 3.400.000 → «3,4 milioni».
+     * Un numero negativo (dato sbagliato di un servizio) si mostra come 0.
+     */
+    fun count(n: Long): String {
+        val v = if (n < 0L) 0L else n
+        if (v < 10_000L) return String.format(Locale.ITALY, "%,d", v)
+        if (v < 999_950L) return oneDecimal(v / 1_000.0) + " mila"
+        val millions = oneDecimal(v / 1_000_000.0)
+        return if (millions == "1") "1 milione" else "$millions milioni"
+    }
+
+    private fun oneDecimal(value: Double): String = String.format(Locale.ITALY, "%.1f", value).removeSuffix(",0")
+
     private val FORMAT_CODES = Regex("\u00A7.")
 
     /** Toglie i codici di colore di Minecraft (§a, §l, ...) che compaiono nei nomi e nelle descrizioni dei pacchetti. */

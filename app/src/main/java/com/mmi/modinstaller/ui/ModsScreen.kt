@@ -49,10 +49,10 @@ import com.mmi.modinstaller.mods.ProfileItem
  * MOD MANAGER: mod, resource pack, shader e data pack di Minecraft Java Edition in profili indipendenti.
  *
  * Quello che mostra è quello che l'app sa davvero: i file vengono letti senza eseguirli e confrontati con il profilo
- * (caricatore, versione di Minecraft, dipendenze). Non avvia il gioco e non scarica da Modrinth o CurseForge.
+ * (caricatore, versione di Minecraft, dipendenze). Non avvia il gioco. Da «CERCA ONLINE» si scarica da Modrinth (non da CurseForge).
  */
 @Composable
-fun ModsScreen(mods: ModsState, model: ModsViewModel, vm: MainViewModel, onMenu: () -> Unit) {
+fun ModsScreen(mods: ModsState, model: ModsViewModel, vm: MainViewModel, onMenu: () -> Unit, onOpenCatalog: () -> Unit) {
     // «*/*»: molti gestori di file non associano un tipo ai .jar e ai .mrpack.
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         model.addFiles(uris, "file")
@@ -108,6 +108,7 @@ fun ModsScreen(mods: ModsState, model: ModsViewModel, vm: MainViewModel, onMenu:
             onClick = { picker.launch(arrayOf("*/*")) },
             height = 56.dp
         )
+        FullButton("CERCA ONLINE (MODRINTH)", onClick = onOpenCatalog)
 
         PendingSection(mods, model)
 
@@ -126,7 +127,8 @@ fun ModsScreen(mods: ModsState, model: ModsViewModel, vm: MainViewModel, onMenu:
                         "Un controllo superato non garantisce che il gioco parta.",
                     "Non avvia Minecraft Java. I file restano nei profili di questa app: per usarli altrove esportali in uno " +
                         "ZIP (solo i file attivi) e estrailo nella cartella di gioco del tuo programma di avvio.",
-                    "Modrinth e CurseForge non sono ancora collegati: i file si aggiungono da memoria o dal DOWNLOAD MANAGER."
+                    "Modrinth è collegato in «CERCA ONLINE». CurseForge no (serve una chiave personale): per i suoi file usa " +
+                        "la memoria o il DOWNLOAD MANAGER."
                 )
             )
         }
@@ -256,7 +258,7 @@ private fun PendingCard(p: PendingFile, mods: ModsState, model: ModsViewModel) {
                     }
                 )
                 Text(
-                    text = "Aggiungi anche quei file: non vengono scaricati in automatico.",
+                    text = "Aggiungi anche quei file (da «CERCA ONLINE» si scaricano insieme alla mod).",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -548,15 +550,20 @@ private fun ProfileFormDialog(form: ModsDialog.ProfileForm, model: ModsViewModel
                 label = { Text("Versione di Minecraft (es. 1.20.1)") }
             )
             Text(text = "Caricatore", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-            for (option in ModLoader.values()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { loader = option },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(selected = loader == option, onClick = { loader = option })
-                    Text(text = option.label, style = MaterialTheme.typography.bodyMedium)
+            // Due per riga: in una colonna sola la finestra era così alta che i pulsanti restavano fuori vista.
+            for (pair in ModLoader.values().toList().chunked(2)) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    for (option in pair) {
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { loader = option },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(selected = loader == option, onClick = { loader = option })
+                            Text(text = option.label, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
                 }
             }
             OutlinedTextField(

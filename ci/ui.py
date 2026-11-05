@@ -10,6 +10,10 @@ Comandi:
   has TESTO              come sopra ma su una schermata nuova
   tap TESTO              tocca il primo elemento che contiene TESTO (scorre fino a 3 volte per trovarlo)
   tap-last TESTO         come tap, ma sceglie l'ULTIMO elemento che contiene TESTO (es. la voce del menu laterale)
+  tap-exact TESTO        tocca solo un elemento il cui testo è ESATTAMENTE TESTO (maiuscole a parte) e di cui si vede il centro;
+                         altrimenti scorre fino a 3 volte. Serve per «CERCA», «OK», «CHIUDI», che altrove compaiono dentro frasi
+  collect FILE [VOLTE]   scorre la pagina dall'alto verso il basso (fino in fondo, al massimo VOLTE volte) e scrive in FILE tutti i
+                         testi visti, uno per riga; poi torna in cima. Per controllare presenza e assenza di testi in pagine lunghe
   scan TESTO [VOLTE]     esce 0 se TESTO compare scorrendo la pagina verso il basso e poi verso l'alto (non tocca nulla)
   top                    torna in cima alla pagina
   actions PERCORSO       elenca le azioni toccabili (testo di ogni elemento cliccabile), una per riga
@@ -123,6 +127,41 @@ def tap(needle, scrolls=3, last=False):
     return False
 
 
+def find_exact(ns, needle, screen):
+    """Come find, ma il testo deve essere uguale a needle e il centro dell'elemento deve stare sullo schermo (con un margine)."""
+    nl = needle.strip().lower()
+    w, h = screen
+    best = None
+    for i, n in enumerate(ns):
+        x1, y1, x2, y2 = n["box"]
+        if x2 <= x1 or y2 <= y1:
+            continue
+        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+        if not (20 <= cx <= w - 20 and 80 <= cy <= h - 120):
+            continue
+        for label in (n["text"], n["desc"]):
+            if label and label.strip().lower() == nl:
+                rank = (0 if n["clickable"] else 1, i)
+                if best is None or rank < best[0]:
+                    best = (rank, n)
+    return best[1] if best else None
+
+
+def tap_exact(needle, scrolls=3):
+    screen = screen_size()
+    for i in range(scrolls + 1):
+        p = dump("/tmp/mmi_tapx.xml")
+        if p:
+            n = find_exact(nodes(p), needle, screen)
+            if n:
+                x1, y1, x2, y2 = n["box"]
+                adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
+                return True
+        if i < scrolls:
+            swipe_up()
+    return False
+
+
 def swipe_down():
     w, h = screen_size()
     adb("shell", "input", "swipe", str(w // 2), str(int(h * 0.30)), str(w // 2), str(int(h * 0.80)), "300")
@@ -149,6 +188,33 @@ def scan(needle, scrolls=5):
 def top():
     for _ in range(6):
         swipe_down()
+
+
+def collect(path_out, scrolls=8):
+    """Tutti i testi della pagina, scorrendola dall'alto in basso; si ferma quando la pagina non scorre più."""
+    top()
+    seen = []
+    previous = None
+    for i in range(scrolls + 1):
+        p = dump("/tmp/mmi_collect.xml")
+        if p:
+            texts = []
+            for n in nodes(p):
+                for label in (n["text"], n["desc"]):
+                    label = label.strip()
+                    if label and label not in texts:
+                        texts.append(label)
+            for t in texts:
+                if t not in seen:
+                    seen.append(t)
+            if previous is not None and texts == previous:
+                break
+            previous = texts
+        if i < scrolls:
+            swipe_up()
+    with open(path_out, "w", encoding="utf-8") as f:
+        f.write("\n".join(seen) + "\n")
+    top()
 
 
 def actions(path):
@@ -357,6 +423,11 @@ def main(argv):
         return 0 if tap(argv[2]) else 1
     if cmd == "tap-last":
         return 0 if tap(argv[2], last=True) else 1
+    if cmd == "tap-exact":
+        return 0 if tap_exact(argv[2]) else 1
+    if cmd == "collect":
+        collect(argv[2], int(argv[3]) if len(argv) > 3 else 8)
+        return 0
     if cmd == "scan":
         return 0 if scan(argv[2], int(argv[3]) if len(argv) > 3 else 5) else 1
     if cmd == "top":

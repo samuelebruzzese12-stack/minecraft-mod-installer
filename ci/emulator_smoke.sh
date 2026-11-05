@@ -1,6 +1,7 @@
 #!/bin/bash
 # Prova su emulatore Android dell'app completa: dashboard, menu, INSTALLER BEDROCK, Java Edition, DOWNLOAD MANAGER,
-# MOD MANAGER (ci/mods_phase.sh), Diagnostica, Impostazioni e sezioni non ancora costruite. Installa l'APK, apre file di prova dal selettore di sistema (come farebbe
+# MOD MANAGER (ci/mods_phase.sh), CERCA ONLINE (ci/catalog_phase.sh), Diagnostica, Impostazioni e sezioni non ancora costruite.
+# Installa l'APK, apre file di prova dal selettore di sistema (come farebbe
 # l'utente) e tocca i pulsanti. Con il FINTO Minecraft (ci/fakeminecraft) controlla anche che il file consegnato
 # dall'app contenga tutto, byte per byte. Alla fine installa l'APK nuovo SOPRA quello della versione precedente per
 # controllare che elenchi e cronologia non vadano persi. Salva schermate, dump dell'interfaccia e log in $OUT.
@@ -11,7 +12,9 @@
 #
 # Il DOWNLOAD MANAGER si prova con un piccolo server HTTP (ci/dl_server.py) che gira su questo computer: l'emulatore lo
 # raggiunge come 10.0.2.2:8765 (solo la build di prova ammette http verso quell'indirizzo). Si prova la ripresa, il taglio
-# della rete, l'impronta sbagliata e il consenso a un sito nuovo. Internet vero NON si prova (nessun accesso garantito).
+# della rete, l'impronta sbagliata e il consenso a un sito nuovo. Lo stesso server imita anche l'API di Modrinth (--modrinth)
+# per la fase CERCA ONLINE. Internet vero NON si prova qui (nessun accesso garantito): Modrinth vero lo prova un passo a parte
+# del workflow.
 PKG=com.mmi.modinstaller
 FAKE_PKG=com.mojang.minecraftpe
 APK=${APK:-apk/MinecraftModInstaller-debug.apk}
@@ -99,6 +102,13 @@ expect() {
   [ -z "$LAST_UI" ] && return
   for t in "$@"; do $UI has-in "$LAST_UI" "$t" || fail "manca «$t» nella schermata $(basename "$LAST_UI" .xml)"; done
 }
+# Come expect, ma per testi che possono stare sotto il bordo dello schermo (pulsanti in fondo a una scheda lunga): scorre la pagina.
+# Serve anche tornare in cima, così i passi seguenti ritrovano la pagina come prima.
+expect_scroll() {
+  local t
+  for t in "$@"; do $UI scan "$t" 6 || fail "manca «$t» (nemmeno scorrendo la pagina) nella schermata $(basename "${LAST_UI:-?}" .xml)"; done
+  $UI top
+}
 # Le azioni toccabili della schermata (ultima salvata con shot) devono essere solo quelle elencate: serve a provare
 # che le sezioni non ancora costruite non hanno pulsanti finti.
 only_actions() {
@@ -171,19 +181,42 @@ check_theme() { # light|dark  descrizione
 pull_lib() { adb exec-out run-as $PKG cat files/library/library.json > "$1" 2>/dev/null; [ -s "$1" ]; }
 lib_has() { pull_lib "$OUT/.lib.tmp" && grep -Eq "$1" "$OUT/.lib.tmp"; }
 
+# Sceglie un file nel selettore di sistema GIÀ APERTO, come farebbe l'utente (il selettore resta quello di Android: l'app non c'entra).
+# Si apre su «Recent», che elenca solo i file che Android ha già indicizzato: all'inizio ne mostra pochi (nella prova 10 ne vedeva 2 su
+# 30). L'elenco vero è la cartella «Downloads»: ci si passa con attese vere, perché su questo emulatore il pannello laterale impiega
+# qualche secondo ad aprirsi (con una pausa fissa il tocco su «Downloads» cadeva nel vuoto). Se il file non si vede nemmeno lì,
+# per la lunghezza dell'elenco, si usa la ricerca del selettore.
+picker_choose() { # nome-del-file
+  local name="$1" i
+  $UI wait "Show roots" 30 > /dev/null 2>&1 || $UI wait "Mostra radici" 3 > /dev/null 2>&1 || true
+  if $UI wait "$name" 3; then $UI tap "$name" && return 0; fi
+  if ! $UI has "Files in Downloads"; then
+    for i in 1 2 3; do
+      ($UI tap "Show roots" || $UI tap "Mostra radici") > /dev/null 2>&1 || { sleep 2; continue; }
+      if $UI wait "Downloads" 8; then
+        $UI tap "Downloads" > /dev/null 2>&1
+        $UI wait "Files in Downloads" 12 > /dev/null 2>&1 && break
+      fi
+    done
+  fi
+  if $UI wait "$name" 5; then $UI tap "$name" && return 0; fi
+  # Elenco lungo: la ricerca del selettore cerca per nome nella cartella in cui ci si trova.
+  if $UI tap "Search" > /dev/null 2>&1; then
+    sleep 1.5
+    $UI fill 0 "$name" > /dev/null 2>&1
+    adb shell input keyevent KEYCODE_ENTER > /dev/null 2>&1
+    if $UI wait "$name" 20; then $UI tap "$name" && return 0; fi
+  fi
+  return 1
+}
+
 # Apre un file di prova dal selettore di sistema, come farebbe l'utente.
 open_sample() {
   local name="$1"
   go_home || { fail "non torno alla Home prima di aprire $name"; return 1; }
   $UI tap "SELEZIONA FILE" || { fail "SELEZIONA FILE non toccabile ($name)"; return 1; }
   sleep 3
-  if ! $UI wait "$name" 5; then
-    $UI tap "Show roots" || $UI tap "Mostra radici" || true
-    sleep 1.5
-    ($UI tap "Downloads" || $UI tap "Download") || true
-    sleep 2.5
-  fi
-  if $UI tap "$name"; then
+  if picker_choose "$name"; then
     sleep 1.5
     $UI tap "Open" || $UI tap "Apri" || true
     return 0
@@ -230,6 +263,36 @@ wait_storage() {
   done
   return 1
 }
+
+# ======================================================================================================== quale parte, e il salvavita
+
+# Quale parte della prova eseguire: «base» (tutto tranne MOD MANAGER e CERCA ONLINE), «mods» (solo MOD MANAGER), «catalog» (solo
+# CERCA ONLINE, che si prepara da sé il profilo) o «all» (tutto di fila, una dopo l'altra).
+# L'emulatore del runner di GitHub (2 core) è lentissimo: ogni passaggio dura decine di secondi e tutto di fila supera l'ora e mezza.
+# Per questo il workflow lancia le tre parti in tre lavori in parallelo, ciascuno con il suo emulatore.
+PART=${SMOKE_PART:-all}
+case "$PART" in all|base|mods|catalog) ;; *) echo "SMOKE_PART non valido: $PART (ammessi: all, base, mods, catalog)"; exit 2 ;; esac
+runs() { [ "$PART" = all ] || [ "$PART" = "$1" ]; }
+log "Parte della prova: $PART"
+
+# Salvavita: se la prova supera il tempo massimo si ferma da sola, ma prima salva schermata, interfaccia e log dell'ultimo punto
+# raggiunto. Senza, un passaggio che si pianta consuma le due ore del lavoro e lascia poche tracce.
+BUDGET_SEC=${SMOKE_BUDGET_SEC:-5100}
+time_is_up() {
+  trap '' USR1 TERM
+  fail "tempo massimo della prova superato ($((BUDGET_SEC / 60)) minuti): mi fermo qui (ultima schermata: zz-tempo-scaduto)"
+  adb exec-out screencap -p > "$OUT/shots/zz-tempo-scaduto.png" 2>/dev/null
+  $UI dump "$OUT/ui/zz-tempo-scaduto.xml" > /dev/null 2>&1
+  [ -s "$OUT/ui/zz-tempo-scaduto.xml" ] && $UI texts "$OUT/ui/zz-tempo-scaduto.xml" > "$OUT/ui/zz-tempo-scaduto.txt" 2>/dev/null
+  [ -n "$LOGCAT_PID" ] && kill "$LOGCAT_PID" 2>/dev/null
+  grep -E "modinstaller|MMI|AndroidRuntime|FAKE_MC" "$OUT/logcat.txt" 2>/dev/null | head -n 600 > "$OUT/logcat-app.txt"
+  [ -n "${DL_PID:-}" ] && kill "$DL_PID" 2>/dev/null
+  exit 1
+}
+trap time_is_up USR1
+( sleep "$BUDGET_SEC"; kill -USR1 $$ 2>/dev/null ) > /dev/null 2>&1 &
+WATCHDOG_PID=$!
+trap 'kill "$WATCHDOG_PID" 2>/dev/null' EXIT
 
 # ======================================================================================================== preparazione
 
@@ -291,6 +354,7 @@ adb shell ls -l /sdcard/Download > "$OUT/download-dir.txt" 2>&1
 
 # ======================================================================================================== permessi
 
+if runs base; then
 phase "Permessi dichiarati dall'app"
 adb shell dumpsys package $PKG > "$OUT/dumpsys-package.txt" 2>&1
 # L'unico permesso ammesso è INTERNET (serve al DOWNLOAD MANAGER, che fa solo richieste per ricevere file).
@@ -508,6 +572,8 @@ else
   fail "IMPOSTAZIONI: non si apre dal menu"
 fi
 
+fi   # fine della parte «base» iniziale (permessi, dashboard, menu, sezioni, Java Edition, Diagnostica, Impostazioni)
+
 # ======================================================================================================== DOWNLOAD MANAGER
 
 # Il server di prova (ci/dl_server.py) gira su questo computer; l'app lo raggiunge come 10.0.2.2:8765.
@@ -516,8 +582,8 @@ DL_LOG="$OUT/dl-server.log"
 DL_PID=""
 DL_BASE="http://10.0.2.2:$DL_PORT"
 
-dl_start_server() {
-  python3 -I ci/dl_server.py --port $DL_PORT --payload "$SAMPLES/Texture_Verde.mcpack" --jar "$SAMPLES/Mod_Scaricata.jar" --out "$OUT" >> "$OUT/dl-server-stdout.txt" 2>&1 &
+dl_start_server() { # [argomenti in più per il server, es. --modrinth CARTELLA]
+  python3 -I ci/dl_server.py --port $DL_PORT --payload "$SAMPLES/Texture_Verde.mcpack" --jar "$SAMPLES/Mod_Scaricata.jar" --out "$OUT" "$@" >> "$OUT/dl-server-stdout.txt" 2>&1 &
   DL_PID=$!
   local i
   for i in $(seq 1 30); do
@@ -646,7 +712,8 @@ download_tests() {
   $UI tap "AGGIUNGI ALLA CODA"
   if dl_wait "Completato" 60; then
     sleep 1; shot "download: completato"
-    expect "ok.mcpack" "10.0.2.2" "SHA-256:" "verificata" "APRI NELL'INSTALLER BEDROCK" "SALVA UNA COPIA" "ELIMINA"
+    expect "ok.mcpack" "10.0.2.2" "SHA-256:" "verificata"
+    expect_scroll "APRI NELL'INSTALLER BEDROCK" "SALVA UNA COPIA" "ELIMINA"   # sotto il bordo dello schermo
     dl_check_file ok.mcpack ok.mcpack
     lib_has '"state" *: *"COMPLETED"' || fail "DOWNLOAD MANAGER: il download completato non risulta nell'archivio centrale"
     [ "$(dl_count /ok.mcpack)" = 1 ] || fail "DOWNLOAD MANAGER: per un file piccolo il server ha ricevuto $(dl_count /ok.mcpack) richieste invece di una"
@@ -802,15 +869,42 @@ download_tests() {
       sleep 3; snap
       seen "E RIPRENDI" && fail "DOWNLOAD MANAGER: dopo il consenso il download resta fermo in attesa del consenso"
       shot "download: dopo il consenso"
-      if $UI tap "ANNULLA"; then
-        dl_wait "Annullato" 90 || { shot "download: annullamento lento"; fail "DOWNLOAD MANAGER: ANNULLA non porta il download a «Annullato» entro 90 s"; }
+      # Il sito non esiste: dopo i nuovi tentativi (1, 3 e 8 secondi) il download deve risultare «Non riuscito», con la causa.
+      # (Qui non si prova ANNULLA: lo stato cambia mentre lo script guarda e nella prova 10 il tocco cadde su un altro pulsante.
+      # L'annullamento ha la sua prova più sotto, con un file «incagliato» che resta in corso finché lo si annulla.)
+      if dl_wait "Non riuscito" 150; then
+        sleep 1; shot "download: sito inesistente"
+        $UI scan "Il server non risponde" 4 || note "DOWNLOAD MANAGER: la causa dell'errore sul sito inesistente non compare nella lettura dell'interfaccia"
+        $UI top
+      else
+        shot "download: sito inesistente senza esito"; fail "DOWNLOAD MANAGER: dopo il consenso un sito inesistente non porta il download a «Non riuscito» entro 150 s"
       fi
-      dl_remove_card || fail "DOWNLOAD MANAGER: non riesco a togliere il download annullato"
+      dl_remove_card || fail "DOWNLOAD MANAGER: non riesco a togliere il download non riuscito"
     else
       shot "download: nessuna domanda di consenso"; fail "DOWNLOAD MANAGER: «CONSENTI … E RIPRENDI» non apre la domanda di consenso"
     fi
   else
     shot "download: reindirizzamento non fermato"; fail "DOWNLOAD MANAGER: un reindirizzamento verso un sito non consentito non ferma il download in attesa del consenso"
+  fi
+
+  # ---- annulla: un download incagliato (quasi fermo) resta «In corso» finché non lo si annulla; il file parziale sparisce
+  dl_add "$DL_BASE/stuck.bin"
+  if dl_wait "In corso" 40; then
+    sleep 3; shot "download: incagliato in corso"
+    if $UI tap "ANNULLA"; then
+      if dl_wait "Annullato" 45; then
+        sleep 1; shot "download: annullato"
+        dl_device_ls | grep -q '\.part$' && fail "DOWNLOAD MANAGER: dopo ANNULLA resta un file parziale (.part) sul telefono"
+        dl_device_ls | grep -q 'stuck' && fail "DOWNLOAD MANAGER: dopo ANNULLA restano file di stuck.bin sul telefono"
+        dl_remove_card || fail "DOWNLOAD MANAGER: non riesco a togliere il download annullato"
+      else
+        shot "download: annullamento senza effetto"; fail "DOWNLOAD MANAGER: ANNULLA non porta il download a «Annullato» entro 45 s"
+      fi
+    else
+      shot "download: ANNULLA non trovato"; fail "DOWNLOAD MANAGER: pulsante ANNULLA non trovato mentre il download è in corso"
+    fi
+  else
+    shot "download: incagliato non partito"; fail "DOWNLOAD MANAGER: il download incagliato non risulta «In corso»"
   fi
 
   # ---- indirizzo già in coda + chiusura dell'app a metà: niente riparte da solo, poi RIPRENDI continua dal punto raggiunto
@@ -861,16 +955,31 @@ download_tests() {
   DL_PID=""
 }
 
-download_tests
+runs base && download_tests
 
 # ======================================================================================================== MOD MANAGER
 
 # La fase sta in un file a parte (ci/mods_phase.sh): usa le funzioni e le variabili di questo script.
 source ci/mods_phase.sh
-mods_tests
+if runs mods; then
+  # Nella parte «mods» l'app non è ancora stata aperta (la dashboard la apre la parte «base»).
+  [ "$PART" = mods ] && { adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3; }
+  mods_tests
+fi
+
+# ======================================================================================================== CERCA ONLINE (catalogo Modrinth)
+
+# Anche questa fase sta in un file a parte (ci/catalog_phase.sh) e parla con un finto Modrinth servito da ci/dl_server.py.
+source ci/catalog_phase.sh
+if runs catalog; then
+  # Nella parte «catalog» l'app è appena installata e mai aperta: si apre qui, poi catalog_tests prepara il suo profilo.
+  [ "$PART" = catalog ] && { adb shell am start -W -n $PKG/.MainActivity > /dev/null 2>&1; sleep 3; }
+  catalog_tests
+fi
 
 # ======================================================================================================== INSTALLER BEDROCK (Minecraft assente)
 
+if runs base; then
 phase "INSTALLER BEDROCK, Minecraft non installato"
 go_dash
 if $UI tap "INSTALLER BEDROCK"; then
@@ -1275,6 +1384,8 @@ else
   fi
 fi
 
+fi   # fine della parte «base» finale (INSTALLER BEDROCK, consegna al finto Minecraft, arresto provocato, aggiornamento)
+
 # ======================================================================================================== verifica finale
 
 phase "Verifica finale"
@@ -1311,9 +1422,11 @@ case "$summary" in
   *"ARRESTI_INATTESI=0") ;;
   *) fail "nel log compaiono arresti inattesi dell'app (vedi crash.txt)" ;;
 esac
+# L'arresto provocato di proposito sta nella parte «base»: nelle altre parti non ce ne devono essere.
+if runs base; then want_crashes=1; else want_crashes=0; fi
 case "$summary" in
-  "ARRESTI_ATTESI=1 "*) ;;
-  *) fail "l'arresto provocato di proposito non risulta nel log una volta sola ($summary)" ;;
+  "ARRESTI_ATTESI=$want_crashes "*) ;;
+  *) fail "gli arresti provocati di proposito nel log dovevano essere $want_crashes ($summary)" ;;
 esac
 if grep -q "ANR in $PKG" "$OUT/logcat.txt"; then
   fail "nel log compare un blocco dell'app (ANR)"

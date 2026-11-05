@@ -173,6 +173,15 @@ def java_samples(out):
         "assets/minecraft/textures/block/dirt.png": png(16, 16, (120, 85, 50), (90, 60, 35)),
     }))
 
+    # Quelli che il finto Modrinth del server di prova (ci/dl_server.py --modrinth) offre nel catalogo: una mod che richiede una
+    # libreria, la libreria, e un resource pack. Sono diversi da quelli sopra, così il catalogo si prova su un profilo già pieno.
+    put("Mod_Catalogo.jar", fabric_mod("dalcatalogo", "Mod dal Catalogo", "1.5.0", {"libcatalogo": ">=1.0.0"}))
+    put("Libreria_Catalogo.jar", fabric_mod("libcatalogo", "Libreria dal Catalogo", "1.2.0"))
+    put("Texture_Catalogo.zip", zip_bytes({
+        "pack.mcmeta": json.dumps({"pack": {"pack_format": 15, "description": "Texture dal catalogo"}}).encode("utf-8"),
+        "assets/minecraft/textures/block/stone.png": png(16, 16, (90, 90, 160), (60, 60, 120)),
+    }))
+
 
 def main(out):
     os.makedirs(out, exist_ok=True)

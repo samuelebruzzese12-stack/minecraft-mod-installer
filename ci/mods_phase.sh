@@ -62,13 +62,8 @@ pick_file() { # testo-del-pulsante nome-del-file
   local button="$1" name="$2"
   $UI tap "$button" || { fail "il pulsante «$button» non si trova ($name)"; return 1; }
   sleep 3
-  if ! $UI wait "$name" 5; then
-    $UI tap "Show roots" || $UI tap "Mostra radici" || true
-    sleep 1.5
-    ($UI tap "Downloads" || $UI tap "Download") || true
-    sleep 2.5
-  fi
-  if $UI tap "$name"; then
+  # Il selettore si apre su «Recent», che non elenca ancora tutti i file di prova: picker_choose passa da «Downloads» (vedi emulator_smoke.sh).
+  if picker_choose "$name"; then
     sleep 2
     # Con la selezione multipla il selettore può restare aperto e mostrare «Open»: si conferma. Se si è già chiuso, non c'è.
     if $UI has "Open" && ! $UI has "AGGIUNGI FILE"; then $UI tap "Open" > /dev/null 2>&1; fi
@@ -106,9 +101,9 @@ mods_tests() {
   fi
   sleep 0.5; shot "mod manager vuoto"
   expect "MOD MANAGER" "Mod Java in profili indipendenti" "Nessun profilo" "CREA IL PRIMO PROFILO" "AGGIUNGI FILE (.jar, .zip)"
-  only_actions "Indietro" "Apri il menu" "CREA IL PRIMO PROFILO" "AGGIUNGI FILE (.jar, .zip)"
+  only_actions "Indietro" "Apri il menu" "CREA IL PRIMO PROFILO" "AGGIUNGI FILE (.jar, .zip)" "CERCA ONLINE (MODRINTH)"
   $UI scan "Non esegue mai il codice della mod" 8 || fail "MOD MANAGER: manca l'avviso che il codice delle mod non viene mai eseguito"
-  $UI scan "Modrinth e CurseForge non sono ancora collegati" 8 || fail "MOD MANAGER: manca l'avviso che Modrinth e CurseForge non sono collegati"
+  $UI scan "CurseForge no (serve una chiave personale)" 8 || fail "MOD MANAGER: manca l'avviso che CurseForge non è collegato"
   $UI top
   [ -z "$(mods_ids)" ] || fail "MOD MANAGER: all'inizio ci sono già profili sul telefono: $(mods_ids | tr '\n' ' ')"
 
@@ -126,7 +121,8 @@ mods_tests() {
   if $UI tap "CREA PROFILO"; then
     if mods_wait "Java richiesto dal gioco" 25; then
       $UI top; sleep 0.5; shot "mod manager: profilo creato"
-      expect "Fabric 1.20.1" "Minecraft 1.20.1" "Java 17" "VERIFICA PROFILO" "ESPORTA I FILE ATTIVI (ZIP)" "NESSUNA OPERAZIONE DA ANNULLARE"
+      expect "Fabric 1.20.1" "Minecraft 1.20.1" "Java 17" "VERIFICA PROFILO" "ESPORTA I FILE ATTIVI (ZIP)"
+      expect_scroll "NESSUNA OPERAZIONE DA ANNULLARE"   # sotto il bordo dello schermo
     else
       shot "mod manager: profilo non creato"; fail "MOD MANAGER: dopo CREA PROFILO non compare il profilo"; return
     fi

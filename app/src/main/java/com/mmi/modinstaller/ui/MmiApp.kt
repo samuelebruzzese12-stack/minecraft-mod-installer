@@ -52,6 +52,7 @@ import com.mmi.modinstaller.Availability
 import com.mmi.modinstaller.BridgeViewModel
 import com.mmi.modinstaller.DownloadsViewModel
 import com.mmi.modinstaller.BusyState
+import com.mmi.modinstaller.CatalogViewModel
 import com.mmi.modinstaller.MainViewModel
 import com.mmi.modinstaller.ModsViewModel
 import com.mmi.modinstaller.PickPurpose
@@ -61,11 +62,20 @@ import kotlinx.coroutines.launch
 
 /** Radice dell'interfaccia: menu delle sezioni, schermata aperta, messaggi, finestre e avanzamento. */
 @Composable
-fun MmiApp(vm: MainViewModel, model: BridgeViewModel, downloadsModel: DownloadsViewModel, modsModel: ModsViewModel) {
+fun MmiApp(
+    vm: MainViewModel,
+    model: BridgeViewModel,
+    downloadsModel: DownloadsViewModel,
+    modsModel: ModsViewModel,
+    catalogModel: CatalogViewModel
+) {
     val state by vm.state.collectAsState()
     val bridge by model.state.collectAsState()
     val downloads by downloadsModel.state.collectAsState()
     val mods by modsModel.state.collectAsState()
+    val catalog by catalogModel.state.collectAsState()
+    // La pagina «CERCA ONLINE» è dentro il MOD MANAGER: si apre dal suo pulsante e si chiude con «indietro».
+    var showCatalog by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
     var pickPurpose by remember { mutableStateOf(PickPurpose.ANY) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -95,6 +105,7 @@ fun MmiApp(vm: MainViewModel, model: BridgeViewModel, downloadsModel: DownloadsV
     LaunchedEffect(state.section) {
         if (state.section != Section.INSTALLER) model.refresh()
         if (state.section == Section.MODS) modsModel.onSectionOpened()
+        if (state.section != Section.MODS) showCatalog = false
     }
 
     val openMenu: () -> Unit = { scope.launch { drawerState.open() } }
@@ -103,7 +114,10 @@ fun MmiApp(vm: MainViewModel, model: BridgeViewModel, downloadsModel: DownloadsV
         // Durante un'operazione sui file Java «indietro» non lascia la schermata: l'operazione si interrompe con Annulla.
         if (mods.busy == null) vm.back()
     }
-    // Dichiarato dopo l'altro: con il menu aperto, «indietro» chiude prima il menu.
+    // Dichiarati dopo l'altro: «indietro» chiude prima il menu e poi la pagina CERCA ONLINE, senza uscire dal MOD MANAGER.
+    BackHandler(enabled = showCatalog && state.section == Section.MODS) {
+        showCatalog = false
+    }
     BackHandler(enabled = drawerState.isOpen) {
         scope.launch { drawerState.close() }
     }
@@ -166,7 +180,18 @@ fun MmiApp(vm: MainViewModel, model: BridgeViewModel, downloadsModel: DownloadsV
                             }
                         )
                         Section.JAVA -> JavaEditionScreen(bridge, vm, openMenu)
-                        Section.MODS -> ModsScreen(mods, modsModel, vm, openMenu)
+                        Section.MODS -> if (showCatalog) {
+                            CatalogScreen(
+                                catalog = catalog,
+                                model = catalogModel,
+                                mods = modsModel,
+                                onBack = { showCatalog = false },
+                                onMenu = openMenu,
+                                openMods = { showCatalog = false }
+                            )
+                        } else {
+                            ModsScreen(mods, modsModel, vm, openMenu, onOpenCatalog = { showCatalog = true })
+                        }
                         Section.DOWNLOADS -> DownloadsScreen(downloads, downloadsModel, vm, modsModel, openMenu)
                         Section.DIAGNOSTICS -> DiagnosticsScreen(state, bridge, vm, model, openMenu)
                         Section.SETTINGS -> SettingsScreen(state, bridge, vm, model, openMenu)

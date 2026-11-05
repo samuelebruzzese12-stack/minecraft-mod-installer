@@ -139,6 +139,25 @@ class EmulatorSamplesTest {
         assertEquals(1, mm.items(pid).count { it.category == ItemCategory.RESOURCE_PACK })
     }
 
+    @Test fun catalogSamplesInstallInDependencyOrderAndLeaveACleanProfile() {
+        // La mod del catalogo richiede la sua libreria: da sola serve conferma, con la libreria nel profilo è pronta.
+        val mod = mm.plan(pid, analyze("Mod_Catalogo.jar"))!!
+        assertEquals(mod.issues.toString(), PlanDecision.NEEDS_CONFIRMATION, mod.decision)
+        assertEquals(listOf("libcatalogo"), mod.missing.map { it.id })
+        val lib = mm.plan(pid, analyze("Libreria_Catalogo.jar"))!!
+        assertEquals(lib.issues.toString(), PlanDecision.READY, lib.decision)
+        assertTrue(install("Libreria_Catalogo.jar") is InstallResult.Installed)
+        val modAfter = mm.plan(pid, analyze("Mod_Catalogo.jar"))!!
+        assertEquals(modAfter.issues.toString(), PlanDecision.READY, modAfter.decision)
+        assertTrue(install("Mod_Catalogo.jar") is InstallResult.Installed)
+        assertTrue(mm.check(pid)!!.first.isClean)
+
+        val texture = mm.plan(pid, analyze("Texture_Catalogo.zip"))!!
+        assertEquals(texture.issues.toString(), PlanDecision.READY, texture.decision)
+        assertEquals(ItemCategory.RESOURCE_PACK, texture.category)
+        assertTrue(install("Texture_Catalogo.zip") is InstallResult.Installed)
+    }
+
     @Test fun downloadedModIsReady() {
         val plan = mm.plan(pid, analyze("Mod_Scaricata.jar"))!!
         assertEquals(plan.issues.toString(), PlanDecision.READY, plan.decision)

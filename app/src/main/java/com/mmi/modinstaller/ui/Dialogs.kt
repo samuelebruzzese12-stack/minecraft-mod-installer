@@ -48,21 +48,29 @@ internal fun StackedDialog(
             tonalElevation = 6.dp,
             modifier = Modifier.fillMaxWidth()
         ) {
+            // Il titolo e i pulsanti restano sempre in vista: scorre solo il testo in mezzo. (Prima scorreva tutto insieme e, in una
+            // finestra alta come «Nuovo profilo», i pulsanti finivano sotto il bordo e bisognava scorrere per trovarli.)
             Column(
                 modifier = Modifier
                     .heightIn(max = 640.dp)
-                    .verticalScroll(rememberScrollState())
-                    .padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(24.dp)
             ) {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
-                body()
                 Column(
-                    modifier = Modifier.padding(top = 4.dp),
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState())
+                        .padding(top = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    body()
+                }
+                Column(
+                    modifier = Modifier.padding(top = 16.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     buttons()
