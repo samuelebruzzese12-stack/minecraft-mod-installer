@@ -49,7 +49,9 @@ class ItemFacts(
     val blockId: Rl?,
     val spawnEggEntity: Rl?,
     val eggColors: Pair<Int, Int>?,
-    val craftRemainder: Rl?
+    val craftRemainder: Rl?,
+    /** Comportamenti scritti nel codice della mod (metodi di Minecraft ridefiniti: use, hurtEnemy…). */
+    val codeMethods: List<String> = emptyList()
 )
 
 class BlockFacts(
@@ -72,7 +74,9 @@ class BlockFacts(
     val copiedFrom: String?,
     val xp: Pair<Int, Int>?,
     val renderLayer: String?,
-    val hasBlockEntity: Boolean
+    val hasBlockEntity: Boolean,
+    /** Comportamenti scritti nel codice della mod (use, tick, stepOn…). */
+    val codeMethods: List<String> = emptyList()
 )
 
 class GoalFacts(val priority: Int, val goal: String, val custom: String?, val args: List<V>, val target: Boolean)
@@ -137,6 +141,19 @@ class ModCodeFacts(
 /** Ricava dai valori costruiti dalle registrazioni le proprietà di oggetti, blocchi e creature. */
 object CodeFactsReader {
 
+    /** Metodi degli oggetti che contengono comportamento (se la mod li ridefinisce, quel comportamento è codice Java). */
+    val ITEM_BEHAVIOR = setOf(
+        "use", "useOn", "interactLivingEntity", "finishUsingItem", "releaseUsing", "onUseTick", "hurtEnemy", "postHurtEnemy",
+        "mineBlock", "inventoryTick", "onCraftedBy", "onCraftedPostProcess", "appendHoverText", "overrideStackedOnOther",
+        "overrideOtherStackedOnMe", "onEntityItemUpdate", "onDestroyed", "canAttackBlock", "getUseDuration", "onItemUseFirst"
+    )
+    /** Metodi dei blocchi con comportamento. */
+    val BLOCK_BEHAVIOR = setOf(
+        "use", "useWithoutItem", "useItemOn", "tick", "randomTick", "stepOn", "entityInside", "fallOn", "neighborChanged",
+        "onPlace", "onRemove", "playerWillDestroy", "attack", "animateTick", "updateShape", "getSignal", "getDirectSignal",
+        "isSignalSource", "triggerEvent", "onProjectileHit", "getAnalogOutputSignal", "newBlockEntity", "getTicker", "getMenuProvider"
+    )
+
     fun read(a: CodeAnalysis): ModCodeFacts {
         val r = Reader(a)
         val items = LinkedHashMap<Rl, ItemFacts>()
@@ -156,6 +173,16 @@ object CodeFactsReader {
         // -------------------------------------------------------------------------------------------- utilità
 
         fun simple(c: String) = c.substringAfterLast('/').substringAfterLast('$')
+
+        /** I metodi di comportamento che le classi della mod ridefiniscono (nomi Mojang dopo la traduzione dei nomi). */
+        fun overridden(classes: List<String>, names: Set<String>): List<String> {
+            val out = LinkedHashSet<String>()
+            for (c in classes) {
+                val cf = ip.classes.find(c) ?: continue
+                for (m in cf.methods) if (m.name in names && m.code != null) out.add(m.name)
+            }
+            return out.toList()
+        }
 
         /** BiomeModifications.addSpawn(selettore, categoria, tipo, peso, minimo, massimo) registrate dal codice. */
         fun spawns(): List<SpawnFacts> {
@@ -424,7 +451,8 @@ object CodeFactsReader {
             }
             return ItemFacts(
                 reg.id, classes, role, maxStack, durability ?: armorDur ?: tier?.uses, fire, rarity, food, tier, dmg, spd,
-                slot?.lowercase(), defense, tough, kb, enchantable ?: armorEnch ?: tier?.enchantability, block, egg, colors, remainder
+                slot?.lowercase(), defense, tough, kb, enchantable ?: armorEnch ?: tier?.enchantability, block, egg, colors, remainder,
+                overridden(classes, ITEM_BEHAVIOR)
             )
         }
 
@@ -481,7 +509,7 @@ object CodeFactsReader {
                 num(call(props, "friction", "slipperiness")?.args?.firstOrNull()), num(call(props, "speedFactor", "velocityMultiplier")?.args?.firstOrNull()),
                 num(call(props, "jumpFactor", "jumpVelocityMultiplier")?.args?.firstOrNull()), calls(props, "randomTicks", "ticksRandomly").isNotEmpty(),
                 calls(props, "requiresCorrectToolForDrops", "requiresTool").isNotEmpty() || (base?.requiresTool == true && copied != null),
-                calls(props, "instabreak", "breakInstantly").isNotEmpty(), copied, xp, layer, entityBlock
+                calls(props, "instabreak", "breakInstantly").isNotEmpty(), copied, xp, layer, entityBlock, overridden(classes, BLOCK_BEHAVIOR)
             )
         }
 

@@ -63,6 +63,11 @@ internal object ComponentRegistry {
         o.convertsTo?.let { bedrock.add("lascia $it") }
         val fromCode = o.code != null
         if (!fromCode && o.kind != ItemKind.ITEM) diffs.add("valori stimati: il codice non si è potuto leggere per questo oggetto")
+        // Comportamento scritto nel codice della mod (es. usare l'oggetto, colpire): non diventa Bedrock.
+        val own = o.code?.codeMethods.orEmpty().filter { it != "appendHoverText" && it != "getUseDuration" }
+        if (own.isNotEmpty() && !(own.toSet() == setOf("finishUsingItem") && o.effects.isNotEmpty())) {
+            diffs.add("comportamento scritto nel codice non ricostruito (" + own.take(4).joinToString(", ") + ")")
+        }
         val missingFx = o.code?.food?.effects?.count { Behaviors.bedrockEffect(it.effect) == null } ?: 0
         if (missingFx > 0) diffs.add("$missingFx effetti della mod che Bedrock non ha")
         val status = when {
@@ -83,6 +88,17 @@ internal object ComponentRegistry {
         val sf = (o.look as? BlockLook.Stateful)?.block
         sf?.note?.let { diffs.add(it) }
         if (o.code == null) diffs.add("durezza e resistenza stimate")
+        if (o.code?.hasBlockEntity == true) diffs.add("la funzione del blocco (macchina, contenitore o entità di blocco) non è ricostruita: in Bedrock è solo il blocco")
+        val handled = when (sf?.family) {
+            BlockFamily.DOOR, BlockFamily.TRAPDOOR, BlockFamily.FENCE_GATE -> setOf("use", "useWithoutItem", "neighborChanged", "updateShape", "onPlace", "playerWillDestroy")
+            BlockFamily.SLAB, BlockFamily.STAIRS, BlockFamily.FENCE, BlockFamily.WALL, BlockFamily.PANE -> setOf("updateShape", "neighborChanged")
+            BlockFamily.BUTTON, BlockFamily.PRESSURE_PLATE -> setOf("use", "useWithoutItem", "tick", "entityInside", "getSignal", "getDirectSignal", "isSignalSource", "onRemove", "updateShape")
+            BlockFamily.CROP -> setOf("randomTick", "updateShape", "neighborChanged")
+            null -> emptySet()
+        }
+        val own = o.code?.codeMethods.orEmpty().filter { it !in handled && it != "animateTick" && it != "newBlockEntity" && it != "getTicker" }
+        if (own.isNotEmpty()) diffs.add("comportamento scritto nel codice non ricostruito (" + own.take(4).joinToString(", ") + ")")
+        if (o.code?.codeMethods?.contains("animateTick") == true) diffs.add("particelle disegnate dal codice non convertite")
         val status = when {
             diffs.isNotEmpty() -> ComponentStatus.APPROXIMATED
             sf != null || o.code?.xp != null -> ComponentStatus.RECONSTRUCTED
@@ -139,13 +155,15 @@ internal object ComponentRegistry {
                 n.startsWith("data/") && (area == "loot_table" || area == "loot_tables") -> add("loot2", G("Bottini di casse, pesca e altro", ComponentStatus.DATA_KEPT, "non ancora convertiti"))
                 n.startsWith("data/") && (area == "tags") -> add("tags", G("Gruppi (tag)", ComponentStatus.CONVERTED, "usati per ricette e attrezzi"))
                 n.startsWith("data/") && (area == "structure" || area == "structures") -> add("structures", G("Strutture", ComponentStatus.DATA_KEPT, "non ancora convertite"))
-                n.startsWith("data/") && (area == "advancement" || area == "advancements") -> add("adv", G("Progressi", ComponentStatus.DATA_KEPT, "Bedrock non ha progressi per gli add-on"))
+                n.startsWith("data/") && (area == "advancement" || area == "advancements") -> add("adv", G("Progressi", ComponentStatus.NOT_RECONSTRUCTABLE, "Bedrock non permette agli add-on di aggiungere progressi"))
                 n.startsWith("data/") && area == "worldgen" -> add(
                     "worldgen", G("Generazione del mondo (biomi, minerali, strutture)", ComponentStatus.APPROXIMATED, "i minerali sì; biomi, dimensioni e strutture non ancora")
                 )
                 n.startsWith("data/") && (area == "dimension" || area == "dimension_type") -> add("dim", G("Dimensioni", ComponentStatus.DATA_KEPT, "non ancora convertite"))
-                n.startsWith("data/") && (area == "enchantment" || area == "damage_type" || area == "trim_material" || area == "trim_pattern" || area == "painting_variant" || area == "jukebox_song") ->
-                    add("registries", G("Incantesimi, danni e altri registri", ComponentStatus.DATA_KEPT, "non ancora convertiti"))
+                n.startsWith("data/") && area == "enchantment" ->
+                    add("ench", G("Incantesimi", ComponentStatus.NOT_RECONSTRUCTABLE, "Bedrock non permette agli add-on di aggiungere incantesimi"))
+                n.startsWith("data/") && (area == "damage_type" || area == "trim_material" || area == "trim_pattern" || area == "painting_variant" || area == "jukebox_song") ->
+                    add("registries", G("Danni, finiture, quadri e altri registri", ComponentStatus.DATA_KEPT, "non ancora convertiti"))
                 n.endsWith("/") -> {}
                 else -> add("other", G("Altri file", ComponentStatus.DATA_KEPT, "restano nel JAR originale"))
             }
@@ -174,4 +192,22 @@ internal object ComponentRegistry {
             "differenze" to c.differences, "stato" to c.status.label, "quanti" to c.count.toLong()
         )
     }
+}
+
+/** Il registro dei componenti di tutte le mod lette, in JSON (Analisi avanzata → «salva il registro»). */
+object ComponentExport {
+    fun json(reports: List<ModReport>, addonName: String?): String = com.mmi.modinstaller.core.Json.stringify(
+        linkedMapOf(
+            "convertitore" to "Minecraft Mod Installer — JAVA TO BEDROCK (BLOCKBRIDGE)",
+            "add_on" to addonName,
+            "stati" to ComponentStatus.values().map { it.label },
+            "mod" to reports.map { r ->
+                linkedMapOf(
+                    "mod" to r.title, "versione" to r.version, "caricatore" to r.loader, "esito" to r.verdict,
+                    "ricostruito" to r.scripted, "dal_codice" to r.fromCode, "componenti" to ComponentRegistry.json(r.components)
+                )
+            }
+        ),
+        pretty = true
+    )
 }

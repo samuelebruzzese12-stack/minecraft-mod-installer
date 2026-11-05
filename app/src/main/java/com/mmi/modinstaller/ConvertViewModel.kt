@@ -314,6 +314,25 @@ class ConvertViewModel(application: Application) : AndroidViewModel(application)
         openFiles(listOf(Uri.fromFile(addon.file)))
     }
 
+    /** Analisi avanzata: il registro dei componenti di tutte le mod lette, in un file JSON scelto dall'utente. */
+    fun saveRegistry(target: Uri) {
+        val p = _state.value.pending ?: return
+        runBusy("Salvo il registro dei componenti", "Salvataggio annullato.") { _, _ ->
+            val text = withContext(Dispatchers.IO) {
+                var done = false
+                try {
+                    val out = repo.openOutput(target) ?: return@withContext "Non riesco a scrivere nel punto scelto."
+                    out.use { it.write(com.mmi.modinstaller.convert.ComponentExport.json(p.reports, p.addonName).toByteArray(Charsets.UTF_8)) }
+                    done = true
+                    "Registro dei componenti salvato (JSON): ogni voce con cosa faceva in Java, cosa diventa in Bedrock e le differenze."
+                } finally {
+                    if (!done) repo.deleteDocument(target)
+                }
+            }
+            say(text)
+        }
+    }
+
     fun saveCopy(addon: SavedAddon, target: Uri) {
         runBusy("Salvo «" + addon.name + "»", "Copia annullata.") { _, _ ->
             val text = withContext(Dispatchers.IO) {

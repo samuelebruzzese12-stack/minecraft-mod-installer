@@ -62,6 +62,9 @@ fun JavaToBedrockScreen(state: ConvertState, model: ConvertViewModel, vm: MainVi
         if (uri != null && a != null) model.saveCopy(a, uri)
         toSave = null
     }
+    val registrySaver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) model.saveRegistry(uri)
+    }
     val install: (SavedAddon) -> Unit = { a -> model.install(a) { uris -> vm.openFiles(uris, PickPurpose.ADDON) } }
     val save: (SavedAddon) -> Unit = { a ->
         toSave = a
@@ -155,6 +158,11 @@ fun JavaToBedrockScreen(state: ConvertState, model: ConvertViewModel, vm: MainVi
         if (pending != null) {
             SectionLabel("Mod lette")
             PendingCard(pending, model) { shareText(context, com.mmi.modinstaller.convert.ConversionText.of(pending.reports, pending.addonName)) }
+            if (mode == J2BMode.ANALYSIS) {
+                FullButton("SALVA IL REGISTRO DEI COMPONENTI (JSON)", enabled = state.busy == null) {
+                    registrySaver.launch(pending.addonName.ifBlank { "registro" } + " - registro componenti.json")
+                }
+            }
             for (r in pending.reports) ModCard(r, detailed = mode == J2BMode.ANALYSIS)
         }
 
