@@ -1092,23 +1092,27 @@ internal class Stats(
 /** Raccoglie le texture usate e le scrive una volta sola; tiene conto delle animazioni (.mcmeta) e della trasparenza. */
 internal class TextureCollector(private val mods: List<JavaModContent>, private val limits: ConvertLimits) {
 
-    private class Tex(val bytes: ByteArray?, val transparency: Transparency, val gray: Boolean, val frames: Int?, var block: Boolean, var item: Boolean)
+    /** Solo i dati ricavati: i byte si rileggono dal JAR al momento di scriverli (così la memoria non cresce con le mod). */
+    private class Tex(val found: Boolean, val transparency: Transparency, val gray: Boolean, val frames: Int?, var block: Boolean, var item: Boolean)
 
     private val textures = LinkedHashMap<Rl, Tex>()
 
+    private fun name(rl: Rl) = "assets/${rl.ns}/textures/${rl.path}.png"
+
+    private fun bytes(rl: Rl): ByteArray? = mods.firstNotNullOfOrNull { it.jar.bytes(name(rl), limits.maxPngBytes) }?.takeIf { Png.isPng(it) }
+
     private fun load(rl: Rl): Tex {
-        val name = "assets/${rl.ns}/textures/${rl.path}.png"
-        val bytes = mods.firstNotNullOfOrNull { it.jar.bytes(name, limits.maxPngBytes) }
-        if (bytes == null || !Png.isPng(bytes)) return Tex(null, Transparency.OPAQUE, false, null, false, false)
+        if (rl.ns == "minecraft") return Tex(false, Transparency.OPAQUE, false, null, false, false)
+        val bytes = bytes(rl) ?: return Tex(false, Transparency.OPAQUE, false, null, false, false)
         val img = Png.decode(bytes)
-        val meta = mods.firstNotNullOfOrNull { it.jar.json("$name.mcmeta", 1 shl 16) }.asJsonObject()?.get("animation").asJsonObject()
+        val meta = mods.firstNotNullOfOrNull { it.jar.json(name(rl) + ".mcmeta", 1 shl 16) }.asJsonObject()?.get("animation").asJsonObject()
         var frames: Int? = null
         if (meta != null && img != null && img.height > img.width && img.width > 0) {
             frames = ((meta["frametime"] as? Number)?.toInt() ?: 1).coerceAtLeast(1)
         }
         val transparency = img?.let { Png.transparency(it) } ?: Transparency.OPAQUE
         val gray = img != null && isGray(img)
-        return Tex(bytes, transparency, gray, frames, false, false)
+        return Tex(true, transparency, gray, frames, false, false)
     }
 
     private fun isGray(img: Image): Boolean {
@@ -1136,8 +1140,8 @@ internal class TextureCollector(private val mods: List<JavaModContent>, private 
     /** Scrive le texture trovate: per gli oggetti animati si tiene il primo fotogramma, per i blocchi l'animazione. */
     fun writeAll(sink: (Rl, ByteArray, Int?) -> Unit) {
         for ((rl, t) in textures) {
-            if (rl.ns == "minecraft") continue
-            val bytes = t.bytes ?: continue
+            if (!t.found) continue
+            val bytes = bytes(rl) ?: continue
             if (t.frames != null && !t.block) {
                 val img = Png.decode(bytes)
                 if (img != null) {
@@ -1148,8 +1152,6 @@ internal class TextureCollector(private val mods: List<JavaModContent>, private 
             sink(rl, bytes, if (t.block) t.frames else null)
         }
     }
-
-    val missing: List<Rl> get() = textures.filter { it.value.bytes == null }.keys.toList()
 }
 
 /** Il rapporto della conversione in testo semplice (da condividere o da leggere senza l'app). */

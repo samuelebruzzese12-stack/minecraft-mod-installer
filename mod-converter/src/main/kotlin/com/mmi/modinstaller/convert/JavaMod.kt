@@ -40,10 +40,10 @@ data class ConvertLimits(
     val maxEntries: Int = 200_000,
     val maxJsonBytes: Int = 4 * 1024 * 1024,
     val maxPngBytes: Int = 16 * 1024 * 1024,
-    val maxNestedJarBytes: Int = 64 * 1024 * 1024,
+    val maxNestedJarBytes: Int = 32 * 1024 * 1024,
     val maxNestedJars: Int = 64,
     /** Somma dei file letti in memoria per i JAR annidati. */
-    val maxNestedTotalBytes: Long = 256L * 1024 * 1024
+    val maxNestedTotalBytes: Long = 64L * 1024 * 1024
 )
 
 /**
