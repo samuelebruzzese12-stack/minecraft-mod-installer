@@ -91,7 +91,10 @@ def nodes(path):
     return out
 
 
-def find(ns, needle, last=False, skip_fields=False):
+def find(ns, needle, last=False, skip_fields=False, screen=None, exact=False):
+    """Cerca l'elemento con quel testo (anche parziale, senza badare alle maiuscole). skip_fields: ignora i campi di testo (che
+    ripetono ciò che si è scritto). screen=(larghezza, altezza): ignora gli elementi il cui centro non sta sullo schermo con un
+    margine (sotto la barra di navigazione un tocco finirebbe sul tasto di sistema). exact: il testo deve essere uguale."""
     nl = needle.lower()
     best = None
     for i, n in enumerate(ns):
@@ -100,10 +103,16 @@ def find(ns, needle, last=False, skip_fields=False):
             continue
         if skip_fields and n["cls"] in EDIT_CLASSES:
             continue
+        if screen is not None:
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            if not (20 <= cx <= screen[0] - 20 and 80 <= cy <= screen[1] - 120):
+                continue
         for label in (n["text"], n["desc"]):
             if not label:
                 continue
             l = label.lower()
+            if exact and l.strip() != nl.strip():
+                continue
             if nl in l:
                 # last=True: a parità di corrispondenza vince l'elemento che viene dopo nell'albero
                 rank = (0 if l.strip() == nl else 1, 0 if n["clickable"] else 1, -i if last else i)
@@ -129,11 +138,12 @@ def swipe_up():
     time.sleep(0.8)
 
 
-def tap(needle, scrolls=3, last=False, skip_fields=False):
+def tap(needle, scrolls=3, last=False, skip_fields=False, onscreen=False, exact=False):
+    screen = screen_size() if onscreen else None
     for i in range(scrolls + 1):
         p = dump("/tmp/mmi_tap.xml")
         if p:
-            n = find(nodes(p), needle, last, skip_fields)
+            n = find(nodes(p), needle, last, skip_fields, screen, exact)
             if n:
                 x1, y1, x2, y2 = n["box"]
                 adb("shell", "input", "tap", str((x1 + x2) // 2), str((y1 + y2) // 2))
@@ -440,7 +450,9 @@ def main(argv):
     if cmd == "tap-last":
         return 0 if tap(argv[2], last=True) else 1
     if cmd == "tap-item":
-        return 0 if tap(argv[2], skip_fields=True) else 1
+        # Un file nel selettore di sistema: nome uguale (non le miniature «Preview the file …»), centro ben visibile (in una
+        # griglia l'ultima riga può stare sotto la barra di navigazione) e, se serve, si scorre l'elenco.
+        return 0 if tap(argv[2], scrolls=4, skip_fields=True, onscreen=True, exact=True) else 1
     if cmd == "tap-exact":
         return 0 if tap_exact(argv[2]) else 1
     if cmd == "collect":
