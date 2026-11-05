@@ -20,7 +20,9 @@ MODS = [
     "farmers-delight-refabricated",  # cibo, colture, blocchi con forme proprie, ricette di macchine
     "mythicmetals",                  # minerali con generazione, attrezzi, armature
     "croptopia",                     # moltissimi cibi e colture
-    "naturalist",                    # creature GeckoLib
+    "naturalist",                    # creature (le versioni 2.x non usano più GeckoLib)
+    "mowzies-mobs",                  # creature GeckoLib
+    "born-in-chaos",                 # creature GeckoLib
     "biomes-o-plenty",               # blocchi, piante, legni
     "supplementaries",               # tanti blocchi decorativi disegnati dal codice
     "sodium",                        # solo codice
