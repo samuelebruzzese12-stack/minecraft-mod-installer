@@ -64,6 +64,7 @@ class ModReport(
             error != null -> "Non letta: $error"
             contentCount == 0 -> "Niente da convertire: è una mod di solo codice (o una libreria)"
             notConverted.isEmpty() && recipeSkips.isEmpty() -> "Contenuto convertito"
+            scripted.isNotEmpty() -> "Convertita in parte: il contenuto e una parte del comportamento (ricostruito); il resto è nel registro"
             else -> "Convertita in parte: il contenuto sì, il comportamento in codice no"
         }
 }
@@ -81,7 +82,8 @@ class ConversionPlan internal constructor(
     internal val featureRules: List<Pair<String, Map<String, Any?>>>,
     internal val customTags: Map<String, Set<String>>,
     internal val languages: Map<String, Map<String, String>>,
-    internal val sounds: List<SoundOut> = emptyList()
+    internal val sounds: List<SoundOut> = emptyList(),
+    internal val spawnRules: List<Pair<String, Map<String, Any?>>> = emptyList()
 ) : java.io.Closeable {
     val itemCount: Int get() = items.size
     val blockCount: Int get() = blocks.size
@@ -333,6 +335,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         val featuresOut = ArrayList<Pair<String, Map<String, Any?>>>()
         val entitiesOut = ArrayList<EntityOut>()
         val rulesOut = ArrayList<Pair<String, Map<String, Any?>>>()
+        val spawnOut = ArrayList<Pair<String, Map<String, Any?>>>()
         val languages = LinkedHashMap<String, MutableMap<String, String>>()
         val reports = ArrayList<ModReport>()
 
@@ -678,6 +681,27 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                     .mapNotNull { (k, label) -> c[k]?.let { "$it $label" } }.joinToString(", ").ifEmpty { "nessuna registrazione di contenuto" } +
                     (if (f.analysis.exhausted) " (lettura parziale: codice molto grande)" else "")
             } ?: if (mod.jar.classEntries.isEmpty()) null else "Il codice della mod non si è potuto leggere"
+            // ---- comparsa naturale nel mondo (spawn rules)
+            val modEntities = entitiesOut.filter { it.mod === mod }
+            if (modEntities.isNotEmpty()) {
+                val rules = SpawnRules.read(mod, cf?.spawns.orEmpty(), modEntities.map { it.java }.toSet())
+                var spawning = 0; var estimated = 0
+                for (r in rules) {
+                    val e = modEntities.firstOrNull { it.java == r.entity } ?: continue
+                    if (spawnOut.any { it.first == "spawn_rules/" + e.bedrockId.replace(':', '/') + ".json" }) continue
+                    val doc = SpawnRules.doc(e.bedrockId, r, e.facts?.category) ?: continue
+                    spawnOut.add("spawn_rules/" + e.bedrockId.replace(':', '/') + ".json" to doc)
+                    spawning++
+                    if (r.estimated) estimated++
+                }
+                if (spawning > 0) {
+                    scripted.add("Comparsa naturale nel mondo (biomi come in Java): $spawning " + (if (spawning == 1) "creatura" else "creature") +
+                        if (estimated > 0) " (frequenza stimata per $estimated: in Java sta nella configurazione)" else "")
+                }
+                val noSpawn = modEntities.size - spawning
+                if (noSpawn > 0) simplified.add("Creature che compaiono solo con l'uovo (regole di comparsa nel codice o biomi delle mod): $noSpawn")
+            }
+
             // ---- suoni
             val modSounds = soundPlan.sounds.filter { it.mod === mod }
             if (modSounds.isNotEmpty()) {
@@ -695,7 +719,9 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             val itemById = itemEntries.associateBy { it.javaId }
             for (i in itemsOut) if (i.mod === mod) itemById[i.java.toString()]?.let { components.add(ComponentRegistry.item(i, it, limits.scriptBehaviors)) }
             val entById = entityEntries.associateBy { it.javaId }
-            for (e in entitiesOut) if (e.mod === mod) entById[e.java.toString()]?.let { components.add(ComponentRegistry.entity(e, it)) }
+            for (e in entitiesOut) if (e.mod === mod) entById[e.java.toString()]?.let {
+                components.add(ComponentRegistry.entity(e, it, spawnOut.any { s -> s.first == "spawn_rules/" + e.bedrockId.replace(':', '/') + ".json" }))
+            }
             components.addAll(ComponentRegistry.recipes(ok, skips))
             for (n in notConverted) components.add(Component("gruppo", n, n, emptyList(), "non convertito", null, "—", emptyList(), listOf(n), ComponentStatus.DATA_KEPT))
             components.addAll(ComponentRegistry.files(mod, soundsConverted = modSounds.isNotEmpty(), entitiesConverted = entityEntries.isNotEmpty()))
@@ -709,7 +735,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         }
         return ConversionPlan(
             failed + reports, mods, itemsOut, blocksOut, recipesOut, lootOut, featuresOut, entitiesOut, rulesOut,
-            resolver.customTags.mapValues { it.value.toSet() }, languages, soundPlan.sounds
+            resolver.customTags.mapValues { it.value.toSet() }, languages, soundPlan.sounds, spawnOut
         )
     }
 
@@ -1185,6 +1211,7 @@ internal class AddonWriter(
         for ((path, doc) in plan.loot) sink(bp + path, json(doc))
         for ((path, doc) in plan.features) sink(bp + path, json(doc))
         for ((path, doc) in plan.featureRules) sink(bp + path, json(doc))
+        for ((path, doc) in plan.spawnRules) sink(bp + path, json(doc))
 
         // ---- risorse
         if (itemTextureData.isNotEmpty()) {

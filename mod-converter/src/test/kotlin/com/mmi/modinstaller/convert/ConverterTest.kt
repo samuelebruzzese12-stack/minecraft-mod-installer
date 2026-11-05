@@ -83,7 +83,7 @@ class ConverterTest {
         assertTrue(r.notConverted.toString(), r.notConverted.contains("Modifiche al motore del gioco (mixin)"))
         assertTrue(r.estimates.toString(), r.estimates.contains("Danni, velocità e durata di alcuni attrezzi stimati dal materiale (non letti dal codice)"))
         assertTrue(r.simplified.toString(), r.simplified.any { it.startsWith("Creature: aspetto e animazioni") })
-        assertEquals("Convertita in parte: il contenuto sì, il comportamento in codice no", r.verdict)
+        assertEquals("Convertita in parte: il contenuto e una parte del comportamento (ricostruito); il resto è nel registro", r.verdict)
     }
 
     @Test fun olderMinecraftGetsACompatibleAddon() {

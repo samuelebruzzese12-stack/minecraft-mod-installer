@@ -118,11 +118,18 @@ class EntityFacts(
 )
 
 /** Tutto quello che si è capito dal codice di una mod. */
+/**
+ * Una regola di comparsa naturale letta dal codice (Fabric: BiomeModifications.addSpawn): dove (biomi o gruppi di biomi
+ * Java, «#…» per i gruppi, «@overworld»/«@nether»/«@end» per le dimensioni), quanto spesso e in gruppi di quanti.
+ */
+class SpawnFacts(val entity: Rl, val category: String?, val weight: Int, val min: Int, val max: Int, val biomes: List<String>)
+
 class ModCodeFacts(
     val analysis: CodeAnalysis,
     val items: Map<Rl, ItemFacts>,
     val blocks: Map<Rl, BlockFacts>,
-    val entities: Map<Rl, EntityFacts>
+    val entities: Map<Rl, EntityFacts>,
+    val spawns: List<SpawnFacts> = emptyList()
 )
 
 // ------------------------------------------------------------------------------------------------------------ lettura
@@ -138,7 +145,8 @@ object CodeFactsReader {
         for (reg in a.byRegistry("block")) runCatching { r.block(reg) }.getOrNull()?.let { blocks[reg.id] = it }
         for (reg in a.byRegistry("item")) runCatching { r.item(reg) }.getOrNull()?.let { items[reg.id] = it }
         for (reg in a.byRegistry("entity_type")) runCatching { r.entity(reg) }.getOrNull()?.let { entities[reg.id] = it }
-        return ModCodeFacts(a, items, blocks, entities)
+        val spawns = runCatching { r.spawns() }.getOrDefault(emptyList())
+        return ModCodeFacts(a, items, blocks, entities, spawns)
     }
 
     private class Reader(val a: CodeAnalysis) {
@@ -148,6 +156,55 @@ object CodeFactsReader {
         // -------------------------------------------------------------------------------------------- utilità
 
         fun simple(c: String) = c.substringAfterLast('/').substringAfterLast('$')
+
+        /** BiomeModifications.addSpawn(selettore, categoria, tipo, peso, minimo, massimo) registrate dal codice. */
+        fun spawns(): List<SpawnFacts> {
+            val out = ArrayList<SpawnFacts>()
+            for (args in sem.spawns) {
+                if (args.size < 6) continue
+                // CodeSemantics le conserva come [tipo, categoria, peso, minimo, massimo, selettore].
+                val type = args[0]; val category = args[1]; val weight = args[2]; val min = args[3]; val max = args[4]; val selector = args[5]
+                val id = idOf(resolve(type)) ?: continue
+                val cat = (resolve(category) as? StaticV)?.name
+                val biomes = ArrayList<String>()
+                fun sel(v: V?, depth: Int) {
+                    if (depth > 6) return
+                    val o = resolve(v)
+                    if (o is AltV) { o.options.forEach { sel(it, depth + 1) }; return }
+                    val call = (o as? Obj)?.origin ?: return
+                    when (call.name) {
+                        "foundInOverworld" -> biomes.add("@overworld")
+                        "foundInTheNether" -> biomes.add("@nether")
+                        "foundInTheEnd" -> biomes.add("@end")
+                        "tag" -> call.args.firstOrNull()?.let { t -> tagName(t)?.let { biomes.add("#$it") } }
+                        "includeByKey" -> for (a0 in call.args) {
+                            val items = (resolve(a0) as? ArrV)?.items?.toList() ?: listOf(a0)
+                            for (k in items) keyName(k)?.let { biomes.add(it) }
+                        }
+                        "and", "or" -> { sel(call.args.firstOrNull(), depth + 1); (o as Obj).originReceiver?.let { sel(it, depth + 1) } }
+                    }
+                }
+                sel(selector, 0)
+                if (biomes.isEmpty()) continue
+                out.add(SpawnFacts(id, cat, weight.int() ?: 10, min.int() ?: 1, max.int() ?: 1, biomes.distinct()))
+            }
+            return out
+        }
+
+        /** Il nome di un gruppo (TagKey.create(registro, identificatore)). */
+        private fun tagName(v: V?): String? {
+            val o = resolve(v) as? Obj ?: return null
+            val c = o.origin ?: return sem.rl(o)?.toString()
+            return c.args.firstNotNullOfOrNull { sem.rl(it) }?.toString()
+        }
+
+        /** Il nome di un bioma (ResourceKey o costante di Biomes). */
+        private fun keyName(v: V?): String? {
+            val x = resolve(v)
+            if (x is StaticV && x.owner.endsWith("/Biomes")) return "minecraft:" + x.name.lowercase()
+            val o = x as? Obj ?: return null
+            return o.origin?.args?.firstNotNullOfOrNull { sem.rl(it) }?.toString()
+        }
 
         /** Classi della mod e prima classe non della mod. */
         fun chain(o: Obj): List<String> {

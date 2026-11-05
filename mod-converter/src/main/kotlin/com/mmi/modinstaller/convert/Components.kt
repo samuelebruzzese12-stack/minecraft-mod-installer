@@ -96,13 +96,15 @@ internal object ComponentRegistry {
         )
     }
 
-    fun entity(e: EntityOut, entry: ConvertedEntry): Component {
+    fun entity(e: EntityOut, entry: ConvertedEntry, spawns: Boolean = false): Component {
         val diffs = ArrayList<String>()
+        if (!spawns) diffs.add("compare solo con l'uovo (la regola di comparsa della mod non si è potuta tradurre)")
         if (e.facts?.goals.isNullOrEmpty()) diffs.add("comportamento generico (l'IA della mod non si è potuta leggere)")
         else diffs.add("IA tradotta negli obiettivi di Bedrock più vicini: le azioni speciali scritte in codice no")
         return Component(
             "creatura", e.java.toString(), e.facts?.vanillaBase?.let { "deriva da $it" } ?: "creatura",
-            emptyList(), entry.detail, e.bedrockId, entry.detail, listOf(STATIC), diffs, ComponentStatus.APPROXIMATED
+            emptyList(), entry.detail, e.bedrockId, entry.detail + if (spawns) "; compare nel mondo nei biomi della mod" else "",
+            listOf(STATIC, "nel server Bedrock ufficiale: nasce viva e con la vita giusta (prove sulle mod di esempio)"), diffs, ComponentStatus.APPROXIMATED
         )
     }
 

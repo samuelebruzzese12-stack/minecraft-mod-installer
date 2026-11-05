@@ -29,6 +29,12 @@ class RealModsTest {
                 report.append("   oggetti ").append(r.items.size).append(", blocchi ").append(r.blocks.size)
                     .append(", ricette ").append(r.recipesConverted).append("/").append(r.recipesTotal)
                     .append(", bottini ").append(r.lootTables).append(", minerali ").append(r.ores).append(", armature ").append(r.armorModels).append('\n')
+                for (s in r.scripted) report.append("   ricostruito: ").append(s).append('\n')
+                for (s in r.fromCode) report.append("   dal codice: ").append(s).append('\n')
+                if (r.components.isNotEmpty()) {
+                    val by = r.components.groupBy { it.status }.mapValues { (_, l) -> l.sumOf { it.count } }
+                    report.append("   registro dei componenti: ").append(ComponentStatus.values().filter { by[it] != null }.joinToString(" · ") { it.label + " " + by[it] }).append('\n')
+                }
                 for ((why, n) in r.recipeSkips.entries.sortedByDescending { it.value }.take(6)) report.append("   ricette non convertite: ").append(n).append(" — ").append(why).append('\n')
                 for (s in r.simplified) report.append("   semplificato: ").append(s).append('\n')
                 for (s in r.estimates) report.append("   stimato: ").append(s).append('\n')
