@@ -9,6 +9,8 @@ prova), il server parte, carica i pacchetti e fa le prove dentro il gioco vero:
   * blocchi: ognuno si piazza nel mondo e resta quel blocco;
   * oggetti: pila massima, durata e cibo hanno nel gioco i valori scritti dalla conversione;
   * creature: ognuna nasce, è ancora viva dopo un secondo e ha la vita prevista;
+  * comportamenti ricostruiti con la Script API, con un giocatore simulato: gli attrezzi si consumano scavando, i cibi danno
+    i loro effetti, i minerali lasciano esperienza (alcuni per tipo);
   * registro dei contenuti (content log) senza errori.
 Scrive USCITA/<add-on>.json con gli esiti e USCITA/riepilogo.txt. Esce con 1 se qualcosa non va.
 Usare il server Bedrock implica accettare l'EULA di Minecraft e l'informativa sulla privacy di Microsoft.
@@ -42,6 +44,7 @@ def read_addon(path):
             kind = m["modules"][0]["type"]
             packs[kind] = (n.split("/")[0], m)
     blocks, items, entities = [], [], []
+    behaviors = {"tools": [], "foods": [], "ores": []}
     bp = packs.get("data", (None,))[0]
     for n in names:
         if not bp or not n.startswith(bp + "/") or not n.endswith(".json"):
@@ -52,7 +55,16 @@ def read_addon(path):
         except Exception:
             continue
         if rel.startswith("blocks/") and "minecraft:block" in d:
-            blocks.append(d["minecraft:block"]["description"]["identifier"])
+            bid = d["minecraft:block"]["description"]["identifier"]
+            blocks.append(bid)
+            comps = d["minecraft:block"].get("components", {})
+            xp = comps.get("mmi:xp_on_break")
+            mining = comps.get("minecraft:destructible_by_mining")
+            secs = mining.get("seconds_to_destroy", 1) if isinstance(mining, dict) else 1
+            if xp and isinstance(mining, dict):
+                # con un piccone di netherite (velocità 9) un blocco duro N secondi si rompe in circa N·1,5/9 secondi
+                ticks = int(min(400, max(40, secs * 20 * 1.5 / 9 * 1.5 + 20)))
+                behaviors["ores"].append({"id": bid, "min": xp.get("min", 0), "max": xp.get("max", 0), "ticks": ticks})
         elif rel.startswith("items/") and "minecraft:item" in d:
             it = d["minecraft:item"]
             c = it.get("components", {})
@@ -62,15 +74,24 @@ def read_addon(path):
                 "durability": (c.get("minecraft:durability") or {}).get("max_durability"),
                 "nutrition": (c.get("minecraft:food") or {}).get("nutrition"),
             })
+            if "mmi:tool_wear" in c:
+                behaviors["tools"].append({"id": it["description"]["identifier"], "mine": c["mmi:tool_wear"].get("mine", 1)})
+            if "mmi:food_effects" in c:
+                fx = [e.split(",") for e in c["mmi:food_effects"].get("effects", "").split(";") if e]
+                sure = [e[0] for e in fx if float(e[3]) >= 1]
+                if sure:
+                    behaviors["foods"].append({"id": it["description"]["identifier"], "effect": sure[0],
+                                               "ticks": int(round(20 * (c.get("minecraft:use_modifiers") or {}).get("use_duration", 1.6)))})
         elif rel.startswith("entities/") and "minecraft:entity" in d:
             e = d["minecraft:entity"]
             h = (e.get("components", {}).get("minecraft:health") or {}).get("max")
             entities.append({"id": e["description"]["identifier"], "health": h})
-    return z, packs, blocks, items, entities
+    behaviors["ores"].sort(key=lambda o: o["ticks"])
+    return z, packs, blocks, items, entities, behaviors
 
 
 TEST_JS = r'''
-import { system, world, BlockTypes, ItemTypes, EntityTypes, ItemStack } from "@minecraft/server";
+import { system, world, BlockTypes, ItemTypes, EntityTypes, ItemStack, GameMode, Direction } from "@minecraft/server";
 import * as gt from "@minecraft/server-gametest";
 const DATA = __DATA__;
 function log(o) { console.warn("BBTEST " + JSON.stringify(o)); }
@@ -124,7 +145,7 @@ if (DATA.entities.length) gt.register("bb", "creature", (test) => {
   const spawned = [];
   const bad = [];
   DATA.entities.forEach((e, i) => {
-    try { spawned.push([e, test.spawn(e.id, { x: 1 + (i % 7) * 2, y: 1, z: 1 + (Math.floor(i / 7) % 7) * 2 })]); }
+    try { spawned.push([e, test.spawn(e.id, { x: 1 + (i % 7) * 2, y: 2, z: 1 + (Math.floor(i / 7) % 7) * 2 })]); }
     catch (err) { bad.push(e.id + " non nasce: " + err); }
   });
   test.runAfterDelay(20, () => {
@@ -138,11 +159,70 @@ if (DATA.entities.length) gt.register("bb", "creature", (test) => {
   });
 }).structureName("bb:plat").maxTicks(200).tag("bb");
 
+// Il pavimento della struttura di prova è a y=1: il giocatore simulato sta sopra (y=2).
+const B = DATA.behaviors;
+if (B.tools.length + B.foods.length + B.ores.length) gt.register("bb", "comportamenti", (test) => {
+  const bad = [], ok = [];
+  const p = test.spawnSimulatedPlayer({ x: 6, y: 2, z: 6 }, "Prova", GameMode.Survival);
+  const inv = () => p.getComponent("minecraft:inventory").container;
+  const loc = { x: 7, y: 2, z: 6 };
+  let orbs = 0;
+  const sub = world.afterEvents.entitySpawn.subscribe((ev) => { try { if (ev.entity.typeId === "minecraft:xp_orb") orbs++; } catch (e) {} });
+  let t = 5;
+  for (const tool of B.tools.slice(0, 4)) {
+    test.runAfterDelay(t, () => { test.setBlockType("minecraft:dirt", loc); p.setItem(new ItemStack(tool.id, 1), 0, true); p.breakBlock(loc, Direction.West); });
+    test.runAfterDelay(t + 30, () => {
+      const it = inv().getItem(0), d = it && it.getComponent("minecraft:durability");
+      const gone = test.getBlock(loc).typeId !== "minecraft:dirt";
+      if (!gone) bad.push(tool.id + ": non ha rotto la terra");
+      else if (!it) ok.push(tool.id + " rotto dall'usura");
+      else if (!d || d.damage !== tool.mine) bad.push(tool.id + " usura " + (d ? d.damage : "-") + "≠" + tool.mine);
+      else ok.push(tool.id + " usura " + d.damage);
+      p.stopBreakingBlock && p.stopBreakingBlock();
+    });
+    t += 35;
+  }
+  for (const food of B.foods.slice(0, 4)) {
+    test.runAfterDelay(t, () => {
+      try { p.getComponent("minecraft:player.hunger").setCurrentValue(2); } catch (e) {}
+      for (const fx of p.getEffects()) p.removeEffect(fx.typeId);
+      p.setItem(new ItemStack(food.id, 4), 1, true);
+      p.useItemInSlot(1);
+    });
+    test.runAfterDelay(t + food.ticks + 12, () => {
+      const left = inv().getItem(1);
+      const eaten = !left || left.typeId !== food.id || left.amount < 4;
+      if (!eaten) bad.push(food.id + ": non si è mangiato");
+      else if (!p.getEffect(food.effect)) bad.push(food.id + ": manca l'effetto " + food.effect);
+      else ok.push(food.id + " → " + food.effect);
+      p.stopUsingItem();
+    });
+    t += food.ticks + 17;
+  }
+  for (const ore of B.ores.slice(0, 4)) {
+    let before = 0;
+    test.runAfterDelay(t, () => { test.setBlockType(ore.id, loc); p.setItem(new ItemStack("minecraft:netherite_pickaxe", 1), 0, true); before = orbs; p.breakBlock(loc, Direction.West); });
+    test.runAfterDelay(t + ore.ticks, () => {
+      const gone = test.getBlock(loc).typeId !== ore.id;
+      const n = orbs - before;
+      if (!gone) bad.push(ore.id + ": non si è rotto");
+      else if (n < ore.min || (ore.max > 0 && n === 0)) bad.push(ore.id + ": esperienza " + n + " (attesa " + ore.min + "–" + ore.max + ")");
+      else ok.push(ore.id + " esperienza " + n);
+    });
+    t += ore.ticks + 5;
+  }
+  test.runAfterDelay(t + 2, () => {
+    world.afterEvents.entitySpawn.unsubscribe(sub);
+    log({ test: "comportamenti", ok: ok, bad: bad });
+    if (bad.length) test.fail(bad.length + " comportamenti diversi"); else test.succeed();
+  });
+}).structureName("bb:plat").maxTicks(2000).tag("bb");
+
 system.runTimeout(() => log({ test: "pronto" }), 20);
 '''
 
 
-def test_pack(dest, blocks, items, entities):
+def test_pack(dest, blocks, items, entities, behaviors=None):
     os.makedirs(os.path.join(dest, "scripts"), exist_ok=True)
     os.makedirs(os.path.join(dest, "structures", "bb"), exist_ok=True)
     pid = str(uuid.uuid4())
@@ -165,7 +245,8 @@ def test_pack(dest, blocks, items, entities):
                 data.append(1 if y == 0 else 0)
     open(os.path.join(dest, "structures", "bb", "plat.mcstructure"), "wb").write(
         lenbt.mcstructure(size, data, [("minecraft:air", {}), ("minecraft:stone", {})]))
-    payload = json.dumps({"blocks": blocks, "items": items, "entities": entities, "batch": BATCH})
+    payload = json.dumps({"blocks": blocks, "items": items, "entities": entities, "batch": BATCH,
+                          "behaviors": behaviors or {"tools": [], "foods": [], "ores": []}})
     open(os.path.join(dest, "scripts", "main.js"), "w", encoding="utf-8").write(TEST_JS.replace("__DATA__", payload))
     return pid
 
@@ -254,7 +335,7 @@ ERROR_RE = re.compile(r"(\[[A-Za-z ]+\]\[(error|warning)\])|( ERROR\] )", re.I)
 
 def test_addon(bds, addon, out_dir):
     name = os.path.basename(addon).rsplit(".", 1)[0]
-    z, packs, blocks, items, entities = read_addon(addon)
+    z, packs, blocks, items, entities, behaviors = read_addon(addon)
     tpl = prepare_template(bds)
     level = "bb_" + re.sub(r"[^a-zA-Z0-9]", "_", name)[:40]
     world = os.path.join(bds, "worlds", level)
@@ -270,7 +351,7 @@ def test_addon(bds, addon, out_dir):
                 os.makedirs(os.path.dirname(target), exist_ok=True)
                 open(target, "wb").write(z.read(n))
         (wbp if sub == "behavior_packs" else wrp).append({"pack_id": m["header"]["uuid"], "version": m["header"]["version"]})
-    tid = test_pack(os.path.join(world, "behavior_packs", "bb_test"), blocks, items, entities)
+    tid = test_pack(os.path.join(world, "behavior_packs", "bb_test"), blocks, items, entities, behaviors)
     wbp.append({"pack_id": tid, "version": [1, 0, 0]})
     json.dump(wbp, open(os.path.join(world, "world_behavior_packs.json"), "w"))
     json.dump(wrp, open(os.path.join(world, "world_resource_packs.json"), "w"))
@@ -312,6 +393,8 @@ def main():
             r["addon"], "OK" if ok else "PROBLEMI", r["blocks"], r["items"], r["entities"], len(r["passed"]), len(r["failed"]), r["content_log_count"])
         summary.append(line)
         for res in r["results"]:
+            if res.get("ok"):
+                summary.append("   %s ok: %s" % (res.get("test"), "; ".join(map(str, res["ok"][:12]))))
             for key in ("missingBlocks", "missingItems", "missingEntities", "bad"):
                 if res.get(key):
                     summary.append("   %s %s: %s" % (res.get("test"), key, "; ".join(map(str, res[key][:8]))))

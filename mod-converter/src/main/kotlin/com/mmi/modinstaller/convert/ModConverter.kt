@@ -52,7 +52,9 @@ class ModReport(
     /** Valori presi dal codice invece che stimati (es. «Danni e durata delle armi: 28»). */
     val fromCode: List<String> = emptyList(),
     /** Il registro completo dei componenti della mod (BLOCKBRIDGE): uno per voce, con stato e differenze. */
-    val components: List<Component> = emptyList()
+    val components: List<Component> = emptyList(),
+    /** Comportamenti Java ricostruiti con la Script API di Bedrock (es. «Effetti dei cibi: 12 cibi»). */
+    val scripted: List<String> = emptyList()
 ) {
     val contentCount: Int get() = items.size + blocks.size + entities.size
 
@@ -104,7 +106,11 @@ internal class ItemOut(
     val handheld: Boolean,
     val fuelSeconds: Double?,
     val armorTexture: Rl?,
-    val code: ItemFacts? = null
+    val code: ItemFacts? = null,
+    /** Effetti del cibo che esistono in Bedrock (ricostruiti con la Script API). */
+    val effects: List<Behaviors.Effect> = emptyList(),
+    /** Cosa resta in mano dopo averlo mangiato o bevuto (es. la ciotola). */
+    val convertsTo: String? = null
 )
 
 internal class BlockOut(
@@ -390,6 +396,9 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             // ---- oggetti
             val itemEntries = ArrayList<ConvertedEntry>()
             var armorCount = 0
+            var foodsWithEffects = 0
+            var toolsWorn = 0
+            val missingEffects = LinkedHashSet<String>()
             for (it in p.items) {
                 val id = converted.getValue(it.id)
                 val blockOnlyItem = it.id in mod.blockItems
@@ -425,10 +434,30 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 if (it.info?.layered == true) simplified.add("Icone a più strati: si usa il primo")
                 if (it.info?.model3d == true) simplified.add("Oggetti con modello 3D: icona piatta")
                 val fuel = mod.fuels[it.id]?.let { t -> t / 20.0 }
-                itemsOut.add(ItemOut(mod, it.id, id, key, it.info!!.icon, kind, material, it.info.handheld || kind in TOOLS, fuel, armorTex, ic))
+                val edible = kind == ItemKind.FOOD || kind == ItemKind.DRINK
+                val fx = ArrayList<Behaviors.Effect>()
+                if (edible) for (e in ic?.food?.effects.orEmpty()) {
+                    val be = Behaviors.bedrockEffect(e.effect)
+                    if (be == null) missingEffects.add(e.effect) else fx.add(Behaviors.Effect(be, e.duration, e.amplifier, e.chance))
+                }
+                if (fx.isNotEmpty()) foodsWithEffects++
+                if (kind in TOOLS) toolsWorn++
+                val remainder = if (!edible) null else (ic?.craftRemainder ?: containerOf(ic))?.let { r -> resolver.item(r)?.id }
+                itemsOut.add(ItemOut(mod, it.id, id, key, it.info!!.icon, kind, material, it.info.handheld || kind in TOOLS, fuel, armorTex, ic, fx, remainder))
                 itemEntries.add(ConvertedEntry(it.id.toString(), id, mod.lang["it_it"]?.get(key) ?: name, if (blockOnlyItem) "solo oggetto" else kind.label))
             }
             if (mod.spawnEggs.isNotEmpty()) notConverted.add("Uova delle creature: ${mod.spawnEggs.size}")
+            val scripted = ArrayList<String>()
+            if (foodsWithEffects > 0) scripted.add("Effetti dei cibi (pozioni dopo averli mangiati): $foodsWithEffects " + if (foodsWithEffects == 1) "cibo" else "cibi")
+            if (toolsWorn > 0) scripted.add("Usura degli attrezzi quando scavano: $toolsWorn " + if (toolsWorn == 1) "attrezzo" else "attrezzi")
+            val xpBlocks = blocksOut.count { b -> b.mod === mod && (b.code?.xp?.second ?: 0) > 0 }
+            if (xpBlocks > 0) scripted.add("Esperienza dai minerali: $xpBlocks " + if (xpBlocks == 1) "blocco" else "blocchi")
+            if (missingEffects.isNotEmpty()) {
+                notConverted.add(
+                    "Effetti della mod che Bedrock non ha (i cibi si mangiano ma senza questi effetti): " + missingEffects.size +
+                        ", es. " + missingEffects.take(4).joinToString(", ")
+                )
+            }
             val noIcon = mod.items.size - (p.items.size - (itemOnly[mod]?.size ?: 0))
             if (noIcon > 0) notConverted.add("Oggetti senza un'icona leggibile: $noIcon")
 
@@ -547,6 +576,15 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             for ((rl, o) in mod.recipes) {
                 try {
                     val out = recipeConv.convert(rl, o)
+                    // Verificato nel server Bedrock: il tavolo da forgia scarta la ricetta se l'oggetto di partenza non è
+                    // un'armatura o un attrezzo con usura (Create: zaino a pressione, che qui è un blocco; Quark: pickarang).
+                    for ((_, d) in out) {
+                        val base = (d["minecraft:recipe_smithing_transform"] as? Map<*, *>)?.get("base") as? String ?: continue
+                        if (base.startsWith("minecraft:")) continue
+                        val item = itemsOut.firstOrNull { x -> x.bedrockId == base }
+                        val known = item != null || blocksOut.any { x -> x.bedrockId == base }
+                        if (known && (item == null || !isEquipment(item))) throw Skip("il tavolo da forgia di Bedrock migliora solo armature e attrezzi con usura, e l'oggetto di partenza qui non lo è")
+                    }
                     recipesOut.addAll(out)
                     ok++
                 } catch (s: Skip) {
@@ -574,7 +612,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 ModReport(
                     mod.jar.label, mod.identity.name ?: mod.jar.label, mod.identity.loader, mod.identity.version,
                     itemEntries, blockEntries, ok, mod.recipes.size, skips, lootCount, ores, armorCount, entityEntries,
-                    estimates.toList(), simplified.toList(), notConverted, null, codeSummary, fromCode
+                    estimates.toList(), simplified.toList(), notConverted, null, codeSummary, fromCode, scripted = scripted
                 )
             )
         }
@@ -586,6 +624,21 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
 
     private val ARMOR = setOf(ItemKind.HELMET, ItemKind.CHESTPLATE, ItemKind.LEGGINGS, ItemKind.BOOTS)
     private val TOOLS = setOf(ItemKind.SWORD, ItemKind.PICKAXE, ItemKind.AXE, ItemKind.SHOVEL, ItemKind.HOE)
+    private val EQUIPMENT = TOOLS + setOf(ItemKind.HELMET, ItemKind.CHESTPLATE, ItemKind.LEGGINGS, ItemKind.BOOTS)
+
+    /** Il contenitore che resta dopo aver mangiato o bevuto, quando in Java lo decide la classe dell'oggetto. */
+    private fun containerOf(ic: ItemFacts?): Rl? {
+        val classes = ic?.classes.orEmpty().map { it.substringAfterLast('/') }
+        return when {
+            "BowlFoodItem" in classes || "SuspiciousStewItem" in classes -> Rl("minecraft", "bowl")
+            "HoneyBottleItem" in classes -> Rl("minecraft", "glass_bottle")
+            "MilkBucketItem" in classes -> Rl("minecraft", "bucket")
+            else -> null
+        }
+    }
+
+    /** Armature, attrezzi e oggetti con usura: gli unici che Bedrock accetta come base nel tavolo da forgia. */
+    private fun isEquipment(it: ItemOut): Boolean = it.kind in EQUIPMENT || (it.code?.durability ?: 0) > 0
 
     /** Il tipo di oggetto dalla classe Java da cui deriva (più affidabile dei gruppi e del nome). */
     private fun kindFromCode(ic: ItemFacts?): ItemKind? {
@@ -873,6 +926,7 @@ internal class AddonWriter(
     val rpUuid: String = UUID.nameUUIDFromBytes(("mmi-rp:" + name.lowercase()).toByteArray()).toString()
     private val bpModule = UUID.nameUUIDFromBytes(("mmi-bp-module:" + name.lowercase()).toByteArray()).toString()
     private val rpModule = UUID.nameUUIDFromBytes(("mmi-rp-module:" + name.lowercase()).toByteArray()).toString()
+    private val scriptModule = UUID.nameUUIDFromBytes(("mmi-bp-script:" + name.lowercase()).toByteArray()).toString()
     /**
      * Versione dei pacchetti: [1, giorni dal 2025-01-01, minuto del giorno]. Cresce a ogni conversione (così Minecraft
      * aggiorna l'add-on già importato) e ogni numero resta sotto 65536: Minecraft ignora i pacchetti con numeri più grandi
@@ -915,11 +969,6 @@ internal class AddonWriter(
         var done = 0L
         val textures = TextureCollector(plan.mods, limits)
 
-        // ---- manifest
-        val description = "Convertito da Minecraft Java con Minecraft Mod Installer: " +
-            plan.reports.filter { it.contentCount > 0 }.joinToString(", ") { it.title }.take(200)
-        sink(bp + "manifest.json", json(manifest("$name (comportamento)", description, bpUuid, bpModule, "data", rpUuid)))
-        sink(rp + "manifest.json", json(manifest("$name (risorse)", description, rpUuid, rpModule, "resources", null)))
         val icon = packIcon()
         sink(bp + "pack_icon.png", icon)
         sink(rp + "pack_icon.png", icon)
@@ -1049,21 +1098,47 @@ internal class AddonWriter(
             langs.add(code)
         }
         sink(rp + "texts/languages.json", json(langs))
+
+        // ---- comportamenti (Script API) e manifest: alla fine, quando si sa quali componenti personalizzati servono
+        val js = Behaviors.mainJs(scripts)
+        if (js != null) sink(bp + "scripts/main.js", js.toByteArray(Charsets.UTF_8))
+        val description = "Convertito da Minecraft Java con Minecraft Mod Installer: " +
+            plan.reports.filter { it.contentCount > 0 }.joinToString(", ") { it.title }.take(200)
+        sink(bp + "manifest.json", json(manifest("$name (comportamento)", description, bpUuid, bpModule, "data", rpUuid, js != null)))
+        sink(rp + "manifest.json", json(manifest("$name (risorse)", description, rpUuid, rpModule, "resources", null, js != null)))
         progress?.invoke(total, total, "Fatto")
     }
 
     private fun n(v: Double): Any = if (v == Math.floor(v)) v.toLong() else v
 
-    private fun manifest(title: String, description: String, uuid: String, module: String, type: String, dependency: String?): Map<String, Any?> {
+    private fun manifest(title: String, description: String, uuid: String, module: String, type: String, dependency: String?, scripted: Boolean): Map<String, Any?> {
+        val modules = arrayListOf<Any?>(linkedMapOf("type" to type, "uuid" to module, "version" to version))
+        val deps = ArrayList<Any?>()
+        if (dependency != null) deps.add(linkedMapOf("uuid" to dependency, "version" to version))
+        if (scripted && type == "data") {
+            modules.add(linkedMapOf("type" to "script", "language" to "javascript", "uuid" to scriptModule, "version" to version, "entry" to "scripts/main.js"))
+            deps.add(linkedMapOf("module_name" to "@minecraft/server", "version" to Behaviors.SCRIPT_API))
+        }
         val m = linkedMapOf<String, Any?>(
             "format_version" to 2L,
             "header" to linkedMapOf(
-                "name" to title, "description" to description, "uuid" to uuid, "version" to version, "min_engine_version" to ModConverter.MIN_ENGINE
+                "name" to title, "description" to description, "uuid" to uuid, "version" to version,
+                "min_engine_version" to if (scripted) Behaviors.MIN_ENGINE else ModConverter.MIN_ENGINE
             ),
-            "modules" to listOf(linkedMapOf("type" to type, "uuid" to module, "version" to version))
+            "modules" to modules
         )
-        if (dependency != null) m["dependencies"] = listOf(linkedMapOf("uuid" to dependency, "version" to version))
+        if (deps.isNotEmpty()) m["dependencies"] = deps
         return m
+    }
+
+    /** Componenti personalizzati usati (per scrivere solo il codice che serve). */
+    private val scripts = LinkedHashSet<String>()
+
+    /** I file che usano componenti personalizzati con parametri vogliono il formato [Behaviors.FORMAT]. */
+    private fun formatFor(components: Map<String, Any?>): String {
+        val custom = components.keys.filter { it.startsWith("mmi:") }
+        scripts.addAll(custom)
+        return if (custom.isEmpty()) ModConverter.FORMAT else Behaviors.FORMAT
     }
 
     private fun packIcon(): ByteArray {
@@ -1115,6 +1190,9 @@ internal class AddonWriter(
                         "destroy_speeds" to listOf(linkedMapOf("block" to linkedMapOf("tags" to "q.any_tag(" + blockTags.joinToString(", ") { t -> "'$t'" } + ")"), "speed" to stats.speed))
                     )
                 }
+                // Bedrock non consuma da sé gli attrezzi delle add-on quando scavano: lo fa lo script, come in Java
+                // (spade: 2 a blocco e 1 a colpo; attrezzi: 1 a blocco e 2 a colpo).
+                c[Behaviors.TOOL_WEAR] = if (it.kind == ItemKind.SWORD) linkedMapOf("mine" to 2L, "hit" to 1L) else linkedMapOf("mine" to 1L, "hit" to 2L)
                 tags.add("minecraft:is_tool")
                 tags.add(
                     when (it.kind) {
@@ -1137,11 +1215,14 @@ internal class AddonWriter(
                 category = "items"
                 val food = it.code?.food
                 c["minecraft:max_stack_size"] = (it.code?.maxStack ?: if (it.kind == ItemKind.DRINK) 16 else 64).toLong()
-                c["minecraft:food"] = linkedMapOf(
+                val foodC = linkedMapOf<String, Any?>(
                     "nutrition" to (food?.nutrition ?: 4).toLong(),
                     "saturation_modifier" to (food?.saturation?.let { Math.round(it * 1000.0) / 1000.0 } ?: 0.6),
                     "can_always_eat" to (food?.alwaysEdible ?: (it.kind == ItemKind.DRINK))
                 )
+                it.convertsTo?.let { r -> foodC["using_converts_to"] = r }
+                c["minecraft:food"] = foodC
+                if (it.effects.isNotEmpty()) c[Behaviors.FOOD_EFFECTS] = linkedMapOf("effects" to Behaviors.effectsParam(it.effects))
                 c["minecraft:use_animation"] = if (it.kind == ItemKind.DRINK) "drink" else "eat"
                 c["minecraft:use_modifiers"] = linkedMapOf("use_duration" to (if (food?.fast == true) 0.8 else 1.6), "movement_modifier" to 0.35)
             }
@@ -1155,7 +1236,7 @@ internal class AddonWriter(
         it.fuelSeconds?.let { s -> c["minecraft:fuel"] = linkedMapOf("duration" to maxOf(0.05, s)) }
         if (tags.isNotEmpty()) c["minecraft:tags"] = linkedMapOf("tags" to tags.distinct())
         return linkedMapOf(
-            "format_version" to ModConverter.FORMAT,
+            "format_version" to formatFor(c),
             "minecraft:item" to linkedMapOf(
                 "description" to linkedMapOf("identifier" to it.bedrockId, "menu_category" to linkedMapOf("category" to category)),
                 "components" to c
@@ -1236,7 +1317,8 @@ internal class AddonWriter(
             }
             Orientation.NONE -> {}
         }
-        return linkedMapOf("format_version" to ModConverter.FORMAT, "minecraft:block" to block)
+        b.code?.xp?.let { (min, max) -> if (max > 0) c[Behaviors.XP_ON_BREAK] = linkedMapOf("min" to min.toLong(), "max" to max.toLong()) }
+        return linkedMapOf("format_version" to formatFor(c), "minecraft:block" to block)
     }
 }
 

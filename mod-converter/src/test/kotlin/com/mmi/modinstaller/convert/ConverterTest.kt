@@ -91,7 +91,14 @@ class ConverterTest {
         assertEquals("data", (bp.l("modules")[0] as Map<*, *>)["type"])
         assertEquals("resources", (rp.l("modules")[0] as Map<*, *>)["type"])
         assertEquals(rp.o("header")["uuid"], (bp.l("dependencies")[0] as Map<*, *>)["uuid"])
-        assertEquals(listOf(1L, 21L, 80L), bp.o("header")["min_engine_version"])
+        // La spada usa lo script dell'usura: il pacchetto ha il modulo «script» e chiede la Script API 2.0.0 (Minecraft 1.21.90+).
+        assertEquals(listOf(1L, 21L, 90L), bp.o("header")["min_engine_version"])
+        val script = bp.l("modules").map { it as Map<*, *> }.single { it["type"] == "script" }
+        assertEquals("scripts/main.js", script["entry"])
+        assertTrue(bp.l("dependencies").any { (it as Map<*, *>)["module_name"] == "@minecraft/server" && it["version"] == "2.0.0" })
+        val js = String(files["Test Mod BP/scripts/main.js"]!!)
+        assertTrue(js.contains("registerCustomComponent(\"mmi:tool_wear\""))
+        assertFalse(js.contains("mmi:food_effects"))
         // Stesso nome → stessi identificatori: riconvertire aggiorna l'add-on invece di aggiungerne un altro
         val again = conv.preview(plan, "Test Mod")
         assertEquals(bp.o("header")["uuid"], Json.parseObject(String(again["Test Mod BP/manifest.json"]!!)).o("header")["uuid"])
@@ -108,6 +115,8 @@ class ConverterTest {
         assertEquals(true, c["minecraft:hand_equipped"])
         assertEquals(250L, c.o("minecraft:durability")["max_durability"])
         assertEquals(7L, c["minecraft:damage"])
+        assertEquals("1.21.90", json("Test Mod BP/items/testmod/ruby_sword.json")["format_version"])
+        assertEquals(mapOf("mine" to 2L, "hit" to 1L), c["mmi:tool_wear"])
         assertTrue(c.o("minecraft:tags").l("tags").containsAll(listOf("minecraft:is_sword", "minecraft:is_tool")))
 
         val pick = json("Test Mod BP/items/testmod/ruby_pickaxe.json").o("minecraft:item").o("components")

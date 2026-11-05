@@ -254,7 +254,7 @@ class Interp(val classes: ClassSource, val sem: Semantics, val budget: Budget = 
             return VoidV
         }
         // Una lambda chiamata attraverso la sua interfaccia (Supplier.get, Function.apply…).
-        if (receiver is LamV && op == Op.INVOKEINTERFACE && ref.name == receiver.ifaceMethod) return callLambda(receiver, args, depth)
+        if (receiver is LamV && (op == Op.INVOKEINTERFACE || op == Op.INVOKEVIRTUAL) && ref.name == receiver.ifaceMethod) return callLambda(receiver, args, depth)
         // Codice della mod: si segue.
         val start = when {
             op == Op.INVOKESTATIC || op == Op.INVOKESPECIAL -> ref.owner
