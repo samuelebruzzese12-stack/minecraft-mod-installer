@@ -363,15 +363,20 @@ class ModelResolver(private val jars: List<JavaJar>, private val limits: Convert
         val parent = r.vanillaParent?.removePrefix("minecraft:")
         val isSpawnEgg = parent == "item/template_spawn_egg"
         val layer0 = texture(r.textures, "#layer0")
-        val layers = r.textures.keys.count { it.startsWith("layer") }
+        val layerKeys = r.textures.keys.filter { Regex("layer\\d+").matches(it) }.sortedBy { it.removePrefix("layer").toInt() }
+        val layerList = layerKeys.mapNotNull { texture(r.textures, "#$it") }
         val icon = layer0 ?: texture(r.textures, "#particle") ?: r.textures.keys.firstNotNullOfOrNull { texture(r.textures, "#$it") }
         val handheld = parent == "item/handheld" || parent == "item/handheld_rod" || parent == "item/handheld_mace"
         val is3d = layer0 == null && (r.elements != null || parent?.startsWith("block/") == true)
-        return ItemModelInfo(icon, handheld, isSpawnEgg, layers > 1, is3d)
+        return ItemModelInfo(icon, handheld, isSpawnEgg, layerKeys.size > 1, is3d, if (layerList.size > 1) layerList else emptyList())
     }
 }
 
-class ItemModelInfo(val icon: Rl?, val handheld: Boolean, val spawnEgg: Boolean, val layered: Boolean, val model3d: Boolean)
+class ItemModelInfo(
+    val icon: Rl?, val handheld: Boolean, val spawnEgg: Boolean, val layered: Boolean, val model3d: Boolean,
+    /** Gli strati dell'icona in ordine (layer0, layer1…), se sono più d'uno: in Bedrock diventano una sola immagine. */
+    val layers: List<Rl> = emptyList()
+)
 
 /**
  * Converte gli elementi di un modello Java nella geometria di un blocco Bedrock. Le convenzioni (centro del blocco in 0, asse X

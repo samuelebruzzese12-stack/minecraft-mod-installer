@@ -37,6 +37,46 @@ BATCH = 180          # blocchi per prova (una prova = una struttura 14×14 con 1
 TIMEOUT = 240        # secondi al massimo per add-on
 
 
+def guns_data(z, bp, behaviors):
+    """Armi di TACZ (scripts/mmi_tacz_data.js): se ne provano alcune di tipo diverso e una ricetta di un banco."""
+    if not bp:
+        return
+    try:
+        js = z.read(bp + "/scripts/mmi_tacz_data.js").decode("utf-8")
+    except KeyError:
+        return
+    def const(name):
+        m = re.search(r"export const " + name + r" = (.*?);\n", js, re.S)
+        return json.loads(m.group(1)) if m else None
+    guns, recipes = const("GUNS") or {}, const("RECIPES") or []
+    picks = []
+    def pick(cond):
+        for gid, g in guns.items():
+            if gid not in [p["id"] for p in picks] and g.get("ammo") and cond(g):
+                picks.append({"id": gid, "ammo": g["ammo"], "mag": g["mag"], "auto": g["modes"][0] == "auto", "inv": g["inv"],
+                              "pellets": g["pellets"], "expl": bool(g.get("expl")), "reload": max(g["reload"]["ec"], g["reload"]["ef"]),
+                              "rpm": g["rpm"], "bolt": g["bolt"], "dmg": g["dmg"]})
+                return
+    pick(lambda g: g["modes"][0] == "auto" and not g["inv"] and g["pellets"] == 1)
+    pick(lambda g: g["modes"][0] == "semi" and g["pellets"] == 1 and g["bolt"] == 0 and not g.get("expl"))
+    pick(lambda g: g["pellets"] > 1)
+    pick(lambda g: g["bolt"] > 0)
+    pick(lambda g: bool(g.get("expl")))
+    behaviors["guns"] = picks
+    rep = {"minecraft:logs": "minecraft:oak_log", "minecraft:planks": "minecraft:oak_planks", "minecraft:wool": "minecraft:white_wool"}
+    for r in recipes:
+        mats = []
+        for m in r["materials"]:
+            item = (m.get("items") or [None])[0] or rep.get(m.get("tag"))
+            if not item:
+                break
+            mats.append({"item": item, "count": m["count"]})
+        else:
+            behaviors["gunRecipe"] = {"result": r["result"], "count": r["count"], "materials": mats}
+            if r["result"] in guns:
+                break
+
+
 def read_addon(path):
     """Cartelle BP/RP dell'add-on, manifest e contenuto (identificatori e valori attesi)."""
     z = zipfile.ZipFile(path)
@@ -48,8 +88,9 @@ def read_addon(path):
             kind = m["modules"][0]["type"]
             packs[kind] = (n.split("/")[0], m)
     blocks, items, entities = [], [], []
-    behaviors = {"tools": [], "foods": [], "ores": [], "stateful": []}
+    behaviors = {"tools": [], "foods": [], "ores": [], "stateful": [], "guns": [], "gunRecipe": None}
     bp = packs.get("data", (None,))[0]
+    guns_data(z, bp, behaviors)
     for n in names:
         if not bp or not n.startswith(bp + "/") or not n.endswith(".json"):
             continue
@@ -303,6 +344,69 @@ if (B.stateful.length) gt.register("bb", "stati", (test) => {
   });
 }).structureName("bb:plat").maxTicks(2000).tag("bb");
 
+// ---- armi di TACZ: ricarica automatica a caricatore vuoto, sparo, danno, munizioni consumate; un banco crea un'arma
+function countOf(inv, id) { let n = 0; for (let i = 0; i < inv.size; i++) { const it = inv.getItem(i); if (it && it.typeId === id) n += it.amount; } return n; }
+(DATA.behaviors.guns || []).forEach((g, n) => {
+  const after = Math.ceil(g.reload * 20) + 40;
+  gt.register("bb", "arma_" + n, (test) => {
+    const p = test.spawnSimulatedPlayer({ x: 2, y: 2, z: 2 }, "Tiratore", GameMode.Survival);
+    const target = test.spawn("minecraft:husk", { x: 2, y: 2, z: 9 });
+    try { target.addEffect("slowness", 2000, { amplifier: 255, showParticles: false }); } catch (e) {}
+    const inv = p.getComponent("minecraft:inventory").container;
+    const res = { test: "arma", id: g.id, auto: g.auto };
+    const give = Math.min(64, g.mag * 2 + 1);
+    test.runAfterDelay(4, () => {
+      inv.setItem(0, new ItemStack(g.id, 1));
+      inv.setItem(1, new ItemStack(g.ammo, give));
+      p.selectedSlotIndex = 0;
+    });
+    // Primo colpo a caricatore vuoto: non spara e si ricarica da sola
+    test.runAfterDelay(20, () => { res.hp0 = target.getComponent("minecraft:health").currentValue; p.useItemInSlot(0); });
+    test.runAfterDelay(23, () => { p.stopUsingItem(); });
+    // Si mira accovacciandosi (colpi precisi) al centro del bersaglio: «lookAtEntity» guarderebbe i piedi.
+    const aim = () => { const l = target.location; p.lookAtLocation(test.relativeLocation({ x: l.x, y: l.y + 1.1, z: l.z })); };
+    test.runAfterDelay(after - 8, () => { p.isSneaking = true; aim(); });
+    test.runAfterDelay(after - 3, aim);
+    test.runAfterDelay(after, () => {
+      res.reserveAfterReload = countOf(inv, g.ammo);
+      res.lore = inv.getItem(0)?.getLore();
+      res.hp1 = target.isValid ? target.getComponent("minecraft:health").currentValue : 0;
+      p.useItemInSlot(0);
+    });
+    test.runAfterDelay(after + (g.auto ? 14 : 3), () => { p.stopUsingItem(); });
+    test.runAfterDelay(after + 40, () => {
+      res.hp2 = target.isValid ? target.getComponent("minecraft:health").currentValue : 0;
+      res.lore2 = inv.getItem(0)?.getLore();
+      res.reserveEnd = countOf(inv, g.ammo);
+      const loaded = Math.min(g.mag, give);
+      const reloadOk = g.inv ? true : res.reserveAfterReload === give - loaded;
+      const hitOk = res.hp2 < res.hp1 && res.hp1 >= res.hp0 - 0.01;
+      res.esito = reloadOk && hitOk ? "ok" : "no";
+      log(res);
+      if (!reloadOk) test.fail("ricarica: munizioni " + res.reserveAfterReload + " invece di " + (give - loaded));
+      else if (!hitOk) test.fail("colpo: vita " + res.hp1 + " → " + res.hp2);
+      else test.succeed();
+    });
+  }).structureName("bb:plat").maxTicks(after + 80).tag("bb");
+});
+if (DATA.behaviors.gunRecipe) gt.register("bb", "banco_armi", (test) => {
+  const r = DATA.behaviors.gunRecipe;
+  const p = test.spawnSimulatedPlayer({ x: 2, y: 2, z: 2 }, "Armaiolo", GameMode.Survival);
+  const inv = p.getComponent("minecraft:inventory").container;
+  test.runAfterDelay(4, () => {
+    for (const m of r.materials) { let left = m.count; while (left > 0) { const k = Math.min(64, left); inv.addItem(new ItemStack(m.item, k)); left -= k; } }
+  });
+  test.runAfterDelay(10, () => { p.runCommand("scriptevent mmi:tacz_craft " + r.result); });
+  test.runAfterDelay(20, () => {
+    const got = countOf(inv, r.result);
+    const left = r.materials.map((m) => countOf(inv, m.item));
+    log({ test: "banco_armi", result: r.result, got, materialsLeft: left });
+    if (got < 1) test.fail("il banco non ha creato " + r.result);
+    else if (left.some((x) => x > 0)) test.fail("materiali non consumati: " + left.join(","));
+    else test.succeed();
+  });
+}).structureName("bb:plat").maxTicks(80).tag("bb");
+
 system.runTimeout(() => log({ test: "pronto" }), 20);
 '''
 
@@ -331,7 +435,7 @@ def test_pack(dest, blocks, items, entities, behaviors=None):
     open(os.path.join(dest, "structures", "bb", "plat.mcstructure"), "wb").write(
         lenbt.mcstructure(size, data, [("minecraft:air", {}), ("minecraft:stone", {})]))
     payload = json.dumps({"blocks": blocks, "items": items, "entities": entities, "batch": BATCH,
-                          "behaviors": behaviors or {"tools": [], "foods": [], "ores": [], "stateful": []}})
+                          "behaviors": behaviors or {"tools": [], "foods": [], "ores": [], "stateful": [], "guns": [], "gunRecipe": None}})
     open(os.path.join(dest, "scripts", "main.js"), "w", encoding="utf-8").write(TEST_JS.replace("__DATA__", payload))
     return pid
 
@@ -478,7 +582,9 @@ def main():
             r["addon"], "OK" if ok else "PROBLEMI", r["blocks"], r["items"], r["entities"], len(r["passed"]), len(r["failed"]), r["content_log_count"])
         summary.append(line)
         for res in r["results"]:
-            if res.get("ok"):
+            if res.get("test") in ("arma", "banco_armi"):
+                summary.append("   %s: %s" % (res.get("test"), json.dumps({k: v for k, v in res.items() if k != "test"}, ensure_ascii=False)[:400]))
+            if isinstance(res.get("ok"), list) and res.get("ok"):
                 summary.append("   %s ok: %s" % (res.get("test"), "; ".join(map(str, res["ok"][:12]))))
             for key in ("missingBlocks", "missingItems", "missingEntities", "bad"):
                 if res.get(key):

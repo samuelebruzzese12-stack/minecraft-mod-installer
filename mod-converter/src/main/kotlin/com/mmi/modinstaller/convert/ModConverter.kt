@@ -83,14 +83,18 @@ class ConversionPlan internal constructor(
     internal val customTags: Map<String, Set<String>>,
     internal val languages: Map<String, Map<String, String>>,
     internal val sounds: List<SoundOut> = emptyList(),
-    internal val spawnRules: List<Pair<String, Map<String, Any?>>> = emptyList()
+    internal val spawnRules: List<Pair<String, Map<String, Any?>>> = emptyList(),
+    /** Armi da fuoco dei pacchetti di TACZ (vedi [TaczReader]). */
+    internal val tacz: List<TaczContent> = emptyList(),
+    /** Icone a più strati da unire (texture virtuale → strati). */
+    internal val composites: Map<Rl, List<Rl>> = emptyMap()
 ) : java.io.Closeable {
     val itemCount: Int get() = items.size
     val blockCount: Int get() = blocks.size
     val recipeCount: Int get() = recipes.size
     val oreCount: Int get() = features.size
     val entityCount: Int get() = entities.size
-    val hasContent: Boolean get() = items.isNotEmpty() || blocks.isNotEmpty() || entities.isNotEmpty()
+    val hasContent: Boolean get() = items.isNotEmpty() || blocks.isNotEmpty() || entities.isNotEmpty() || tacz.isNotEmpty()
 
     override fun close() = mods.forEach { it.jar.close() }
 }
@@ -189,6 +193,12 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 cancel()
                 progress?.invoke(i.toLong(), sources.size.toLong(), "Lettura di «${s.label}»")
                 try {
+                    // Un modpack al posto di una mod: lo si dice (con l'elenco delle mod) invece di «niente da convertire».
+                    val pack = ModpackNotice.read(s.file)
+                    if (pack != null) {
+                        failed.add(ModpackNotice.report(s.label, pack))
+                        continue
+                    }
                     val jar = JavaJar.open(s.file, s.label, limits, cancel)
                     val mod = JavaContentReader.read(jar, limits)
                     mods.add(mod)
@@ -338,6 +348,8 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         val spawnOut = ArrayList<Pair<String, Map<String, Any?>>>()
         val languages = LinkedHashMap<String, MutableMap<String, String>>()
         val reports = ArrayList<ModReport>()
+        /** Icone fatte di più strati: texture «virtuale» → strati da unire. */
+        val composites = LinkedHashMap<Rl, List<Rl>>()
 
         fun res0(m: JavaModContent) = resolverModels.getValue(m)
         // Suoni: prima quelli che le creature usano (letti dal loro codice), poi gli altri finché c'è posto.
@@ -484,7 +496,15 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                     if (it.kindSource == KindSource.NAME && ic == null) estimates.add("Alcuni attrezzi e armature riconosciuti dal nome")
                 }
                 if (it.kind in ARMOR && armorTex == null) simplified.add("Armature indossabili ma senza il disegno sul corpo (texture non trovata)")
-                if (it.info?.layered == true) simplified.add("Icone a più strati: si usa il primo")
+                // Icone a più strati (es. il manico e la lama): in Bedrock un'icona è una sola immagine, quindi si uniscono.
+                var iconRl = it.info!!.icon
+                val layers = it.info.layers.filter { l -> l.ns != "minecraft" && exists(l) }
+                if (layers.size > 1 && layers.size == it.info.layers.size) {
+                    val v = Rl(layers[0].ns, layers[0].path + "__mmi_layers")
+                    composites[v] = layers
+                    iconRl = v
+                    simplified.add("Icone a più strati: strati uniti in un'unica immagine (senza i colori che in Java aggiunge il codice)")
+                } else if (it.info.layered) simplified.add("Icone a più strati: si usa il primo (un altro strato manca)")
                 if (it.info?.model3d == true) simplified.add("Oggetti con modello 3D: icona piatta")
                 val fuel = mod.fuels[it.id]?.let { t -> t / 20.0 }
                 val edible = kind == ItemKind.FOOD || kind == ItemKind.DRINK
@@ -500,7 +520,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 val placed = ic?.blockId?.takeIf { b -> b != it.id }?.let { b -> blocksOut.firstOrNull { o -> o.java == b } }
                 val placeOn = if ((placed?.look as? BlockLook.Stateful)?.block?.family == BlockFamily.CROP) listOf("minecraft:farmland") else null
                 if (placed != null) placers++
-                itemsOut.add(ItemOut(mod, it.id, id, key, it.info!!.icon, kind, material, it.info.handheld || kind in TOOLS, fuel, armorTex, ic, fx, remainder, placed?.bedrockId, placeOn))
+                itemsOut.add(ItemOut(mod, it.id, id, key, iconRl, kind, material, it.info.handheld || kind in TOOLS, fuel, armorTex, ic, fx, remainder, placed?.bedrockId, placeOn))
                 itemEntries.add(ConvertedEntry(it.id.toString(), id, mod.lang["it_it"]?.get(key) ?: name, if (blockOnlyItem) "solo oggetto" else kind.label))
             }
             if (mod.spawnEggs.isNotEmpty()) notConverted.add("Uova delle creature: ${mod.spawnEggs.size}")
@@ -733,9 +753,31 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 )
             )
         }
+        // ---- TACZ: le armi stanno nei pacchetti di armi (dati e modelli), non nel registro del codice
+        val taczOut = ArrayList<TaczContent>()
+        if (limits.scriptBehaviors) for (mod in mods) {
+            cancel()
+            val t = try {
+                TaczReader.read(mod, limits, resolver)
+            } catch (e: java.util.concurrent.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            } ?: continue
+            taczOut.add(t)
+            val generic = { rl: Rl -> rl.ns == "tacz" && rl.path in TaczReader.GENERIC }
+            val removed = HashSet<String>()
+            itemsOut.removeAll { (it.mod === mod && generic(it.java) || it.bedrockId in t.ids).also { r -> if (r) removed.add(it.bedrockId) } }
+            blocksOut.removeAll { (it.mod === mod && generic(it.java) || it.bedrockId in t.ids).also { r -> if (r) removed.add(it.bedrockId) } }
+            if (removed.isNotEmpty()) recipesOut.removeAll { (_, doc) -> val text = Json.stringify(doc); removed.any { id -> text.contains("\"$id\"") } }
+            for ((code, map) in t.lang) languages.getOrPut(code) { LinkedHashMap() }.putAll(map)
+            for ((path, doc) in t.crafting) recipesOut.add(path to doc)
+            val i = reports.indexOfFirst { it.label == mod.jar.label }
+            if (i >= 0) reports[i] = TaczReport.merge(reports[i], t, removed)
+        }
         return ConversionPlan(
             failed + reports, mods, itemsOut, blocksOut, recipesOut, lootOut, featuresOut, entitiesOut, rulesOut,
-            resolver.customTags.mapValues { it.value.toSet() }, languages, soundPlan.sounds, spawnOut
+            resolver.customTags.mapValues { it.value.toSet() }, languages, soundPlan.sounds, spawnOut, taczOut, composites
         )
     }
 
@@ -1098,7 +1140,7 @@ internal class AddonWriter(
     fun collect(sink: (String, ByteArray) -> Unit) {
         val total = (plan.items.size + plan.blocks.size).toLong()
         var done = 0L
-        val textures = TextureCollector(plan.mods, limits)
+        val textures = TextureCollector(plan.mods, limits, plan.composites)
 
         val icon = packIcon()
         sink(bp + "pack_icon.png", icon)
@@ -1213,6 +1255,11 @@ internal class AddonWriter(
         for ((path, doc) in plan.featureRules) sink(bp + path, json(doc))
         for ((path, doc) in plan.spawnRules) sink(bp + path, json(doc))
 
+        // ---- armi di TACZ (oggetti, modelli in mano, banchi, suoni e dati dello script)
+        val taczSounds = LinkedHashMap<String, Any?>()
+        val tacz = if (plan.tacz.isNotEmpty()) TaczWriter.write(plan.tacz, bp, rp, limits, itemTextureData, terrain, blocksJson, taczSounds, sink) else null
+        taczScripted = tacz != null
+
         // ---- risorse
         if (itemTextureData.isNotEmpty()) {
             sink(rp + "textures/item_texture.json", json(linkedMapOf("resource_pack_name" to name, "texture_name" to "atlas.items", "texture_data" to itemTextureData)))
@@ -1243,8 +1290,11 @@ internal class AddonWriter(
         sink(rp + "texts/languages.json", json(langs))
 
         // ---- suoni: definizioni, file .ogg della mod e versi delle creature
-        if (plan.sounds.isNotEmpty()) {
-            sink(rp + "sounds/sound_definitions.json", json(SoundConverter.definitions(plan.sounds)))
+        if (plan.sounds.isNotEmpty() || taczSounds.isNotEmpty()) {
+            val defs = SoundConverter.definitions(plan.sounds)
+            @Suppress("UNCHECKED_CAST")
+            (defs["sound_definitions"] as MutableMap<String, Any?>).putAll(taczSounds)
+            sink(rp + "sounds/sound_definitions.json", json(defs))
             val copied = HashSet<String>()
             for (snd in plan.sounds) for (f in snd.files) {
                 cancel()
@@ -1261,7 +1311,7 @@ internal class AddonWriter(
         }
 
         // ---- comportamenti (Script API) e manifest: alla fine, quando si sa quali componenti personalizzati servono
-        val js = Behaviors.mainJs(scripts)
+        val js = Behaviors.mainJs(scripts)?.let { it + (tacz?.js ?: "") } ?: tacz?.js?.let { "// Scritto da Minecraft Mod Installer (JAVA TO BEDROCK).\n$it" }
         minEngine = when { stateful -> StateEngine.MIN_ENGINE; js != null -> Behaviors.MIN_ENGINE; else -> ModConverter.MIN_ENGINE }
         if (js != null) sink(bp + "scripts/main.js", js.toByteArray(Charsets.UTF_8))
         val description = "Convertito da Minecraft Java con Minecraft Mod Installer: " +
@@ -1280,6 +1330,8 @@ internal class AddonWriter(
         if (scripted && type == "data") {
             modules.add(linkedMapOf("type" to "script", "language" to "javascript", "uuid" to scriptModule, "version" to version, "entry" to "scripts/main.js"))
             deps.add(linkedMapOf("module_name" to "@minecraft/server", "version" to Behaviors.SCRIPT_API))
+            // I banchi di TACZ aprono una finestra con le ricette.
+            if (taczScripted) deps.add(linkedMapOf("module_name" to "@minecraft/server-ui", "version" to Behaviors.SCRIPT_UI))
         }
         val m = linkedMapOf<String, Any?>(
             "format_version" to 2L,
@@ -1295,6 +1347,9 @@ internal class AddonWriter(
 
     /** Componenti personalizzati usati (per scrivere solo il codice che serve). */
     private val scripts = LinkedHashSet<String>()
+
+    /** Ci sono armi di TACZ (script con le finestre dei banchi)? */
+    private var taczScripted = false
 
     /** C'è almeno un blocco con più stati (formato 1.26.40, quindi Minecraft 1.26.40 o più nuovo)? */
     private var stateful = false
@@ -1585,7 +1640,7 @@ internal class Stats(
 }
 
 /** Raccoglie le texture usate e le scrive una volta sola; tiene conto delle animazioni (.mcmeta) e della trasparenza. */
-internal class TextureCollector(private val mods: List<JavaModContent>, private val limits: ConvertLimits) {
+internal class TextureCollector(private val mods: List<JavaModContent>, private val limits: ConvertLimits, private val composites: Map<Rl, List<Rl>> = emptyMap()) {
 
     /** Solo i dati ricavati: i byte si rileggono dal JAR al momento di scriverli (così la memoria non cresce con le mod). */
     private class Tex(val found: Boolean, val transparency: Transparency, val gray: Boolean, val frames: Int?, var block: Boolean, var item: Boolean)
@@ -1594,13 +1649,19 @@ internal class TextureCollector(private val mods: List<JavaModContent>, private 
 
     private fun name(rl: Rl) = "assets/${rl.ns}/textures/${rl.path}.png"
 
-    private fun bytes(rl: Rl): ByteArray? = mods.firstNotNullOfOrNull { it.jar.bytes(name(rl), limits.maxPngBytes) }?.takeIf { Png.isPng(it) }
+    private fun raw(rl: Rl): ByteArray? = mods.firstNotNullOfOrNull { it.jar.bytes(name(rl), limits.maxPngBytes) }?.takeIf { Png.isPng(it) }
+
+    private fun bytes(rl: Rl): ByteArray? {
+        val layers = composites[rl] ?: return raw(rl)
+        val images = layers.map { l -> raw(l)?.let { Png.decode(it) } ?: return raw(layers[0]) }.map { im -> if (im.height > im.width) im.crop(0, im.width) else im }
+        return Png.encode(Png.over(images))
+    }
 
     private fun load(rl: Rl): Tex {
         if (rl.ns == "minecraft") return Tex(false, Transparency.OPAQUE, false, null, false, false)
         val bytes = bytes(rl) ?: return Tex(false, Transparency.OPAQUE, false, null, false, false)
         val img = Png.decode(bytes)
-        val meta = mods.firstNotNullOfOrNull { it.jar.json(name(rl) + ".mcmeta", 1 shl 16) }.asJsonObject()?.get("animation").asJsonObject()
+        val meta = if (rl in composites) null else mods.firstNotNullOfOrNull { it.jar.json(name(rl) + ".mcmeta", 1 shl 16) }.asJsonObject()?.get("animation").asJsonObject()
         var frames: Int? = null
         if (meta != null && img != null && img.height > img.width && img.width > 0) {
             frames = ((meta["frametime"] as? Number)?.toInt() ?: 1).coerceAtLeast(1)

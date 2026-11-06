@@ -153,7 +153,8 @@ class JavaJar private constructor(
         private fun wanted(name: String): Boolean =
             name.startsWith("assets/") || name.startsWith("data/") || name == "fabric.mod.json" || name == "quilt.mod.json" ||
                 name == "META-INF/mods.toml" || name == "META-INF/neoforge.mods.toml" || name == "mcmod.info" ||
-                name == "pack.mcmeta" || (name.endsWith(".png") && !name.contains('/')) || name.endsWith("mixins.json")
+                name == "pack.mcmeta" || (name.endsWith(".png") && !name.contains('/')) || name.endsWith("mixins.json") ||
+                name.endsWith("gunpack.meta.json")
 
         fun open(file: File, label: String, limits: ConvertLimits, cancel: CancelCheck): JavaJar {
             if (file.length() > limits.maxJarBytes) throw IOException("Il file «$label» è troppo grande per la conversione")

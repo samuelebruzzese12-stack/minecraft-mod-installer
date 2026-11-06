@@ -49,6 +49,31 @@ object Png {
         null
     }
 
+    /** Gli strati uno sopra l'altro (il primo in fondo), alla grandezza del più grande (pixel ripetuti, senza sfumare). */
+    fun over(layers: List<Image>): Image {
+        val w = layers.maxOf { it.width }; val h = layers.maxOf { it.height }
+        val out = ByteArray(w * h * 4)
+        for (img in layers) {
+            for (y in 0 until h) for (x in 0 until w) {
+                val sx = x * img.width / w; val sy = y * img.height / h
+                val si = (sy * img.width + sx) * 4
+                val a = (img.rgba[si + 3].toInt() and 0xFF) / 255.0
+                if (a <= 0.0) continue
+                val di = (y * w + x) * 4
+                val da = (out[di + 3].toInt() and 0xFF) / 255.0
+                val oa = a + da * (1 - a)
+                for (c in 0..2) {
+                    val sc = (img.rgba[si + c].toInt() and 0xFF) / 255.0
+                    val dc = (out[di + c].toInt() and 0xFF) / 255.0
+                    val v = if (oa > 0) (sc * a + dc * da * (1 - a)) / oa else 0.0
+                    out[di + c] = Math.round(v * 255).toInt().coerceIn(0, 255).toByte()
+                }
+                out[di + 3] = Math.round(oa * 255).toInt().coerceIn(0, 255).toByte()
+            }
+        }
+        return Image(w, h, out)
+    }
+
     fun transparency(image: Image): Transparency {
         var cutout = false
         for (i in 3 until image.rgba.size step 4) {

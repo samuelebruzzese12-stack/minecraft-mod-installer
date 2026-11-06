@@ -14,6 +14,8 @@ package com.mmi.modinstaller.convert
 internal object Behaviors {
     /** Versione della Script API usata (stabile, nel gioco dalla 1.21.90). */
     const val SCRIPT_API = "2.0.0"
+    /** @minecraft/server-ui stabile per Minecraft 1.21.90 e più nuovi (verificato nel server Bedrock ufficiale). */
+    const val SCRIPT_UI = "2.0.0"
     /** I file con componenti personalizzati con parametri devono avere questo formato (o più nuovo). */
     const val FORMAT = "1.21.90"
     val MIN_ENGINE = listOf(1L, 21L, 90L)
