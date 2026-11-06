@@ -331,6 +331,11 @@ programma di avvio o il gioco carichino i file di un profilo Java.
 
 ## Chiave di firma
 
-`signing/release.keystore` è inclusa **volutamente** così ogni build è firmata uguale e gli aggiornamenti si installano sopra la
-versione precedente. È una chiave per uso personale: **tieni il repository privato**. Per pubblicare l'app su un negozio genera
-una chiave tua e cambia `signingConfigs` in `app/build.gradle.kts`.
+`signing/release.keystore` è nel progetto ma è **protetta da una password che non è nel codice**: su GitHub sta nel segreto
+del repository `MMI_SIGNING_PASSWORD` (Settings → Secrets and variables → Actions). Così il repository può essere pubblico
+senza che altri possano firmare APK al posto tuo. Senza il segreto l'APK si firma con la chiave di prova (debug) e non si
+installa sopra quello vero.
+
+La chiave è stata cambiata il 6 novembre 2026 (la vecchia era scritta nel progetto): le versioni firmate prima non si
+aggiornano con quelle nuove, va disinstallata una volta la vecchia app. Per compilare in locale con la firma vera:
+`gradle :app:assembleRelease -PmmiSigningPassword=…`.

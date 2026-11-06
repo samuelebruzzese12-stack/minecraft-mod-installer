@@ -6,9 +6,10 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-// La chiave di firma è inclusa nel progetto (vedi README): serve solo a firmare l'APK personale,
-// così ogni nuova versione si installa sopra la precedente senza disinstallare.
+// La chiave di firma è nel progetto ma protetta da una password che NON è nel codice: su GitHub sta nel segreto
+// MMI_SIGNING_PASSWORD (vedi README). Senza password l'APK si firma con la chiave di prova (debug).
 val signingKeystore = rootProject.file("signing/release.keystore")
+val signingPassword: String? = (System.getenv("MMI_SIGNING_PASSWORD") ?: (findProperty("mmiSigningPassword") as String?))?.takeIf { it.isNotBlank() }
 
 android {
     namespace = "com.mmi.modinstaller"
@@ -24,12 +25,12 @@ android {
     }
 
     signingConfigs {
-        if (signingKeystore.exists()) {
+        if (signingKeystore.exists() && signingPassword != null) {
             create("mmi") {
                 storeFile = signingKeystore
-                storePassword = "mmi-release"
+                storePassword = signingPassword
                 keyAlias = "mmi"
-                keyPassword = "mmi-release"
+                keyPassword = signingPassword
             }
         }
     }

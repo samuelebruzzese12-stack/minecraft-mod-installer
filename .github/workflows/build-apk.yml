@@ -218,7 +218,14 @@ jobs:
           cp online-modpack-report.txt modpack-online-report.txt 2>/dev/null || true
 
       - name: Compila l'APK
-        run: gradle :app:assembleDebug :app:assembleRelease --stacktrace
+        env:
+          # La password della chiave di firma: solo nei segreti del repository, mai nel codice.
+          MMI_SIGNING_PASSWORD: ${{ secrets.MMI_SIGNING_PASSWORD }}
+        run: |
+          if [ -z "$MMI_SIGNING_PASSWORD" ]; then
+            echo "::warning::Manca il segreto MMI_SIGNING_PASSWORD: l'APK è firmato con la chiave di prova e non si installa sopra quello vero."
+          fi
+          gradle :app:assembleDebug :app:assembleRelease --stacktrace
 
       - name: Raccogli gli APK
         run: |
@@ -396,6 +403,16 @@ jobs:
           mkdir -p baseline
           gh release download "$BASELINE_TAG" --repo "$GITHUB_REPOSITORY" --pattern MinecraftModInstaller-debug.apk --dir baseline
           ls -l baseline
+          # Dal 6 novembre 2026 la chiave di firma è nuova: una versione firmata con la vecchia non si aggiorna (Android
+          # lo vieta), quindi la prova di aggiornamento si fa solo se le firme coincidono.
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          NEW=$(ls apk/*debug*.apk 2>/dev/null | head -n 1)
+          old_cert=$("$BT/apksigner" verify --print-certs baseline/MinecraftModInstaller-debug.apk 2>/dev/null | grep -m1 "SHA-256" || true)
+          new_cert=$("$BT/apksigner" verify --print-certs "$NEW" 2>/dev/null | grep -m1 "SHA-256" || true)
+          if [ -z "$NEW" ] || [ "$old_cert" != "$new_cert" ]; then
+            echo "Firma diversa dalla versione precedente: prova di aggiornamento saltata"
+            rm -rf baseline
+          fi
 
       - name: Crea i file di prova
         run: python3 ci/make_samples.py samples
