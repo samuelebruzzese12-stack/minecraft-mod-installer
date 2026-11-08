@@ -149,7 +149,7 @@ mp_case_complete() {
   expect "MODPACK MANAGER" "Modpack Modrinth (.mrpack)" "SCEGLI UN MODPACK (.mrpack)"
   only_actions "Indietro" "Apri il menu" "SCEGLI UN MODPACK (.mrpack)"
   MP_WHAT="pagina vuota"; mp_texts
-  mp_expect "Modpack installati" "Nessun modpack installato da qui." "Cosa fa e cosa no" "Quelli di CurseForge no" \
+  mp_expect "Modpack installati" "Nessun modpack installato da qui." "Cosa fa e cosa no" "CurseForge (.zip con manifest.json)" \
     "Non avvia Minecraft Java" "non può sapere se il modpack parte"
   mp_absent "Esito dell'installazione" "INSTALLA IL MODPACK"
 
