@@ -222,7 +222,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             val title = name
             withContext(Dispatchers.IO) { repo.store.addHistory(title, "Analizzato", summarize(report)) }
-            return FileReport(index, name, report.source.sizeBytes, report, null, sessionDir, purposeNote(report, purpose))
+            return FileReport(index, name, report.source.sizeBytes, report, null, sessionDir, purposeNote(report, purpose), uri.toString())
         } catch (e: CancellationException) {
             dir?.deleteRecursively()
             throw e

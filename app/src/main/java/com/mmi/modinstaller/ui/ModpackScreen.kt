@@ -41,7 +41,7 @@ import com.mmi.modinstaller.modpack.Pack
  * Non avvia Minecraft e non può sapere se il modpack, una volta installato, si avvia: lo dice chiaramente.
  */
 @Composable
-fun ModpackScreen(state: ModpackState, model: ModpackViewModel, vm: MainViewModel, onMenu: () -> Unit, onOpenMods: () -> Unit) {
+fun ModpackScreen(state: ModpackState, model: ModpackViewModel, vm: MainViewModel, onMenu: () -> Unit, onOpenMods: () -> Unit, onConvert: (String) -> Unit = {}) {
     // «*/*»: molti gestori di file non associano un tipo ai .mrpack.
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         val first = uris.firstOrNull()
@@ -92,7 +92,7 @@ fun ModpackScreen(state: ModpackState, model: ModpackViewModel, vm: MainViewMode
         val outcome = state.outcome
         if (outcome != null) {
             SectionLabel("Esito dell'installazione")
-            OutcomeCard(outcome, state, model, onOpenMods)
+            OutcomeCard(outcome, state, model, onOpenMods, onConvert)
         }
 
         SectionLabel("Modpack installati")
@@ -109,7 +109,7 @@ fun ModpackScreen(state: ModpackState, model: ModpackViewModel, vm: MainViewMode
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         } else {
-            for (row in state.rows) RecordCard(row, model, onOpenMods)
+            for (row in state.rows) RecordCard(row, model, onOpenMods, onConvert)
         }
 
         SectionLabel("Cosa fa e cosa no")
@@ -121,7 +121,10 @@ fun ModpackScreen(state: ModpackState, model: ModpackViewModel, vm: MainViewMode
                         "coincide viene scartato e segnalato.",
                     "Le impostazioni incluse (cartelle config, script, ecc.) vengono messe nel profilo; quelle che non si possono " +
                         "applicare in sicurezza sono elencate.",
-                    "Sono supportati solo i modpack Modrinth. Quelli di CurseForge no: servono una chiave personale e un formato diverso.",
+                    "Modpack Modrinth (.mrpack) e CurseForge (.zip con manifest.json). Un modpack CurseForge contiene solo l'elenco delle mod: " +
+                        "l'app cerca le stesse mod su Modrinth (stessa Minecraft, stesso caricatore) e scarica da lì; quelle che su Modrinth " +
+                        "non ci sono vengono elencate per nome.",
+                    "Dopo l'installazione, da JAVA TO BEDROCK «CONVERTI LE MOD DI UN PROFILO» porta in Bedrock tutte le mod del profilo in un unico add-on.",
                     "Non avvia Minecraft Java e non può sapere se il modpack parte: lo scopo è avere tutti i file giusti, verificati, " +
                         "in un profilo da esportare (ZIP) nella cartella di gioco del tuo launcher."
                 )
@@ -263,7 +266,7 @@ private fun packLine(pack: Pack): String {
 // ---------------------------------------------------------------------------------------------------- esito
 
 @Composable
-private fun OutcomeCard(o: PackOutcome, state: ModpackState, model: ModpackViewModel, onOpenMods: () -> Unit) {
+private fun OutcomeCard(o: PackOutcome, state: ModpackState, model: ModpackViewModel, onOpenMods: () -> Unit, onConvert: (String) -> Unit) {
     val r = o.result
     val row = state.rows.firstOrNull { it.record.id == o.recordId }
     InfoCard {
@@ -319,7 +322,8 @@ private fun OutcomeCard(o: PackOutcome, state: ModpackState, model: ModpackViewM
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         if (pid != null && row?.profileName != null) {
-            GreenButton(text = "APRI NEL MOD MANAGER", onClick = { model.openProfile(pid, onOpenMods) }, height = 52.dp)
+            GreenButton(text = "PORTA IN BEDROCK (JAVA TO BEDROCK)", onClick = { onConvert(pid) }, height = 52.dp)
+            FullButton("APRI NEL MOD MANAGER") { model.openProfile(pid, onOpenMods) }
         }
         if (!r.complete && row != null && row.profileName != null) {
             FullButton("RIPROVA I FILE MANCANTI") { model.prepareResume(row.record) }
@@ -337,7 +341,7 @@ private fun ListBlock(title: String, lines: List<String>) {
 // ---------------------------------------------------------------------------------------------------- elenco
 
 @Composable
-private fun RecordCard(row: RecordRow, model: ModpackViewModel, onOpenMods: () -> Unit) {
+private fun RecordCard(row: RecordRow, model: ModpackViewModel, onOpenMods: () -> Unit, onConvert: (String) -> Unit) {
     val r = row.record
     val profileName = row.profileName
     InfoCard {
@@ -371,6 +375,7 @@ private fun RecordCard(row: RecordRow, model: ModpackViewModel, onOpenMods: () -
                 RowButton("APRI IL PROFILO") { model.openProfile(r.profileId, onOpenMods) }
                 if (!r.complete) RowButton("COMPLETA") { model.prepareResume(r) }
             }
+            FullButton("PORTA IN BEDROCK") { onConvert(r.profileId) }
         }
         FullButton("TOGLI DALL'ELENCO") { model.askRemove(r) }
     }

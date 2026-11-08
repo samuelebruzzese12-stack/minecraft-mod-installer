@@ -23,6 +23,14 @@ import com.mmi.modinstaller.modpack.ModpackRecord
 import com.mmi.modinstaller.modpack.ModpackRepository
 import com.mmi.modinstaller.modpack.ModpackResult
 import com.mmi.modinstaller.modpack.ModrinthPackReader
+import com.mmi.modinstaller.modpack.CurseForgeMod
+import com.mmi.modinstaller.modpack.CurseForgePackReader
+import com.mmi.modinstaller.modpack.CurseForgeResolver
+import com.mmi.modinstaller.modpack.ModFinder
+import com.mmi.modinstaller.catalog.ProjectKind
+import com.mmi.modinstaller.catalog.ReleaseChannel
+import com.mmi.modinstaller.catalog.SearchSort
+import com.mmi.modinstaller.jar.ModLoader
 import com.mmi.modinstaller.modpack.Pack
 import com.mmi.modinstaller.modpack.PackReadResult
 import com.mmi.modinstaller.modpack.Phase
@@ -217,9 +225,57 @@ class ModpackViewModel(application: Application) : AndroidViewModel(application)
 
     /** Il file sembra un modpack Modrinth? Si decide dal nome, senza leggerlo. */
     fun looksLikePack(uri: Uri): Boolean = try {
-        repo.describe(uri).displayName.lowercase().endsWith(".mrpack")
+        val name = repo.describe(uri).displayName.lowercase()
+        name.endsWith(".mrpack") || (name.endsWith(".zip") && looksLikeCurseForge(uri))
     } catch (e: Exception) {
         false
+    }
+
+    /** Un archivio di CurseForge ha «manifest.json» (tipo minecraftModpack) tra le prime voci: si legge solo quello. */
+    private fun looksLikeCurseForge(uri: Uri): Boolean = try {
+        getApplication<Application>().contentResolver.openInputStream(uri)?.use { input ->
+            java.util.zip.ZipInputStream(java.io.BufferedInputStream(input)).use { zin ->
+                var found = false
+                var n = 0
+                var e = zin.nextEntry
+                while (e != null && n++ < 64 && !found) {
+                    if (e.name == CurseForgePackReader.MANIFEST && !e.isDirectory) {
+                        val buf = ByteArray(1 shl 20)
+                        val sb = StringBuilder()
+                        var r = zin.read(buf)
+                        while (r > 0 && sb.length < (1 shl 20)) { sb.append(String(buf, 0, r, Charsets.UTF_8)); r = zin.read(buf) }
+                        found = sb.contains("minecraftModpack")
+                    }
+                    e = zin.nextEntry
+                }
+                found
+            }
+        } ?: false
+    } catch (e: Exception) {
+        false
+    }
+
+    /** Cerca su Modrinth le mod di un modpack CurseForge: stesso nome (o stesso «slug»), stessa Minecraft, stesso caricatore. */
+    private val finder = object : ModFinder {
+        override fun find(mod: CurseForgeMod, minecraft: String?, loader: ModLoader?): ModFinder.Found? {
+            val catalog = container.catalog
+            val loaders = listOfNotNull(loader?.name?.lowercase())
+            val versions = listOfNotNull(minecraft)
+            val queries = listOfNotNull(mod.slug?.replace('-', ' '), mod.searchName).distinct()
+            val norm = { s: String -> s.lowercase().filter { it.isLetterOrDigit() } }
+            val wanted = listOfNotNull(mod.slug?.let(norm), mod.searchName?.let(norm)).filter { it.isNotEmpty() }
+            for (q in queries) {
+                val page = catalog.search(q, ProjectKind.MOD, loaders, minecraft, SearchSort.RELEVANCE, 0, 8) {}
+                val hit = page.hits.firstOrNull { h -> (h.slug?.let(norm) in wanted) || (norm(h.title) in wanted) }
+                    ?: page.hits.firstOrNull { h -> wanted.any { w -> w.length >= 5 && (norm(h.title).contains(w) || w.contains(norm(h.title).takeIf { it.length >= 5 } ?: "§")) } }
+                    ?: continue
+                val list = catalog.projectVersions(hit.id, loaders, versions) {}
+                val v = list.firstOrNull { it.channel == ReleaseChannel.RELEASE } ?: list.firstOrNull() ?: continue
+                val f = v.files.firstOrNull { it.primary } ?: v.files.firstOrNull() ?: continue
+                return ModFinder.Found(hit.title, f.fileName, f.url, f.size, f.sha1, f.sha512)
+            }
+            return null
+        }
     }
 
     /**
@@ -248,7 +304,7 @@ class ModpackViewModel(application: Application) : AndroidViewModel(application)
                 val staged = File(batch, "modpack.mrpack")
                 try {
                     repo.stage(picked, staged, cancel) { done, total, _ -> progress(done, total, "Copio «" + picked.displayName + "»") }
-                    val l = load(staged, picked.displayName, if (picked.sizeBytes > 0) picked.sizeBytes else staged.length(), null, cancel)
+                    val l = load(staged, picked.displayName, if (picked.sizeBytes > 0) picked.sizeBytes else staged.length(), null, cancel, progress)
                     if (l is Loaded.Failed) batch.deleteRecursively()
                     l
                 } catch (e: Throwable) {
@@ -300,8 +356,17 @@ class ModpackViewModel(application: Application) : AndroidViewModel(application)
         class Failed(val text: String) : Loaded()
     }
 
-    private fun load(file: File, displayName: String, size: Long, resume: ModpackRecord?, cancel: CancelCheck): Loaded =
-        when (val r = ModrinthPackReader.read(file, limits)) {
+    private fun load(file: File, displayName: String, size: Long, resume: ModpackRecord?, cancel: CancelCheck, progress: ProgressCallback? = null): Loaded {
+        // Un modpack di CurseForge: l'elenco delle mod si traduce in download da Modrinth (richiede la rete).
+        val read: PackReadResult = if (CurseForgePackReader.looksLike(file, limits)) {
+            when (val cf = CurseForgePackReader.read(file, limits)) {
+                is CurseForgePackReader.Result.Failed -> PackReadResult.Failed(cf.message, cf.detail)
+                is CurseForgePackReader.Result.Ok -> PackReadResult.Ok(
+                    CurseForgeResolver.resolve(cf.pack, finder, cancel) { d, t, n -> progress?.invoke(d.toLong(), t.toLong(), "Cerco su Modrinth: $n") }
+                )
+            }
+        } else ModrinthPackReader.read(file, limits)
+        return when (val r = read) {
             is PackReadResult.Failed -> Loaded.Failed(r.message + (r.detail?.let { " ($it)" } ?: ""))
             is PackReadResult.Ok -> {
                 val dir = resume?.let { manager.profileDir(it.profileId) }
@@ -315,6 +380,7 @@ class ModpackViewModel(application: Application) : AndroidViewModel(application)
                 )
             }
         }
+    }
 
     /** Un nome libero per il profilo: quello del modpack (accorciato se serve), o con un numero se esiste già. */
     private fun suggestName(base: String): String {

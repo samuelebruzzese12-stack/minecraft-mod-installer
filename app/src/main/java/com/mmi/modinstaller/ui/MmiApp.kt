@@ -189,6 +189,16 @@ fun MmiApp(
                             onPick = { purpose ->
                                 pickPurpose = purpose
                                 picker.launch(arrayOf("*/*"))
+                            },
+                            onJava = { file ->
+                                // Un file Java dall'INSTALLER BEDROCK: modpack → MODPACK MANAGER; mod .jar → JAVA TO BEDROCK.
+                                val uri = file.uri?.let { android.net.Uri.parse(it) }
+                                if (uri == null) vm.showMessage("Scegli di nuovo il file da JAVA TO BEDROCK: non so più da dove veniva.")
+                                else modpackModel.routeIncoming(
+                                    listOf(uri),
+                                    openSection = { vm.openSection(Section.MODPACKS) },
+                                    others = { rest -> vm.openSection(Section.JAVA_TO_BEDROCK); convertModel.openFiles(rest) }
+                                )
                             }
                         )
                         Section.JAVA -> JavaEditionScreen(bridge, vm, openMenu)
@@ -209,7 +219,8 @@ fun MmiApp(
                             model = modpackModel,
                             vm = vm,
                             onMenu = openMenu,
-                            onOpenMods = { vm.openSection(Section.MODS) }
+                            onOpenMods = { vm.openSection(Section.MODS) },
+                            onConvert = { profileId -> vm.openSection(Section.JAVA_TO_BEDROCK); convertModel.convertProfile(profileId) }
                         )
                         Section.WORLDS -> WorldsScreen(
                             state = worlds,
@@ -246,11 +257,12 @@ private fun InstallerContent(
     state: com.mmi.modinstaller.UiState,
     vm: MainViewModel,
     onMenu: () -> Unit,
-    onPick: (PickPurpose) -> Unit
+    onPick: (PickPurpose) -> Unit,
+    onJava: (com.mmi.modinstaller.FileReport) -> Unit = {}
 ) {
     when (state.screen) {
         Screen.HOME -> HomeScreen(state = state, vm = vm, onMenu = onMenu, onPick = onPick)
-        Screen.REPORT -> ReportScreen(state, vm)
+        Screen.REPORT -> ReportScreen(state, vm, onJava)
         Screen.RECENT -> RecentScreen(state, vm)
         Screen.INSTALLED -> InstalledScreen(state, vm)
         Screen.BACKUPS -> BackupsScreen(state, vm)

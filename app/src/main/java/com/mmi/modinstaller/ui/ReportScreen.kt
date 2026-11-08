@@ -34,6 +34,7 @@ import com.mmi.modinstaller.FileReport
 import com.mmi.modinstaller.MainViewModel
 import com.mmi.modinstaller.UiState
 import com.mmi.modinstaller.core.ContentItem
+import com.mmi.modinstaller.core.ContentKind
 import com.mmi.modinstaller.core.ItemStatus
 import com.mmi.modinstaller.core.Severity
 import com.mmi.modinstaller.core.formatBytes
@@ -55,7 +56,7 @@ private fun selectableKeys(state: UiState): Set<String> {
 }
 
 @Composable
-fun ReportScreen(state: UiState, vm: MainViewModel) {
+fun ReportScreen(state: UiState, vm: MainViewModel, onJava: (FileReport) -> Unit = {}) {
     val selectable = remember(state.files, state.forced) { selectableKeys(state) }
     val selectedCount = remember(selectable, state.selected) { selectable.count { it in state.selected } }
 
@@ -74,7 +75,7 @@ fun ReportScreen(state: UiState, vm: MainViewModel) {
                 val report = file.report
                 if (report != null) {
                     items(report.items, key = { itemKey(file.index, it) }) { item ->
-                        ItemCard(file.index, item, state, vm)
+                        ItemCard(file.index, item, state, vm, onJava = { onJava(file) })
                     }
                 }
             }
@@ -139,7 +140,7 @@ private fun FileHeaderCard(file: FileReport, state: UiState) {
 }
 
 @Composable
-private fun ItemCard(fileIndex: Int, item: ContentItem, state: UiState, vm: MainViewModel) {
+private fun ItemCard(fileIndex: Int, item: ContentItem, state: UiState, vm: MainViewModel, onJava: () -> Unit) {
     val key = itemKey(fileIndex, item)
     val forced = key in state.forced
     val canSelect = item.installable && (item.status != ItemStatus.OVERRIDE || forced)
@@ -190,6 +191,17 @@ private fun ItemCard(fileIndex: Int, item: ContentItem, state: UiState, vm: Main
             }
 
             ToneRow(status.tone, status.title, status.detail)
+
+            if (item.kind == ContentKind.JAVA_CONTENT) {
+                // Bedrock non installa niente di Java: la strada è la conversione (una mod .jar) o il MODPACK MANAGER (un modpack).
+                GreenButton(text = "PORTA IN BEDROCK", onClick = onJava, height = 52.dp)
+                Text(
+                    text = "Una mod .jar si converte in un add-on Bedrock (JAVA TO BEDROCK). Un modpack si installa prima nel MODPACK MANAGER, " +
+                        "che scarica le mod; poi «PORTA IN BEDROCK» le converte tutte insieme.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
 
             val description = item.description
             if (!description.isNullOrBlank()) {

@@ -64,7 +64,9 @@ class FileReport(
     /** Cartella temporanea che contiene la copia di lavoro; va eliminata quando il rapporto non serve più. */
     val sessionDir: File?,
     /** Avviso quando il tipo trovato non coincide con il pulsante usato per scegliere il file. */
-    val purposeNote: String?
+    val purposeNote: String?,
+    /** Da dove viene il file (per riaprirlo in un'altra sezione, es. JAVA TO BEDROCK); null se non si sa più. */
+    val uri: String? = null
 )
 
 /**
