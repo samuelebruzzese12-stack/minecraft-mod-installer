@@ -53,7 +53,7 @@ fun ModpackScreen(state: ModpackState, model: ModpackViewModel, vm: MainViewMode
     SectionPage(title = Section.MODPACKS.title, onBack = { vm.back() }, onMenu = onMenu) {
         InfoCard {
             Text(
-                text = "Modpack Modrinth (.mrpack)",
+                text = "Modpack Modrinth (.mrpack) e CurseForge (.zip)",
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold
             )
@@ -77,7 +77,7 @@ fun ModpackScreen(state: ModpackState, model: ModpackViewModel, vm: MainViewMode
         }
 
         GreenButton(
-            text = "SCEGLI UN MODPACK (.mrpack)",
+            text = "SCEGLI UN MODPACK (.mrpack o .zip)",
             onClick = { picker.launch(arrayOf("*/*")) },
             enabled = state.busy == null,
             height = 56.dp

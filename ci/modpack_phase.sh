@@ -44,7 +44,7 @@ mp_open() {
     fi
     if seen "MODPACK MANAGER" && seen "Indietro" && ! seen "TORNA ALLA DASHBOARD"; then
       $UI top; snap
-      if seen "Modpack Modrinth (.mrpack)"; then return 0; fi
+      if seen "Modpack Modrinth (.mrpack) e CurseForge (.zip)"; then return 0; fi
     fi
     back
   done
@@ -55,7 +55,7 @@ mp_open() {
 mp_pick() { # nome-del-file
   local name="$1"
   mp_open || { fail "MODPACK MANAGER: non riesco ad aprire la pagina per scegliere $name"; return 1; }
-  $UI tap "SCEGLI UN MODPACK (.mrpack)" || { shot "modpack: pulsante di scelta non trovato"; fail "MODPACK MANAGER: il pulsante «SCEGLI UN MODPACK (.mrpack)» non si trova ($name)"; return 1; }
+  $UI tap "SCEGLI UN MODPACK (.mrpack o .zip)" || { shot "modpack: pulsante di scelta non trovato"; fail "MODPACK MANAGER: il pulsante «SCEGLI UN MODPACK (.mrpack o .zip)» non si trova ($name)"; return 1; }
   sleep 3
   if picker_choose "$name"; then
     sleep 2
@@ -146,8 +146,8 @@ mp_case_complete() {
     return 1
   fi
   sleep 0.5; shot "modpack: pagina vuota"
-  expect "MODPACK MANAGER" "Modpack Modrinth (.mrpack)" "SCEGLI UN MODPACK (.mrpack)"
-  only_actions "Indietro" "Apri il menu" "SCEGLI UN MODPACK (.mrpack)"
+  expect "MODPACK MANAGER" "Modpack Modrinth (.mrpack) e CurseForge (.zip)" "SCEGLI UN MODPACK (.mrpack o .zip)"
+  only_actions "Indietro" "Apri il menu" "SCEGLI UN MODPACK (.mrpack o .zip)"
   MP_WHAT="pagina vuota"; mp_texts
   mp_expect "Modpack installati" "Nessun modpack installato da qui." "Cosa fa e cosa no" "CurseForge (.zip con manifest.json)" \
     "Non avvia Minecraft Java" "non può sapere se il modpack parte"
