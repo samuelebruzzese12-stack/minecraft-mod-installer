@@ -570,6 +570,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Il pacchetto conservato c'è ancora? Se no lo dice (e indica dove cercarlo) invece di aprire il selettore per niente. */
+    fun canSaveEntryFile(entry: InstalledEntry): Boolean {
+        if (repo.preparedFile(entry).isFile) return true
+        notice("Il file «${entry.fileName}» non è più nell'app. Se l'avevi eliminato, cercalo in «Backup».")
+        return false
+    }
+
+    /** Copia il pacchetto conservato dall'app nel punto scelto dall'utente (Download, Drive…), per riaverlo come file. */
+    fun saveEntryFile(id: String, target: Uri) {
+        val entry = repo.store.findInstalled(id) ?: return
+        dismissDialog()
+        viewModelScope.launch {
+            val text = withContext(Dispatchers.IO) {
+                val src = repo.preparedFile(entry)
+                var done = false
+                try {
+                    if (!src.isFile) return@withContext "Il file «${entry.fileName}» non è più nell'app."
+                    val out = getApplication<Application>().contentResolver.openOutputStream(target, "wt")
+                        ?: return@withContext "Non riesco a scrivere nel punto scelto."
+                    out.use { o -> src.inputStream().use { it.copyTo(o) } }
+                    done = true
+                    repo.store.addHistory(entry.title, "File salvato nel telefono", entry.fileName + " · " + formatBytes(src.length()))
+                    "File salvato: «${entry.fileName}». Aprilo con Minecraft per importarlo, o mandalo a chi vuoi."
+                } catch (e: Exception) {
+                    logError("Salvataggio del file", e)
+                    "Salvataggio non riuscito: " + ErrorMessages.describe(e)
+                } finally {
+                    if (!done) try {
+                        android.provider.DocumentsContract.deleteDocument(getApplication<Application>().contentResolver, target)
+                    } catch (e: Exception) {
+                    }
+                }
+            }
+            refreshLists()
+            notice(text)
+        }
+    }
+
     fun deleteEntry(id: String) {
         dismissDialog()
         if (_state.value.busy != null) return

@@ -136,7 +136,7 @@ fun InstalledScreen(state: UiState, vm: MainViewModel) {
             )
         } else {
             Text(
-                text = "Tocca un contenuto per inviarlo di nuovo, segnare se Minecraft l'ha importato o eliminarlo dall'app.",
+                text = "Tocca un contenuto per inviarlo di nuovo, salvarne il file nel telefono, segnare se Minecraft l'ha importato o eliminarlo dall'app.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)

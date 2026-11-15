@@ -16,7 +16,13 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -121,12 +127,30 @@ internal fun CloseDialogButton(text: String, onClick: () -> Unit) {
 fun AppDialogs(state: UiState, vm: MainViewModel) {
     val awaiting = state.awaiting
     val dialog = state.dialog
+    // «Salva il file nel telefono»: Android chiede dove salvarlo (Download, Drive…), poi l'app ci copia il pacchetto conservato.
+    var toSave by remember { mutableStateOf<InstalledEntry?>(null) }
+    val saver = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val e = toSave
+        if (uri != null && e != null) vm.saveEntryFile(e.id, uri)
+        toSave = null
+    }
+    val saveEntry: (InstalledEntry) -> Unit = { e ->
+        if (vm.canSaveEntryFile(e)) {
+            toSave = e
+            try {
+                saver.launch(e.fileName)
+            } catch (x: android.content.ActivityNotFoundException) {
+                toSave = null
+                vm.showMessage("Su questo telefono non c'è un'app per scegliere dove salvare i file.")
+            }
+        }
+    }
     if (state.confirmVisible && awaiting != null) {
         ConfirmImportDialog(awaiting, state.delivery, state.queueRemaining, vm)
     } else if (dialog != null) {
         when (dialog) {
             is DialogState.MinecraftMissing -> MinecraftMissingDialog(vm)
-            is DialogState.EntryActions -> EntryActionsDialog(dialog.entry, vm)
+            is DialogState.EntryActions -> EntryActionsDialog(dialog.entry, vm, saveEntry)
             is DialogState.ConfirmDelete -> ConfirmDeleteDialog(dialog.entry, vm)
             is DialogState.ConfirmDeleteBackup -> StackedDialog(
                 title = "Eliminare il backup?",
@@ -252,7 +276,7 @@ private fun MinecraftMissingDialog(vm: MainViewModel) {
 }
 
 @Composable
-private fun EntryActionsDialog(entry: InstalledEntry, vm: MainViewModel) {
+private fun EntryActionsDialog(entry: InstalledEntry, vm: MainViewModel, onSave: (InstalledEntry) -> Unit) {
     StackedDialog(
         title = Format.clean(entry.title),
         onDismiss = { vm.dismissDialog() },
@@ -277,6 +301,7 @@ private fun EntryActionsDialog(entry: InstalledEntry, vm: MainViewModel) {
         },
         buttons = {
             GreenDialogButton("Invia di nuovo a Minecraft") { vm.resend(entry.id) }
+            PlainDialogButton("Salva il file nel telefono") { onSave(entry) }
             if (entry.state != InstallState.CONFIRMED) {
                 PlainDialogButton("Segna come importato") { vm.markEntry(entry.id, InstallState.CONFIRMED) }
             }
