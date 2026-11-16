@@ -7,11 +7,15 @@ import java.util.Locale
 typealias CancelCheck = () -> Unit
 typealias ProgressCallback = (done: Long, total: Long, note: String) -> Unit
 
-/** Limiti di sicurezza applicati a ogni archivio. Tutti i controlli usano i byte realmente letti, non le intestazioni. */
+/**
+ * Limiti di sicurezza applicati a ogni archivio. Tutti i controlli usano i byte realmente letti, non le intestazioni.
+ * I mondi giocati a lungo superano facilmente i 4 GB: il vero limite è lo spazio libero sul telefono, controllato a parte
+ * prima di ogni copia. Contro gli archivi «bomba» restano i controlli sul rapporto di compressione.
+ */
 data class SafetyLimits(
-    val maxArchiveBytes: Long = 2L * 1024 * 1024 * 1024,
-    val maxTotalUncompressedBytes: Long = 4L * 1024 * 1024 * 1024,
-    val maxEntryBytes: Long = 2L * 1024 * 1024 * 1024,
+    val maxArchiveBytes: Long = 16L * 1024 * 1024 * 1024,
+    val maxTotalUncompressedBytes: Long = 48L * 1024 * 1024 * 1024,
+    val maxEntryBytes: Long = 16L * 1024 * 1024 * 1024,
     val maxEntries: Int = 100_000,
     val maxCompressionRatio: Long = 300,
     val ratioCheckMinBytes: Long = 64L * 1024 * 1024,
@@ -23,9 +27,10 @@ data class SafetyLimits(
     val maxTextureBytes: Int = 48 * 1024,
     val maxTextureCandidates: Int = 120,
     val maxNestedDepth: Int = 2,
-    val maxNestedArchiveBytes: Long = 512L * 1024 * 1024,
+    /** Un .mcworld/.mcpack/.mcaddon dentro uno .zip (es. un mondo scaricato già compresso): può essere grande quanto il file. */
+    val maxNestedArchiveBytes: Long = 16L * 1024 * 1024 * 1024,
     val maxNestedZipBytes: Long = 256L * 1024 * 1024,
-    val maxNestedTotalBytes: Long = 1024L * 1024 * 1024
+    val maxNestedTotalBytes: Long = 16L * 1024 * 1024 * 1024
 )
 
 open class ArchiveException(message: String, cause: Throwable? = null) : IOException(message, cause)

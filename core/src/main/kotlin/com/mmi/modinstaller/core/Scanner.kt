@@ -146,7 +146,7 @@ class ArchiveScanner(private val limits: SafetyLimits) {
         var recordedSize = -1L
         val cap = keyCap(path)
         if (ext in NESTED_EXTENSIONS && st.depth < limits.maxNestedDepth && nestedAllowed(st, ext, entry.size)) {
-            recordedSize = copyNested(st, bounded, path)
+            recordedSize = copyNested(st, bounded, path, entry.size)
         } else if (cap > 0) {
             val bytes = readCapped(st, bounded, cap)
             if (bytes != null) st.keyFiles[path] = bytes else st.oversized.add(path)
@@ -185,8 +185,18 @@ class ArchiveScanner(private val limits: SafetyLimits) {
     }
 
     /** Copia l'archivio annidato in un file temporaneo. Restituisce la dimensione, o -1 se è stato scartato. */
-    private fun copyNested(st: State, bounded: BoundedInputStream, path: String): Long {
+    private fun copyNested(st: State, bounded: BoundedInputStream, path: String, declaredSize: Long = -1L): Long {
         st.workDir.mkdirs()
+        // Un mondo di qualche GB dentro uno .zip va copiato a parte: prima si controlla che ci stia.
+        val free = st.workDir.usableSpace
+        val margin = 64L * 1024 * 1024
+        if (declaredSize > 0 && free > 0 && free < declaredSize + margin) {
+            throw LimitExceededException(
+                FindingCode.DISK_SPACE,
+                "Spazio insufficiente sul telefono per aprire «${path.substringAfterLast('/')}»: servono circa " +
+                    "${formatBytes(declaredSize + margin)} liberi, ce ne sono ${formatBytes(free)}"
+            )
+        }
         val nestedLimit = minOf(limits.maxNestedArchiveBytes, st.nestedBudget[0])
         val nestedStream = BoundedInputStream(bounded, nestedLimit, FindingCode.ENTRY_TOO_LARGE, "L'archivio annidato '$path'")
         val file = File.createTempFile("nested_", "." + PathSafety.extension(path), st.workDir)
