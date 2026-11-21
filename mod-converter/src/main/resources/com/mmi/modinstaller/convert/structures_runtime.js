@@ -591,11 +591,12 @@ function applyAt(dim, p, loc, piecePos) {
 
 // ---- ciclo: cerca gli inizi vicino ai giocatori, poi piazza i pezzi nelle zone caricate
 let busy = false;
+let PAUSED = false; // /scriptevent mmi:strutture_pausa (solo per le prove automatiche): niente strutture nuove da sole
 function* work() {
   busy = true;
   try {
     const t0 = Date.now();
-    for (const pl of world.getAllPlayers()) {
+    for (const pl of PAUSED ? [] : world.getAllPlayers()) {
       const dim = pl.dimension, di = DIMS.indexOf(dim.id);
       if (di < 0) continue;
       const cx = Math.floor(pl.location.x / 16), cz = Math.floor(pl.location.z / 16);
@@ -710,12 +711,14 @@ system.afterEvents.scriptEventReceive.subscribe((ev) => {
   const p = ev.sourceEntity;
   if (ev.id === "mmi:strutture_ovunque") { PROT = []; world.setDynamicProperty("mmi_s_init", "[]"); p?.sendMessage?.("Le strutture delle mod ora nascono anche nelle zone già esplorate."); debug("strutture anche nelle zone già esplorate"); return; }
   if (ev.id === "mmi:strutture_log") { DEBUG = true; log("registro attivo"); return; }
+  if (ev.id === "mmi:strutture_pausa") { PAUSED = true; return; }
   if (ev.id === "mmi:strutture_verifica") { verify(); return; }
   if (ev.id === "mmi:strutture_prova") {
     // Solo per le prove: una possibile struttura ogni 6 chunk, in qualunque bioma.
     DEBUG = true;
     for (const S of SETS) { S.t = 0; S.sp = 6; S.se = 0; S.f = 1; S.ex = null; }
     for (const st of STRUCTS) st.force = true;
+    PAUSED = false;
     log("prova: una possibile struttura ogni 6 chunk");
     return;
   }

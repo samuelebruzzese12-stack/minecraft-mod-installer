@@ -123,6 +123,20 @@ class ModelResolver(private val jars: List<JavaJar>, private val limits: Convert
         return Resolved(textures, elements, vanilla)
     }
 
+    /** La posa «gui» del modello (display.gui, anche dai modelli «parent»); quella dei blocchi se il modello discende da block/. */
+    fun guiTransform(start: Rl): GuiTransform {
+        var current: Rl? = start
+        var depth = 0
+        while (current != null && depth++ < 24) {
+            val m = model(current)
+            if (m == null) return if (current.path.startsWith("block/")) GuiTransform.BLOCK else GuiTransform.NONE
+            (m["display"].asJsonObject()?.get("gui") as? Map<*, *>)?.let { g -> GuiTransform.parse(g)?.let { return it } }
+            val parent = Rl.parse(m["parent"] as? String ?: break)
+            current = parent
+        }
+        return GuiTransform.NONE
+    }
+
     /** Il valore finale di una variabile («#side» → «mod:block/x_side»), o null. */
     fun texture(textures: Map<String, String>, ref: String): Rl? {
         var v: String? = ref

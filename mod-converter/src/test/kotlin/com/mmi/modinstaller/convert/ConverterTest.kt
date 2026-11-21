@@ -338,10 +338,9 @@ class ConverterTest {
     }
 
     @Test fun lootAndOres() {
+        // Il bottino del minerale lo fa lo script con le regole di Java: la tabella di Bedrock è vuota (niente da togliere dopo).
         val loot = json("Test Mod BP/loot_tables/blocks/testmod/ruby_ore.json")
-        val entry = ((loot.l("pools")[0] as Map<*, *>)["entries"] as List<*>)[0] as Map<*, *>
-        assertEquals("testmod:ruby", entry["name"])
-        assertEquals(listOf(mapOf("function" to "set_count", "count" to mapOf("min" to 1L, "max" to 3L))), entry["functions"])
+        assertEquals(emptyList<Any?>(), loot.l("pools"))
         // Tocco di velluto e fortuna: la tabella di Java va allo script, che la esegue quando un giocatore rompe il blocco.
         assertTrue(plan.reports.single().scripted.any { it.startsWith("Bottini con le regole di Java") && it.endsWith("1 blocco") })
         assertFalse(plan.reports.single().simplified.contains("Bottini dei blocchi senza tocco di velluto, fortuna e condizioni speciali"))

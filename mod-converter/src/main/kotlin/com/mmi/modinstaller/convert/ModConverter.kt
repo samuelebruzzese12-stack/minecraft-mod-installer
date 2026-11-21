@@ -94,7 +94,9 @@ class ConversionPlan internal constructor(
     /** Strutture: pezzi `.mcstructure`, bottini delle casse e dati dello script che le genera (vedi [StructureBuilder]). */
     internal val structures: StructureOut? = null,
     /** Progressi rifatti con lo script (vedi [AdvancementBuilder]). */
-    internal val advancements: AdvancementOut? = null
+    internal val advancements: AdvancementOut? = null,
+    /** Icone disegnate dai modelli 3D degli oggetti (texture virtuale → modello). */
+    internal val renders: Map<Rl, IconJob> = emptyMap()
 ) : java.io.Closeable {
     val itemCount: Int get() = items.size
     val blockCount: Int get() = blocks.size
@@ -377,6 +379,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         val reports = ArrayList<ModReport>()
         /** Icone fatte di più strati: texture «virtuale» → strati da unire. */
         val composites = LinkedHashMap<Rl, List<Rl>>()
+        val renders = LinkedHashMap<Rl, IconJob>()
         val scriptedLootByMod = HashMap<JavaModContent, Int>()
 
         fun res0(m: JavaModContent) = resolverModels.getValue(m)
@@ -453,7 +456,11 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                     if (table != null) { lootCount++; lootPath = byJson.values.firstOrNull() }
                     // Porte e blocchi alti: rompendo una metà Bedrock toglie anche l'altra; resta il bottino Bedrock (per stato).
                     if (table != null && rebuilt.family != BlockFamily.DOOR &&
-                        scriptLoot(id, b.id, table, rebuilt.stateTable, rebuilt.defaultState)) scriptedLoot++
+                        scriptLoot(id, b.id, table, rebuilt.stateTable, rebuilt.defaultState)) {
+                        scriptedLoot++
+                        // Il bottino lo fa lo script con le regole di Java: la tabella di Bedrock resta vuota (vedi loot_runtime.js).
+                        for (p in byJson.values) lootOut[p] = EMPTY_LOOT
+                    }
                     statefulCount[rebuilt.family] = (statefulCount[rebuilt.family] ?: 0) + 1
                     rebuilt.note?.let { simplified.add(it) }
                 } else {
@@ -465,7 +472,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                         lootPath = "loot_tables/blocks/" + b.id.ns + "/" + b.id.path + ".json"
                         lootOut[lootPath!!] = r.table
                         lootCount++
-                        if (scriptLoot(id, b.id, table, null, st.orEmpty())) scriptedLoot++
+                        if (scriptLoot(id, b.id, table, null, st.orEmpty())) { scriptedLoot++; lootOut[lootPath!!] = EMPTY_LOOT }
                         else if (r.simplified) simplified.add("Bottini dei blocchi senza tocco di velluto, fortuna e condizioni speciali")
                     }
                 }
@@ -547,7 +554,17 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                     iconRl = v
                     simplified.add("Icone a più strati: strati uniti in un'unica immagine (senza i colori che in Java aggiunge il codice)")
                 } else if (it.info.layered) simplified.add("Icone a più strati: si usa il primo (un altro strato manca)")
-                if (it.info?.model3d == true) simplified.add("Oggetti con modello 3D: icona piatta")
+                if (it.info?.model3d == true) {
+                    // L'icona si disegna dal modello 3D, con la posa dell'inventario di Java (display.gui).
+                    val m = it.model
+                    val geo = m?.let { mr -> res0(mod).geometry(mr) }
+                    if (m != null && geo != null && geo.elements.isNotEmpty() && geo.textures.values.all { t -> t.ns != "minecraft" && exists(t) }) {
+                        val v = Rl(it.id.ns, "mmi_icons/" + it.id.path)
+                        renders[v] = IconJob(geo, res0(mod).guiTransform(m))
+                        iconRl = v
+                        simplified.add("Oggetti con modello 3D: l'icona è il modello 3D visto come nell'inventario di Java; in mano sono piatti")
+                    } else simplified.add("Oggetti con modello 3D: icona piatta")
+                }
                 val fuel = mod.fuels[it.id]?.let { t -> t / 20.0 }
                 val edible = kind == ItemKind.FOOD || kind == ItemKind.DRINK
                 val fx = ArrayList<Behaviors.Effect>()
@@ -864,7 +881,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         return ConversionPlan(
             failed + reports, mods, itemsOut, blocksOut, recipesOut, lootOut, featuresOut, entitiesOut, rulesOut,
             resolver.customTags.mapValues { it.value.toSet() }, languages, soundPlan.sounds, spawnOut, taczOut, composites, lootBlocks, lootTables,
-            structures, advancements?.takeIf { it.data != null }
+            structures, advancements?.takeIf { it.data != null }, renders
         )
     }
 
@@ -897,6 +914,8 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
     }
 
     private val CARDINAL = setOf("north", "south", "east", "west")
+    /** Tabella di Bedrock dei blocchi il cui bottino lo fa lo script (vedi loot_runtime.js). */
+    private val EMPTY_LOOT: Map<String, Any?> = linkedMapOf("pools" to emptyList<Any?>())
     private val ARMOR = setOf(ItemKind.HELMET, ItemKind.CHESTPLATE, ItemKind.LEGGINGS, ItemKind.BOOTS)
     private val TOOLS = setOf(ItemKind.SWORD, ItemKind.PICKAXE, ItemKind.AXE, ItemKind.SHOVEL, ItemKind.HOE)
     private val EQUIPMENT = TOOLS + setOf(ItemKind.HELMET, ItemKind.CHESTPLATE, ItemKind.LEGGINGS, ItemKind.BOOTS)
@@ -1256,7 +1275,7 @@ internal class AddonWriter(
     fun collect(sink: (String, ByteArray) -> Unit) {
         val total = (plan.items.size + plan.blocks.size).toLong()
         var done = 0L
-        val textures = TextureCollector(plan.mods, limits, plan.composites)
+        val textures = TextureCollector(plan.mods, limits, plan.composites, plan.renders)
 
         val icon = packIcon()
         sink(bp + "pack_icon.png", icon)
@@ -1797,7 +1816,10 @@ internal class Stats(
 }
 
 /** Raccoglie le texture usate e le scrive una volta sola; tiene conto delle animazioni (.mcmeta) e della trasparenza. */
-internal class TextureCollector(private val mods: List<JavaModContent>, private val limits: ConvertLimits, private val composites: Map<Rl, List<Rl>> = emptyMap()) {
+internal class TextureCollector(
+    private val mods: List<JavaModContent>, private val limits: ConvertLimits, private val composites: Map<Rl, List<Rl>> = emptyMap(),
+    private val renders: Map<Rl, IconJob> = emptyMap()
+) {
 
     /** Solo i dati ricavati: i byte si rileggono dal JAR al momento di scriverli (così la memoria non cresce con le mod). */
     private class Tex(val found: Boolean, val transparency: Transparency, val gray: Boolean, val frames: Int?, var block: Boolean, var item: Boolean)
@@ -1809,6 +1831,10 @@ internal class TextureCollector(private val mods: List<JavaModContent>, private 
     private fun raw(rl: Rl): ByteArray? = mods.firstNotNullOfOrNull { it.jar.bytes(name(rl), limits.maxPngBytes) }?.takeIf { Png.isPng(it) }
 
     private fun bytes(rl: Rl): ByteArray? {
+        renders[rl]?.let { job ->
+            val img = IconRenderer.render(job, { t -> raw(t)?.let { Png.decode(it) } }) ?: return job.geometry.textures.values.firstOrNull()?.let { raw(it) }
+            return Png.encode(img)
+        }
         val layers = composites[rl] ?: return raw(rl)
         val images = layers.map { l -> raw(l)?.let { Png.decode(it) } ?: return raw(layers[0]) }.map { im -> if (im.height > im.width) im.crop(0, im.width) else im }
         return Png.encode(Png.over(images))
@@ -1818,7 +1844,7 @@ internal class TextureCollector(private val mods: List<JavaModContent>, private 
         if (rl.ns == "minecraft") return Tex(false, Transparency.OPAQUE, false, null, false, false)
         val bytes = bytes(rl) ?: return Tex(false, Transparency.OPAQUE, false, null, false, false)
         val img = Png.decode(bytes)
-        val meta = if (rl in composites) null else mods.firstNotNullOfOrNull { it.jar.json(name(rl) + ".mcmeta", 1 shl 16) }.asJsonObject()?.get("animation").asJsonObject()
+        val meta = if (rl in composites || rl in renders) null else mods.firstNotNullOfOrNull { it.jar.json(name(rl) + ".mcmeta", 1 shl 16) }.asJsonObject()?.get("animation").asJsonObject()
         var frames: Int? = null
         if (meta != null && img != null && img.height > img.width && img.width > 0) {
             frames = ((meta["frametime"] as? Number)?.toInt() ?: 1).coerceAtLeast(1)

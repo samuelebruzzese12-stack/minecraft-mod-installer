@@ -243,9 +243,12 @@ TEST_JS = r'''
 import { system, world, BlockTypes, ItemTypes, EntityTypes, ItemStack, GameMode, Direction, EnchantmentTypes } from "@minecraft/server";
 import * as gt from "@minecraft/server-gametest";
 const DATA = __DATA__;
+// Le strutture si provano in un avvio del server tutto loro: generandosi da sole non devono toccare le altre prove.
+const reg = (name, fn) => ((DATA.mode === "structures") === (name === "strutture") ? gt.register("bb", name, fn)
+  : { structureName() { return this; }, maxTicks() { return this; }, tag() { return this; } });
 function log(o) { console.warn("BBTEST " + JSON.stringify(o)); }
 
-gt.register("bb", "registrazione", (test) => {
+reg("registrazione", (test) => {
   const mb = DATA.blocks.filter((id) => !BlockTypes.get(id));
   const mi = DATA.items.filter((i) => !ItemTypes.get(i.id)).map((i) => i.id);
   const me = DATA.entities.filter((e) => !EntityTypes.get(e.id)).map((e) => e.id);
@@ -253,7 +256,7 @@ gt.register("bb", "registrazione", (test) => {
   if (mb.length + mi.length + me.length > 0) test.fail("non registrati: " + (mb.length + mi.length + me.length)); else test.succeed();
 }).structureName("bb:plat").maxTicks(40).tag("bb");
 
-gt.register("bb", "oggetti", (test) => {
+reg("oggetti", (test) => {
   const bad = [];
   for (const it of DATA.items) {
     try {
@@ -275,7 +278,7 @@ gt.register("bb", "oggetti", (test) => {
 
 for (let k = 0; k * DATA.batch < DATA.blocks.length; k++) {
   const part = DATA.blocks.slice(k * DATA.batch, (k + 1) * DATA.batch);
-  gt.register("bb", "blocchi_" + k, (test) => {
+  reg("blocchi_" + k, (test) => {
     const bad = [];
     part.forEach((id, i) => {
       const loc = { x: 1 + (i % 14), y: 1 + Math.floor(i / 196), z: 1 + (Math.floor(i / 14) % 14) };
@@ -290,7 +293,7 @@ for (let k = 0; k * DATA.batch < DATA.blocks.length; k++) {
   }).structureName("bb:plat").maxTicks(60).tag("bb");
 }
 
-if (DATA.entities.length) gt.register("bb", "creature", (test) => {
+if (DATA.entities.length) reg("creature", (test) => {
   const spawned = [];
   const bad = [];
   DATA.entities.forEach((e, i) => {
@@ -310,7 +313,7 @@ if (DATA.entities.length) gt.register("bb", "creature", (test) => {
 
 // Il pavimento della struttura di prova è a y=1: il giocatore simulato sta sopra (y=2).
 const B = DATA.behaviors;
-if (B.tools.length + B.foods.length + B.ores.length) gt.register("bb", "comportamenti", (test) => {
+if (B.tools.length + B.foods.length + B.ores.length) reg("comportamenti", (test) => {
   const bad = [], ok = [];
   const p = test.spawnSimulatedPlayer({ x: 6, y: 2, z: 6 }, "Prova", GameMode.Survival);
   const inv = () => p.getComponent("minecraft:inventory").container;
@@ -368,7 +371,7 @@ if (B.tools.length + B.foods.length + B.ores.length) gt.register("bb", "comporta
 }).structureName("bb:plat").maxTicks(2000).tag("bb");
 
 // Blocchi con più stati: il giocatore simulato (in creativa) li piazza e li usa come farebbe un giocatore vero.
-if (B.stateful.length) gt.register("bb", "stati", (test) => {
+if (B.stateful.length) reg("stati", (test) => {
   const ok = [], bad = [];
   const p = test.spawnSimulatedPlayer({ x: 7, y: 2, z: 7 }, "Prova", GameMode.Creative);
   const spots = [[5, 5], [5, 7], [5, 9], [9, 5], [9, 7], [9, 9], [7, 5], [7, 9], [3, 7], [11, 7], [7, 3], [7, 11]];
@@ -431,7 +434,7 @@ if (B.stateful.length) gt.register("bb", "stati", (test) => {
 function countOf(inv, id) { let n = 0; for (let i = 0; i < inv.size; i++) { const it = inv.getItem(i); if (it && it.typeId === id) n += it.amount; } return n; }
 (DATA.behaviors.guns || []).forEach((g, n) => {
   const after = Math.ceil(g.reload * 20) + 40;
-  gt.register("bb", "arma_" + n, (test) => {
+  reg("arma_" + n, (test) => {
     const p = test.spawnSimulatedPlayer({ x: 2, y: 2, z: 2 }, "Tiratore", GameMode.Survival);
     const target = test.spawn("minecraft:husk", { x: 2, y: 2, z: 9 });
     try { target.addEffect("slowness", 2000, { amplifier: 255, showParticles: false }); } catch (e) {}
@@ -472,7 +475,7 @@ function countOf(inv, id) { let n = 0; for (let i = 0; i < inv.size; i++) { cons
     });
   }).structureName("bb:plat").maxTicks(after + 80).tag("bb");
 });
-if (DATA.behaviors.gunRecipe) gt.register("bb", "banco_armi", (test) => {
+if (DATA.behaviors.gunRecipe) reg("banco_armi", (test) => {
   const r = DATA.behaviors.gunRecipe;
   const p = test.spawnSimulatedPlayer({ x: 2, y: 2, z: 2 }, "Armaiolo", GameMode.Survival);
   const inv = p.getComponent("minecraft:inventory").container;
@@ -491,7 +494,7 @@ if (DATA.behaviors.gunRecipe) gt.register("bb", "banco_armi", (test) => {
 }).structureName("bb:plat").maxTicks(80).tag("bb");
 
 // ---- bottini con le regole di Java: piccone normale → l'altro oggetto; tocco di velluto → il blocco; fortuna III → di più
-if (DATA.behaviors.loot) gt.register("bb", "bottini", (test) => {
+if (DATA.behaviors.loot) reg("bottini", (test) => {
   const L = DATA.behaviors.loot;
   const p = test.spawnSimulatedPlayer({ x: 4, y: 2, z: 1 }, "Minatore", GameMode.Survival);
   const inv = p.getComponent("minecraft:inventory").container;
@@ -551,7 +554,7 @@ if (DATA.behaviors.loot) gt.register("bb", "bottini", (test) => {
 
 // ---- strutture: piazzate col comando (come /place structure di Java) lontano dalla prova, poi confrontate blocco per blocco
 // con i loro file; alla fine la generazione da sola (una possibile struttura ogni 6 chunk) mentre il giocatore aspetta.
-if (DATA.behaviors.structures && DATA.behaviors.structures.length) gt.register("bb", "strutture", (test) => {
+if (DATA.behaviors.structures && DATA.behaviors.structures.length) reg("strutture", (test) => {
   const ids = DATA.behaviors.structures;
   const p = test.spawnSimulatedPlayer({ x: 2, y: 2, z: 2 }, "Esploratore", GameMode.Creative);
   const base = test.worldLocation({ x: 2, y: 2, z: 2 });
@@ -575,7 +578,7 @@ if (DATA.behaviors.structures && DATA.behaviors.structures.length) gt.register("
 }).structureName("bb:plat").maxTicks(1800).tag("bb");
 
 // ---- progressi: con gli oggetti giusti nell'inventario il progresso si completa (lo stato lo scrive lo script nel registro)
-if (DATA.behaviors.advancement) gt.register("bb", "progressi", (test) => {
+if (DATA.behaviors.advancement) reg("progressi", (test) => {
   const A = DATA.behaviors.advancement;
   const p = test.spawnSimulatedPlayer({ x: 6, y: 2, z: 6 }, "Avventuriero", GameMode.Survival);
   const inv = p.getComponent("minecraft:inventory").container;
@@ -584,11 +587,13 @@ if (DATA.behaviors.advancement) gt.register("bb", "progressi", (test) => {
   test.runAfterDelay(80, () => { log({ test: "progressi", id: A.id, items: A.items }); test.succeed(); });
 }).structureName("bb:plat").maxTicks(200).tag("bb");
 
+// Le strutture delle mod non nascono da sole durante le prove (le prova un avvio a parte, che le riaccende).
+system.runTimeout(() => { try { world.getDimension("overworld").runCommand("scriptevent mmi:strutture_pausa"); } catch (e) {} }, 2);
 system.runTimeout(() => log({ test: "pronto" }), 20);
 '''
 
 
-def test_pack(dest, blocks, items, entities, behaviors=None):
+def test_pack(dest, blocks, items, entities, behaviors=None, mode="all"):
     os.makedirs(os.path.join(dest, "scripts"), exist_ok=True)
     os.makedirs(os.path.join(dest, "structures", "bb"), exist_ok=True)
     pid = str(uuid.uuid4())
@@ -611,7 +616,7 @@ def test_pack(dest, blocks, items, entities, behaviors=None):
                 data.append(1 if y == 0 else 0)
     open(os.path.join(dest, "structures", "bb", "plat.mcstructure"), "wb").write(
         lenbt.mcstructure(size, data, [("minecraft:air", {}), ("minecraft:stone", {})]))
-    payload = json.dumps({"blocks": blocks, "items": items, "entities": entities, "batch": BATCH,
+    payload = json.dumps({"blocks": blocks, "items": items, "entities": entities, "batch": BATCH, "mode": mode,
                           "behaviors": behaviors or {"tools": [], "foods": [], "ores": [], "stateful": [], "guns": [], "gunRecipe": None, "loot": None, "structures": []}})
     open(os.path.join(dest, "scripts", "main.js"), "w", encoding="utf-8").write(TEST_JS.replace("__DATA__", payload))
     return pid
@@ -705,23 +710,31 @@ def test_addon(bds, addon, out_dir):
     tpl = prepare_template(bds)
     level = "bb_" + re.sub(r"[^a-zA-Z0-9]", "_", name)[:40]
     world = os.path.join(bds, "worlds", level)
-    shutil.rmtree(world, ignore_errors=True)
-    shutil.copytree(tpl, world)
-    wbp, wrp = [], []
-    for kind, (folder, m) in packs.items():
-        sub = "behavior_packs" if kind in ("data", "script") else "resource_packs"
-        dest = os.path.join(world, sub, folder.replace(" ", "_"))
-        for n in z.namelist():
-            if n.startswith(folder + "/") and not n.endswith("/"):
-                target = os.path.join(dest, n[len(folder) + 1:])
-                os.makedirs(os.path.dirname(target), exist_ok=True)
-                open(target, "wb").write(z.read(n))
-        (wbp if sub == "behavior_packs" else wrp).append({"pack_id": m["header"]["uuid"], "version": m["header"]["version"]})
-    tid = test_pack(os.path.join(world, "behavior_packs", "bb_test"), blocks, items, entities, behaviors)
-    wbp.append({"pack_id": tid, "version": [1, 0, 0]})
-    json.dump(wbp, open(os.path.join(world, "world_behavior_packs.json"), "w"))
-    json.dump(wrp, open(os.path.join(world, "world_resource_packs.json"), "w"))
-    lines = run_server(bds, level, time.time() + TIMEOUT)
+
+    def run_pass(mode):
+        """Un avvio del server su una copia nuova del mondo di prova, con le prove di [mode]."""
+        shutil.rmtree(world, ignore_errors=True)
+        shutil.copytree(tpl, world)
+        wbp, wrp = [], []
+        for kind, (folder, m) in packs.items():
+            sub = "behavior_packs" if kind in ("data", "script") else "resource_packs"
+            dest = os.path.join(world, sub, folder.replace(" ", "_"))
+            for n in z.namelist():
+                if n.startswith(folder + "/") and not n.endswith("/"):
+                    target = os.path.join(dest, n[len(folder) + 1:])
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    open(target, "wb").write(z.read(n))
+            (wbp if sub == "behavior_packs" else wrp).append({"pack_id": m["header"]["uuid"], "version": m["header"]["version"]})
+        tid = test_pack(os.path.join(world, "behavior_packs", "bb_test"), blocks, items, entities, behaviors, mode)
+        wbp.append({"pack_id": tid, "version": [1, 0, 0]})
+        json.dump(wbp, open(os.path.join(world, "world_behavior_packs.json"), "w"))
+        json.dump(wrp, open(os.path.join(world, "world_resource_packs.json"), "w"))
+        return run_server(bds, level, time.time() + TIMEOUT)
+
+    lines = run_pass("all")
+    # Le strutture nascono da sole vicino ai giocatori (anche quelli simulati delle altre prove): un avvio a parte.
+    if behaviors.get("structures"):
+        lines = lines + run_pass("structures")
     results = []
     for l in lines:
         if "BBTEST " in l:

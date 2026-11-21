@@ -1,7 +1,8 @@
 // Scritto da Minecraft Mod Installer (JAVA TO BEDROCK): i bottini dei blocchi eseguiti con le regole di Java.
 // Bedrock da solo non applica la fortuna ai blocchi delle add-on e, con il tocco di velluto, fa cadere sempre il blocco
-// stesso: quando un giocatore rompe un blocco convertito, qui si calcola il risultato di Java e si sostituisce quello di
-// Bedrock. Esplosioni e comandi usano la tabella di Bedrock (in Java, senza attrezzo, il risultato è lo stesso).
+// stesso. Per questi blocchi la tabella di Bedrock è vuota: quando un giocatore rompe il blocco o un'esplosione lo
+// distrugge, qui si calcola il risultato di Java. Con il tocco di velluto Bedrock fa comunque cadere il blocco: se anche
+// Java dà il blocco, si tiene quello (niente oggetti tolti, così non si perde nulla quando gli oggetti a terra si uniscono).
 import { system, world, ItemStack, GameMode } from "@minecraft/server";
 import { LOOT, TABLES } from "./mmi_loot_data.js";
 
@@ -32,11 +33,29 @@ world.afterEvents.playerBreakBlock.subscribe((ev) => {
     const ctx = context(ev.itemStackBeforeBreak, javaState(spec, perm), ev.dimension);
     const drops = runTable(TABLES[spec.t], ctx);
     const at = center(ev.block.location);
-    // Quello che Bedrock ha appena fatto cadere da sé (non c'era prima della rottura) lascia il posto al risultato di Java.
-    for (const e of ev.dimension.getEntities({ type: "minecraft:item", location: at, maxDistance: 2.5 })) {
-      if (!seen.has(e.id)) e.remove();
+    if ((ctx.ench.silk_touch ?? 0) > 0) {
+      // Il blocco che Bedrock ha fatto cadere da sé vale come uno di quelli di Java; se Java non lo dà, si toglie.
+      const i = drops.findIndex((d) => d.id === perm.type.id && !d.name && !d.lore && !d.damage && d.count > 0);
+      if (i >= 0) drops[i] = { ...drops[i], count: drops[i].count - 1 };
+      else for (const e of ev.dimension.getEntities({ type: "minecraft:item", location: at, maxDistance: 2.5 })) {
+        if (!seen.has(e.id) && e.getComponent("minecraft:item")?.itemStack.typeId === perm.type.id) { e.remove(); break; }
+      }
     }
-    for (const d of drops) spawn(ev.dimension, at, d);
+    for (const d of drops) if (d.count > 0) spawn(ev.dimension, at, d);
+  } catch (e) { warn(e); }
+});
+
+// Esplosioni: la tabella di Java con «survives_explosion» (il TNT non perde nulla, come in Java 1.21; le creature e i
+// blocchi che esplodono sì: uno su raggio).
+world.afterEvents.blockExplode.subscribe((ev) => {
+  try {
+    const perm = ev.explodedBlockPermutation;
+    const spec = LOOT[perm.type.id];
+    if (!spec) return;
+    const src = ev.source?.typeId ?? "";
+    const ctx = context(undefined, javaState(spec, perm), ev.dimension);
+    ctx.boom = src === "minecraft:tnt" || src === "minecraft:tnt_minecart" ? 1 : src ? 1 / 3 : 1 / 5;
+    for (const d of runTable(TABLES[spec.t], ctx)) if (d.count > 0) spawn(ev.dimension, center(ev.block.location), d);
   } catch (e) { warn(e); }
 });
 
@@ -95,7 +114,7 @@ function test(list, ctx) {
 
 function cond(c, ctx) {
   switch (c.k) {
-    case "boom": return true;
+    case "boom": return ctx.boom === undefined || Math.random() < ctx.boom;
     case "true": return true;
     case "not": return !cond(c.c, ctx);
     case "any": return c.c.some((x) => cond(x, ctx));
