@@ -184,7 +184,8 @@ fun JavaToBedrockScreen(state: ConvertState, model: ConvertViewModel, vm: MainVi
                     "Forme, stati e texture dei blocchi (anche trasparenti o animate) e i nomi restano quelli della mod; le ricette usano i nomi Bedrock degli oggetti di Minecraft.",
                     "Danni, durata, protezione, durezza, cibo ed effetti si leggono dal codice della mod quando si può; quando no, si stimano e il rapporto lo dice.",
                     "Le creature hanno modello e animazioni della mod e un comportamento tradotto dai loro obiettivi Java negli obiettivi di Bedrock più vicini; le azioni speciali scritte in codice no.",
-                    "Macchine, menu, suoni, dimensioni, strutture e progressi non si convertono ancora: restano nel registro come «dati conservati».",
+                    "Le strutture della mod nascono nel mondo come in Java (stessi pezzi, biomi e casse col bottino) e i progressi si ottengono con le stesse condizioni (elenco con /mmi:progressi); le strutture fatte solo dal codice della mod no.",
+                    "Macchine, menu, dimensioni e biomi nuovi non si convertono ancora: restano nel registro come «dati conservati».",
                     "Ogni versione dell'app prova gli add-on delle mod di prova nel server Bedrock ufficiale (blocchi piazzati, porte aperte, creature vive, effetti dei cibi…). Sul telefono l'app non apre il gioco: prova l'add-on in un mondo di prova prima di usarlo in quello vero."
                 )
             )

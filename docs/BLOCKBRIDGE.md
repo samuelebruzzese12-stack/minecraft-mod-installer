@@ -76,7 +76,12 @@ cosa non include.
 
 ## 5. Cosa manca ancora (registro: «Dati conservati»)
 
-Strutture (`.nbt` → `.mcstructure`), progressi, bottini di casse e pesca, particelle, biomi e dimensioni, macchine con
+Fatti: **strutture** (ogni `.nbt` diventa `.mcstructure`; `mmi_structures.js` le genera nel mondo con l'algoritmo jigsaw di
+Java: `structure_set`, gruppi di pezzi, pesi, rotazioni, spazio libero, processori, biomi, altezze, casse con il bottino;
+provato nel server Bedrock confrontando ogni pezzo blocco per blocco) e **progressi** (`mmi_advancements.js`: condizioni di
+Java sugli eventi di Bedrock, avviso, messaggio in chat, ricompense, elenco con `/mmi:progressi`).
+
+Strutture fatte dal codice della mod, progressi dati da eventi del codice, bottini di pesca, particelle, biomi e dimensioni, macchine con
 inventario (entità di blocco + Script API), modelli Zeta (Quark), suoni dei blocchi, anteprima 3D di modelli e animazioni
 nell'app, esportazione del progetto sorgente, ripresa delle conversioni lunghe a metà. **Esecuzione Java**: l'app non contiene un runtime Java; prepara i profili per
 un launcher Java per Android (MOD MANAGER → esporta).

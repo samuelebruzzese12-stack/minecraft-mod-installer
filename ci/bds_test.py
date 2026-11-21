@@ -34,7 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lenbt  # noqa: E402
 
 BATCH = 180          # blocchi per prova (una prova = una struttura 14×14 con 1+ strati)
-TIMEOUT = 240        # secondi al massimo per add-on
+TIMEOUT = 420        # secondi al massimo per add-on
 
 
 def guns_data(z, bp, behaviors):
@@ -116,6 +116,47 @@ def loot_data(z, bp, behaviors):
         return
 
 
+def structures_data(z, bp, behaviors):
+    """Strutture generate dallo script (scripts/mmi_structures_data.js): le prime, per piazzarle e confrontarle blocco per blocco."""
+    if not bp:
+        return
+    try:
+        js = z.read(bp + "/scripts/mmi_structures_data.js").decode("utf-8")
+    except KeyError:
+        return
+    m = re.search(r"export const D = (.*?);\n", js, re.S)
+    if not m:
+        return
+    d = json.loads(m.group(1))
+    # Prima quelle con più pezzi possibili (profondità), poi le altre; al massimo 3.
+    order = sorted(range(len(d["s"])), key=lambda i: -d["s"][i].get("d", 0))
+    behaviors["structures"] = [d["s"][i]["id"] for i in order[:3]]
+
+
+def advancements_data(z, bp, behaviors):
+    """Progressi rifatti dallo script (scripts/mmi_advancements_data.js): uno che si ottiene con degli oggetti nell'inventario."""
+    if not bp:
+        return
+    try:
+        js = z.read(bp + "/scripts/mmi_advancements_data.js").decode("utf-8")
+    except KeyError:
+        return
+    m = re.search(r"export const A = (.*?);\n", js, re.S)
+    if not m:
+        return
+    for a in json.loads(m.group(1))["a"]:
+        if not a.get("ok") or len(a["r"]) != 1 or len(a["r"][0]) != 1:
+            continue
+        c = a["c"][a["r"][0][0]]
+        if c.get("k") != "inv" or not c["it"] or any(not q.get("i") for q in c["it"]):
+            continue
+        items = [[q["i"][0], max(1, (q.get("n") or [1])[0])] for q in c["it"]]
+        if any(n > 64 for _, n in items):
+            continue
+        behaviors["advancement"] = {"id": a["id"], "items": items}
+        return
+
+
 def read_addon(path):
     """Cartelle BP/RP dell'add-on, manifest e contenuto (identificatori e valori attesi)."""
     z = zipfile.ZipFile(path)
@@ -127,10 +168,12 @@ def read_addon(path):
             kind = m["modules"][0]["type"]
             packs[kind] = (n.split("/")[0], m)
     blocks, items, entities = [], [], []
-    behaviors = {"tools": [], "foods": [], "ores": [], "stateful": [], "guns": [], "gunRecipe": None, "loot": None}
+    behaviors = {"tools": [], "foods": [], "ores": [], "stateful": [], "guns": [], "gunRecipe": None, "loot": None, "structures": [], "advancement": None}
     bp = packs.get("data", (None,))[0]
     guns_data(z, bp, behaviors)
     loot_data(z, bp, behaviors)
+    structures_data(z, bp, behaviors)
+    advancements_data(z, bp, behaviors)
     for n in names:
         if not bp or not n.startswith(bp + "/") or not n.endswith(".json"):
             continue
@@ -460,39 +503,86 @@ if (DATA.behaviors.loot) gt.register("bb", "bottini", (test) => {
   const clear = () => { near().forEach((e) => e.remove()); for (let i = 1; i < inv.size; i++) inv.setItem(i, undefined); };
   const pick = (ench, lv) => {
     const it = new ItemStack("minecraft:netherite_pickaxe", 1);
-    if (ench) it.getComponent("minecraft:enchantable").addEnchantment({ type: EnchantmentTypes.get(ench), level: lv });
+    const en = it.getComponent("minecraft:enchantable");
+    // Efficienza V: i minerali delle mod possono essere molto duri (la durezza viene dal codice della mod).
+    en.addEnchantment({ type: EnchantmentTypes.get("efficiency"), level: 5 });
+    if (ench) en.addEnchantment({ type: EnchantmentTypes.get(ench), level: lv });
     return it;
   };
   const res = { test: "bottini", block: L.block, drop: L.drop };
-  p.addEffect("haste", 4000, { amplifier: 4, showParticles: false });
-  // 10 blocchi a portata del giocatore (due file da 5), uno ogni 14 tick
+  p.addEffect("haste", 20000, { amplifier: 4, showParticles: false });
+  // 10 blocchi a portata del giocatore (due file da 5): ognuno si rompe e si aspetta che sia rotto davvero
   const cols = [];
   for (let x = 2; x < 7; x++) for (const z of [3, 4]) cols.push({ x, y: 2, z });
-  const phase = (name, ench, lv, start, after) => {
-    test.runAfterDelay(start, () => {
-      clear();
-      for (const c of cols) if (test.getBlock(c).typeId !== L.block) test.setBlockType(L.block, c);
-      inv.setItem(0, pick(ench, lv)); p.selectedSlotIndex = 0;
-    });
-    cols.forEach((c, i) => test.runAfterDelay(start + 4 + i * 14, () => { p.lookAtBlock(c); p.breakBlock(c); }));
-    test.runAfterDelay(start + 4 + cols.length * 14 + 10, () => {
-      res[name] = { drop: count(L.drop), block: count(L.block), left: cols.filter((c) => test.getBlock(c).typeId === L.block).length };
-      after && after();
-    });
-    return start + 4 + cols.length * 14 + 14;
+  const phase = (name, ench, lv, after) => {
+    clear();
+    for (const c of cols) if (test.getBlock(c).typeId !== L.block) test.setBlockType(L.block, c);
+    inv.setItem(0, pick(ench, lv)); p.selectedSlotIndex = 0;
+    let i = 0;
+    const next = () => {
+      if (i >= cols.length) {
+        test.runAfterDelay(12, () => {
+          res[name] = { drop: count(L.drop), block: count(L.block), left: cols.filter((c) => test.getBlock(c).typeId === L.block).length };
+          after();
+        });
+        return;
+      }
+      const c = cols[i];
+      p.lookAtBlock(c); p.breakBlock(c);
+      let waited = 0;
+      const wait = () => {
+        if (test.getBlock(c).typeId !== L.block || waited >= 300) { i++; test.runAfterDelay(2, next); return; }
+        waited += 2;
+        test.runAfterDelay(2, wait);
+      };
+      test.runAfterDelay(2, wait);
+    };
+    test.runAfterDelay(4, next);
   };
-  let t = 4;
-  t = phase("normale", null, 0, t);
-  t = phase("velluto", "silk_touch", 1, t);
-  t = phase("fortuna3", "fortune", 3, t, () => {
+  test.runAfterDelay(4, () => phase("normale", null, 0, () => phase("velluto", "silk_touch", 1, () => phase("fortuna3", "fortune", 3, () => {
     // Fortuna III con «ore_drops» (Java): 1, 1, 2, 3 o 4 a blocco; tutti 1 su 10 blocchi ha probabilità 0,4^10 ≈ 0,01%.
     const ok = res.normale.drop === cols.length && res.normale.block === 0 && res.velluto.block === cols.length && res.velluto.drop === 0 &&
       res.fortuna3.drop > cols.length && res.normale.left === 0 && res.velluto.left === 0 && res.fortuna3.left === 0;
     res.esito = ok ? "ok" : "no";
     log(res);
     if (ok) test.succeed(); else test.fail("bottini diversi da Java: " + JSON.stringify(res));
+  }))));
+}).structureName("bb:plat").maxTicks(6000).tag("bb");
+
+// ---- strutture: piazzate col comando (come /place structure di Java) lontano dalla prova, poi confrontate blocco per blocco
+// con i loro file; alla fine la generazione da sola (una possibile struttura ogni 6 chunk) mentre il giocatore aspetta.
+if (DATA.behaviors.structures && DATA.behaviors.structures.length) gt.register("bb", "strutture", (test) => {
+  const ids = DATA.behaviors.structures;
+  const p = test.spawnSimulatedPlayer({ x: 2, y: 2, z: 2 }, "Esploratore", GameMode.Creative);
+  const base = test.worldLocation({ x: 2, y: 2, z: 2 });
+  p.runCommand("scriptevent mmi:strutture_log");
+  p.runCommand("scriptevent mmi:strutture_ovunque");
+  // I giocatori simulati non caricano i chunk: le zone si tengono caricate con /tickingarea (raggio 4 chunk).
+  const go = (x, z, name) => {
+    const dim = test.getDimension();
+    try { dim.runCommand("tickingarea add circle " + x + " 0 " + z + " 4 " + name); } catch (e) { log({ test: "strutture", tickingarea: "" + e }); }
+    p.teleport({ x, y: base.y + 30, z });
+  };
+  let t = 10;
+  ids.forEach((id, i) => {
+    test.runAfterDelay(t, () => go(base.x + 192 * (i + 1), base.z + 96, "mmis" + i));
+    test.runAfterDelay(t + 100, () => p.runCommand("scriptevent mmi:struttura " + id));
+    test.runAfterDelay(t + 280, () => p.runCommand("scriptevent mmi:strutture_verifica"));
+    t += 300;
   });
-}).structureName("bb:plat").maxTicks(900).tag("bb");
+  test.runAfterDelay(t, () => { p.runCommand("scriptevent mmi:strutture_prova"); go(base.x - 320, base.z - 320, "mmisp"); });
+  test.runAfterDelay(t + 400, () => { p.runCommand("scriptevent mmi:strutture_verifica"); log({ test: "strutture", ids }); test.succeed(); });
+}).structureName("bb:plat").maxTicks(1800).tag("bb");
+
+// ---- progressi: con gli oggetti giusti nell'inventario il progresso si completa (lo stato lo scrive lo script nel registro)
+if (DATA.behaviors.advancement) gt.register("bb", "progressi", (test) => {
+  const A = DATA.behaviors.advancement;
+  const p = test.spawnSimulatedPlayer({ x: 6, y: 2, z: 6 }, "Avventuriero", GameMode.Survival);
+  const inv = p.getComponent("minecraft:inventory").container;
+  test.runAfterDelay(10, () => A.items.forEach(([id, n], i) => inv.setItem(i + 1, new ItemStack(id, n))));
+  test.runAfterDelay(70, () => p.runCommand("scriptevent mmi:progressi_stato"));
+  test.runAfterDelay(80, () => { log({ test: "progressi", id: A.id, items: A.items }); test.succeed(); });
+}).structureName("bb:plat").maxTicks(200).tag("bb");
 
 system.runTimeout(() => log({ test: "pronto" }), 20);
 '''
@@ -522,7 +612,7 @@ def test_pack(dest, blocks, items, entities, behaviors=None):
     open(os.path.join(dest, "structures", "bb", "plat.mcstructure"), "wb").write(
         lenbt.mcstructure(size, data, [("minecraft:air", {}), ("minecraft:stone", {})]))
     payload = json.dumps({"blocks": blocks, "items": items, "entities": entities, "batch": BATCH,
-                          "behaviors": behaviors or {"tools": [], "foods": [], "ores": [], "stateful": [], "guns": [], "gunRecipe": None, "loot": None}})
+                          "behaviors": behaviors or {"tools": [], "foods": [], "ores": [], "stateful": [], "guns": [], "gunRecipe": None, "loot": None, "structures": []}})
     open(os.path.join(dest, "scripts", "main.js"), "w", encoding="utf-8").write(TEST_JS.replace("__DATA__", payload))
     return pid
 
@@ -643,10 +733,26 @@ def test_addon(bds, addon, out_dir):
     failed = [l.split("onTestFailed:", 1)[1].strip() for l in lines if "onTestFailed:" in l]
     loaded = any("Pack Stack" in l and "bb_test" in l for l in lines) or any("Prova BLOCKBRIDGE" in l for l in lines)
     errors = [l for l in lines if ERROR_RE.search(l) and "BBTEST" not in l and "onTestFailed" not in l]
+    # Progressi: lo stato del giocatore di prova deve contenere il progresso scelto.
+    adv = next((r for r in results if r.get("test") == "progressi"), None)
+    if adv:
+        states = [l.split("[mmi progressi] ", 1)[1] for l in lines if "[mmi progressi] " in l]
+        done = any(adv["id"] in json.loads(st).get("d", {}) for st in states if st.startswith("{"))
+        adv["completato"] = done
+        if not done:
+            failed.append("progressi: %s non completato (stato: %s)" % (adv["id"], states[-1][:200] if states else "nessuno"))
+    # Strutture: il registro dello script (comando, inizio, finita, verifica blocco per blocco).
+    st_lines = [l.split("[mmi strutture] ", 1)[1] for l in lines if "[mmi strutture] " in l]
+    for l in st_lines:
+        m = re.match(r"verifica (\d+)/(\d+) blocchi uguali", l)
+        if m and int(m.group(2)) > 0 and int(m.group(1)) < 0.9 * int(m.group(2)):
+            failed.append("strutture: " + l[:300])
+        if "non piazzat" in l or "non generata" in l:
+            failed.append("strutture: " + l[:300])
     report = {
         "addon": os.path.basename(addon), "blocks": len(blocks), "items": len(items), "entities": len(entities),
         "passed": passed, "failed": failed, "results": results, "content_log": errors[:200], "content_log_count": len(errors),
-        "packs_loaded": loaded,
+        "packs_loaded": loaded, "structures": st_lines[:60],
     }
     json.dump(report, open(os.path.join(out_dir, name + ".json"), "w"), indent=1, ensure_ascii=False)
     open(os.path.join(out_dir, name + ".log"), "w").write("\n".join(lines))
@@ -661,6 +767,7 @@ def main():
     summary = []
     bad = 0
     for a in addons:
+        start = len(summary)
         r = test_addon(bds, a, out_dir)
         ok = not r["failed"] and r["passed"] and r["content_log_count"] == 0
         if not ok:
@@ -669,16 +776,18 @@ def main():
             r["addon"], "OK" if ok else "PROBLEMI", r["blocks"], r["items"], r["entities"], len(r["passed"]), len(r["failed"]), r["content_log_count"])
         summary.append(line)
         for res in r["results"]:
-            if res.get("test") in ("arma", "banco_armi", "bottini"):
+            if res.get("test") in ("arma", "banco_armi", "bottini", "progressi"):
                 summary.append("   %s: %s" % (res.get("test"), json.dumps({k: v for k, v in res.items() if k != "test"}, ensure_ascii=False)[:400]))
             if isinstance(res.get("ok"), list) and res.get("ok"):
                 summary.append("   %s ok: %s" % (res.get("test"), "; ".join(map(str, res["ok"][:12]))))
             for key in ("missingBlocks", "missingItems", "missingEntities", "bad"):
                 if res.get(key):
                     summary.append("   %s %s: %s" % (res.get("test"), key, "; ".join(map(str, res[key][:8]))))
+        for l in r.get("structures", [])[:20]:
+            summary.append("   strutture: " + l[:300])
         for e in r["content_log"][:8]:
             summary.append("   registro: " + e[:300])
-        print(summary[-1] if len(summary) == 1 else "\n".join(summary[-(1 + len(r["content_log"][:8])):]), flush=True)
+        print("\n".join(summary[start:]), flush=True)
     open(os.path.join(out_dir, "riepilogo.txt"), "w").write("\n".join(summary) + "\n")
     return 1 if bad else 0
 

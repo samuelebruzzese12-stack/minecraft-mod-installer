@@ -339,3 +339,12 @@ installa sopra quello vero.
 La chiave è stata cambiata il 6 novembre 2026 (la vecchia era scritta nel progetto): le versioni firmate prima non si
 aggiornano con quelle nuove, va disinstallata una volta la vecchia app. Per compilare in locale con la firma vera:
 `gradle :app:assembleRelease -PmmiSigningPassword=…`.
+
+## Dati di altri progetti
+
+- `mod-converter/.../convert/java_blocks.txt.gz`: gli stati dei blocchi di Java con quelli di Bedrock, da
+  [PrismarineJS minecraft-data](https://github.com/PrismarineJS/minecraft-data) (licenza MIT), `data/bedrock/1.26.30/blocksJ2B.json`,
+  rigenerato con `tools/gen_java_blocks.py`; tutti gli stati Bedrock sono stati provati nel server Bedrock 1.26.62.
+- `biomes.json` e `java_block_tags.json.gz`: i gruppi (tag) di biomi e di blocchi di Minecraft Java, dai dati del gioco
+  estratti da [misode/mcmeta](https://github.com/misode/mcmeta) (ramo `data`), rigenerati con `tools/gen_biomes.py` e
+  `tools/gen_block_tags.py`; i nomi dei biomi Bedrock (`tools/bedrock_biomes.txt`) vengono dal server Bedrock 1.26.62.

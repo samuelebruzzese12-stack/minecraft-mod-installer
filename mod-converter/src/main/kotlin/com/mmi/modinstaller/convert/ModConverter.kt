@@ -90,14 +90,18 @@ class ConversionPlan internal constructor(
     internal val composites: Map<Rl, List<Rl>> = emptyMap(),
     /** Bottini dei blocchi eseguiti con le regole di Java nello script: blocco Bedrock → dati, e le tabelle. */
     internal val lootBlocks: Map<String, Map<String, Any?>> = emptyMap(),
-    internal val lootTables: List<Map<String, Any?>> = emptyList()
+    internal val lootTables: List<Map<String, Any?>> = emptyList(),
+    /** Strutture: pezzi `.mcstructure`, bottini delle casse e dati dello script che le genera (vedi [StructureBuilder]). */
+    internal val structures: StructureOut? = null,
+    /** Progressi rifatti con lo script (vedi [AdvancementBuilder]). */
+    internal val advancements: AdvancementOut? = null
 ) : java.io.Closeable {
     val itemCount: Int get() = items.size
     val blockCount: Int get() = blocks.size
     val recipeCount: Int get() = recipes.size
     val oreCount: Int get() = features.size
     val entityCount: Int get() = entities.size
-    val hasContent: Boolean get() = items.isNotEmpty() || blocks.isNotEmpty() || entities.isNotEmpty() || tacz.isNotEmpty()
+    val hasContent: Boolean get() = items.isNotEmpty() || blocks.isNotEmpty() || entities.isNotEmpty() || tacz.isNotEmpty() || structures?.isEmpty == false
 
     override fun close() = mods.forEach { it.jar.close() }
 }
@@ -816,12 +820,83 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             val i = reports.indexOfFirst { it.label == mod.jar.label }
             if (i >= 0) reports[i] = TaczReport.merge(reports[i], t, removed)
         }
+        // ---- strutture: ogni pezzo .nbt diventa .mcstructure; lo script le genera nel mondo come JigsawPlacement di Java
+        val byJava = blocksOut.associateBy { it.java }
+        val structures = try {
+            StructureBuilder(
+                mods,
+                { rl, props -> byJava[rl]?.let { structureState(it, props) } },
+                { rl -> byJava[rl]?.bedrockId },
+                { rl -> resolver.item(rl)?.id },
+                { rl -> entitiesOut.firstOrNull { it.java == rl }?.bedrockId },
+                lootConv, limits.scriptBehaviors, cancel
+            ).build()
+        } catch (e: java.util.concurrent.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        if (structures != null) for (mod in mods) {
+            val sr = structures.reports[mod] ?: continue
+            val i = reports.indexOfFirst { it.label == mod.jar.label }
+            if (i >= 0) reports[i] = StructureReport.merge(reports[i], sr, limits.scriptBehaviors)
+        }
+        // ---- progressi: condizioni di Java controllate dallo script, avviso e ricompense come in Java
+        val advancements = if (!limits.scriptBehaviors) null else try {
+            AdvancementBuilder(
+                mods, { rl -> resolver.item(rl)?.id }, { rl -> resolver.tagItems(rl) },
+                { rl -> entitiesOut.firstOrNull { it.java == rl }?.bedrockId }, { rl -> byJava[rl]?.bedrockId }, lootConv, LANGUAGES,
+                structures?.data?.let { d -> (d["s"] as List<*>).mapNotNull { (it as? Map<*, *>)?.get("id") as? String }.toSet() }.orEmpty()
+            ).build()
+        } catch (e: java.util.concurrent.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        if (advancements != null) {
+            for ((code, texts) in advancements.lang) languages.getOrPut(code) { LinkedHashMap() }.putAll(texts)
+            for (mod in mods) {
+                val ar = advancements.reports[mod] ?: continue
+                val i = reports.indexOfFirst { it.label == mod.jar.label }
+                if (i >= 0) reports[i] = AdvancementReport.merge(reports[i], ar)
+            }
+        }
         return ConversionPlan(
             failed + reports, mods, itemsOut, blocksOut, recipesOut, lootOut, featuresOut, entitiesOut, rulesOut,
-            resolver.customTags.mapValues { it.value.toSet() }, languages, soundPlan.sounds, spawnOut, taczOut, composites, lootBlocks, lootTables
+            resolver.customTags.mapValues { it.value.toSet() }, languages, soundPlan.sounds, spawnOut, taczOut, composites, lootBlocks, lootTables,
+            structures, advancements?.takeIf { it.data != null }
         )
     }
 
+    /** Lo stato Bedrock di un blocco convertito della mod, dato lo stato Java che c'è in una struttura. */
+    private fun structureState(b: BlockOut, props: Map<String, String>): BedrockState {
+        val look = b.look
+        if (look is BlockLook.Stateful) {
+            val table = look.block.stateTable
+            var best: Map<String, Any>? = null
+            var score = -1
+            for ((bed, java) in table) {
+                var n = 0
+                var conflict = false
+                for ((k, v) in props) {
+                    val have = java[k] ?: continue
+                    if (have == v) n++ else { conflict = true; break }
+                }
+                if (!conflict && n > score) { score = n; best = bed }
+            }
+            val states = best ?: table.firstOrNull()?.first.orEmpty()
+            return BedrockState(b.bedrockId, states.map { (k, v) ->
+                k to when (v) { is Boolean -> BTag.B(if (v) 1 else 0); is Number -> BTag.I(v.toInt()); else -> BTag.Str(v.toString()) }
+            })
+        }
+        return when (b.orientation) {
+            Orientation.FACING -> BedrockState(b.bedrockId, listOf("minecraft:cardinal_direction" to BTag.Str(props["facing"]?.takeIf { it in CARDINAL } ?: "north")))
+            Orientation.AXIS -> BedrockState(b.bedrockId, listOf("minecraft:block_face" to BTag.Str(when (props["axis"]) { "x" -> "east"; "z" -> "north"; else -> "up" })))
+            Orientation.NONE -> BedrockState(b.bedrockId, emptyList())
+        }
+    }
+
+    private val CARDINAL = setOf("north", "south", "east", "west")
     private val ARMOR = setOf(ItemKind.HELMET, ItemKind.CHESTPLATE, ItemKind.LEGGINGS, ItemKind.BOOTS)
     private val TOOLS = setOf(ItemKind.SWORD, ItemKind.PICKAXE, ItemKind.AXE, ItemKind.SHOVEL, ItemKind.HOE)
     private val EQUIPMENT = TOOLS + setOf(ItemKind.HELMET, ItemKind.CHESTPLATE, ItemKind.LEGGINGS, ItemKind.BOOTS)
@@ -1292,6 +1367,13 @@ internal class AddonWriter(
         // ---- ricette, bottini, minerali
         for ((path, doc) in plan.recipes) sink(bp + "recipes/" + path, json(doc))
         for ((path, doc) in plan.loot) sink(bp + path, json(doc))
+        plan.structures?.let { st ->
+            for ((path, bytes) in st.files) { cancel(); sink(bp + path, bytes) }
+            for ((path, doc) in st.loot) if (path !in plan.loot) sink(bp + path, json(doc))
+        }
+        plan.advancements?.let { adv ->
+            for ((path, doc) in adv.loot) if (path !in plan.loot && plan.structures?.loot?.containsKey(path) != true) sink(bp + path, json(doc))
+        }
         for ((path, doc) in plan.features) sink(bp + path, json(doc))
         for ((path, doc) in plan.featureRules) sink(bp + path, json(doc))
         for ((path, doc) in plan.spawnRules) sink(bp + path, json(doc))
@@ -1300,6 +1382,7 @@ internal class AddonWriter(
         val taczSounds = LinkedHashMap<String, Any?>()
         val tacz = if (plan.tacz.isNotEmpty()) TaczWriter.write(plan.tacz, bp, rp, limits, itemTextureData, terrain, blocksJson, taczSounds, sink) else null
         taczScripted = tacz != null
+        advancementsScripted = plan.advancements?.data != null
 
         // ---- risorse
         if (itemTextureData.isNotEmpty()) {
@@ -1364,6 +1447,24 @@ internal class AddonWriter(
             sink(bp + "scripts/mmi_loot.js", runtime)
             extra.append("import \"./mmi_loot.js\";\n")
         }
+        // Strutture generate nel mondo (vedi StructureBuilder e structures_runtime.js).
+        plan.structures?.data?.let { data ->
+            sink(bp + "scripts/mmi_structures_data.js", ("// Strutture delle mod (pezzi, gruppi, processori, dove compaiono).\n" +
+                "export const D = " + Json.stringify(data, pretty = false) + ";\n").toByteArray(Charsets.UTF_8))
+            val runtime = ModConverter::class.java.getResourceAsStream("/com/mmi/modinstaller/convert/structures_runtime.js")?.use { it.readBytes() }
+                ?: throw IllegalStateException("structures_runtime.js mancante")
+            sink(bp + "scripts/mmi_structures.js", runtime)
+            extra.append("import \"./mmi_structures.js\";\n")
+        }
+        // Progressi (vedi AdvancementBuilder e advancements_runtime.js).
+        plan.advancements?.data?.let { data ->
+            sink(bp + "scripts/mmi_advancements_data.js", ("// Progressi delle mod (condizioni, testi, ricompense).\n" +
+                "export const A = " + Json.stringify(data, pretty = false) + ";\n").toByteArray(Charsets.UTF_8))
+            val runtime = ModConverter::class.java.getResourceAsStream("/com/mmi/modinstaller/convert/advancements_runtime.js")?.use { it.readBytes() }
+                ?: throw IllegalStateException("advancements_runtime.js mancante")
+            sink(bp + "scripts/mmi_advancements.js", runtime)
+            extra.append("import \"./mmi_advancements.js\";\n")
+        }
         val modules = extra.toString().takeIf { it.isNotEmpty() }
         val js = Behaviors.mainJs(scripts)?.let { it + (modules ?: "") } ?: modules?.let { "// Scritto da Minecraft Mod Installer (JAVA TO BEDROCK).\n$it" }
         minEngine = when { stateful -> StateEngine.MIN_ENGINE; js != null -> Behaviors.MIN_ENGINE; else -> ModConverter.MIN_ENGINE }
@@ -1385,7 +1486,7 @@ internal class AddonWriter(
             modules.add(linkedMapOf("type" to "script", "language" to "javascript", "uuid" to scriptModule, "version" to version, "entry" to "scripts/main.js"))
             deps.add(linkedMapOf("module_name" to "@minecraft/server", "version" to Behaviors.SCRIPT_API))
             // I banchi di TACZ aprono una finestra con le ricette.
-            if (taczScripted) deps.add(linkedMapOf("module_name" to "@minecraft/server-ui", "version" to Behaviors.SCRIPT_UI))
+            if (taczScripted || advancementsScripted) deps.add(linkedMapOf("module_name" to "@minecraft/server-ui", "version" to Behaviors.SCRIPT_UI))
         }
         val m = linkedMapOf<String, Any?>(
             "format_version" to 2L,
@@ -1404,6 +1505,8 @@ internal class AddonWriter(
 
     /** Ci sono armi di TACZ (script con le finestre dei banchi)? */
     private var taczScripted = false
+    /** L'elenco dei progressi è una finestra (@minecraft/server-ui). */
+    private var advancementsScripted = false
 
     /** C'è almeno un blocco con più stati (formato 1.26.40, quindi Minecraft 1.26.40 o più nuovo)? */
     private var stateful = false
