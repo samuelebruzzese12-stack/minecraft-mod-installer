@@ -342,7 +342,16 @@ class ConverterTest {
         val entry = ((loot.l("pools")[0] as Map<*, *>)["entries"] as List<*>)[0] as Map<*, *>
         assertEquals("testmod:ruby", entry["name"])
         assertEquals(listOf(mapOf("function" to "set_count", "count" to mapOf("min" to 1L, "max" to 3L))), entry["functions"])
-        assertTrue(plan.reports.single().simplified.contains("Bottini dei blocchi senza tocco di velluto, fortuna e condizioni speciali"))
+        // Tocco di velluto e fortuna: la tabella di Java va allo script, che la esegue quando un giocatore rompe il blocco.
+        assertTrue(plan.reports.single().scripted.any { it.startsWith("Bottini con le regole di Java") && it.endsWith("1 blocco") })
+        assertFalse(plan.reports.single().simplified.contains("Bottini dei blocchi senza tocco di velluto, fortuna e condizioni speciali"))
+        val data = text("Test Mod BP/scripts/mmi_loot_data.js")
+        assertTrue(data.contains("\"testmod:ruby_ore\":{\"t\":0"))
+        assertTrue(data.contains("\"k\":\"bonus\",\"e\":\"fortune\",\"fo\":\"ore_drops\""))
+        assertTrue(data.contains("\"n\":{\"u\":[1.0,3.0]}"))
+        assertFalse("il blocco che lascia sé stesso non serve allo script", data.contains("testmod:ruby_block"))
+        assertTrue(text("Test Mod BP/scripts/main.js").contains("import \"./mmi_loot.js\""))
+        assertTrue(files.containsKey("Test Mod BP/scripts/mmi_loot.js"))
 
         val feature = json("Test Mod BP/features/ore_ruby_feature.json").o("minecraft:ore_feature")
         assertEquals("testmod:ore_ruby_feature", feature.o("description")["identifier"])

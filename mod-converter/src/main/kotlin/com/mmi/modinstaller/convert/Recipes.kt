@@ -61,6 +61,14 @@ class ItemResolver(
         return out.distinct()
     }
 
+    /** Gli oggetti Bedrock di un gruppo di Java (per i bottini e gli attrezzi): quelli convertiti e quelli di Minecraft. */
+    fun tagItems(tagRl: Rl): List<String> {
+        val out = LinkedHashSet<String>()
+        for (m in members(tagRl)) item(m)?.let { out.add(it.id) }
+        if (out.isEmpty()) Vanilla.tagItem(tagRl)?.let { out.add(it.id) }
+        return out.toList()
+    }
+
     fun tag(tagRl: Rl): Ingredient {
         Vanilla.bedrockTag(tagRl)?.let { return Ingredient.Tag(it) }
         val members = members(tagRl)

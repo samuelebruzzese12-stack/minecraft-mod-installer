@@ -87,7 +87,10 @@ class ConversionPlan internal constructor(
     /** Armi da fuoco dei pacchetti di TACZ (vedi [TaczReader]). */
     internal val tacz: List<TaczContent> = emptyList(),
     /** Icone a più strati da unire (texture virtuale → strati). */
-    internal val composites: Map<Rl, List<Rl>> = emptyMap()
+    internal val composites: Map<Rl, List<Rl>> = emptyMap(),
+    /** Bottini dei blocchi eseguiti con le regole di Java nello script: blocco Bedrock → dati, e le tabelle. */
+    internal val lootBlocks: Map<String, Map<String, Any?>> = emptyMap(),
+    internal val lootTables: List<Map<String, Any?>> = emptyList()
 ) : java.io.Closeable {
     val itemCount: Int get() = items.size
     val blockCount: Int get() = blocks.size
@@ -337,6 +340,26 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         val resolver = ItemResolver(converted, convertedItems, allTags, loaded)
         val recipeConv = RecipeConverter(resolver)
         val lootConv = LootConverter(resolver)
+        // Bottini di Java eseguiti dallo script (fortuna, tocco di velluto, condizioni): solo con la Script API.
+        val lootScript = LootScript(resolver) { ref ->
+            mods.firstNotNullOfOrNull { m ->
+                listOf("loot_table", "loot_tables").firstNotNullOfOrNull { folder -> m.jar.json("data/${ref.ns}/$folder/${ref.path}.json", limits.maxJsonBytes)?.asJsonObject() }
+            }
+        }
+        val lootBlocks = LinkedHashMap<String, Map<String, Any?>>()
+        val lootTables = ArrayList<Map<String, Any?>>()
+        val lootIndex = HashMap<String, Int>()
+        /** Registra il bottino di Java di un blocco per lo script; false se non serve (cade solo il blocco stesso) o non si può. */
+        fun scriptLoot(bedrockId: String, javaId: Rl, table: Map<String, Any?>, states: List<Pair<Map<String, Any>, Map<String, String>>>?, javaDefault: Map<String, String>): Boolean {
+            if (!limits.scriptBehaviors || LootScript.dropsOnlySelf(table, javaId)) return false
+            val spec = lootScript.table(table)
+            val k = com.mmi.modinstaller.core.Json.stringify(spec, pretty = false)
+            val idx = lootIndex.getOrPut(k) { lootTables.add(spec); lootTables.size - 1 }
+            val entry = linkedMapOf<String, Any?>("t" to idx.toLong(), "js" to javaDefault)
+            if (states != null && states.size > 1) entry["st"] = states.map { (b, j) -> listOf(b, j) }
+            lootBlocks[bedrockId] = entry
+            return true
+        }
 
         val itemsOut = ArrayList<ItemOut>()
         val blocksOut = ArrayList<BlockOut>()
@@ -350,6 +373,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         val reports = ArrayList<ModReport>()
         /** Icone fatte di più strati: texture «virtuale» → strati da unire. */
         val composites = LinkedHashMap<Rl, List<Rl>>()
+        val scriptedLootByMod = HashMap<JavaModContent, Int>()
 
         fun res0(m: JavaModContent) = resolverModels.getValue(m)
         // Suoni: prima quelli che le creature usano (letti dal loro codice), poi gli altri finché c'è posto.
@@ -382,6 +406,9 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             val statefulCount = LinkedHashMap<BlockFamily, Int>()
             val shapeNotes = LinkedHashMap<String, MutableList<String>>()
             var lootCount = 0
+            var scriptedLoot = 0
+            val lootSimplifiedBlocks = LinkedHashSet<Rl>()
+            val unsupportedBefore = lootScript.unsupported.size
             for ((b, look) in p.blocks) {
                 val id = converted.getValue(b.id)
                 val key = "block." + b.id.ns + "." + b.id.path.replace('/', '.')
@@ -408,7 +435,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                     val lootFor: ((Map<String, String>) -> String?)? = table?.let { t ->
                         { state: Map<String, String> ->
                             val r = lootConv.convert(t, state)
-                            if (r.simplified) simplified.add("Bottini dei blocchi senza tocco di velluto, fortuna e condizioni speciali")
+                            if (r.simplified) lootSimplifiedBlocks.add(b.id)
                             val lootKey = com.mmi.modinstaller.core.Json.stringify(r.table, pretty = false)
                             byJson.getOrPut(lootKey) {
                                 val path = basePath + (if (byJson.isEmpty()) "" else "_" + (byJson.size + 1)) + ".json"
@@ -420,17 +447,22 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                     val rebuilt = statefulOf(b, mod, res0(mod), code, lootFor, ::exists) ?: sfLook.block
                     finalLook = BlockLook.Stateful(rebuilt)
                     if (table != null) { lootCount++; lootPath = byJson.values.firstOrNull() }
+                    // Porte e blocchi alti: rompendo una metà Bedrock toglie anche l'altra; resta il bottino Bedrock (per stato).
+                    if (table != null && rebuilt.family != BlockFamily.DOOR &&
+                        scriptLoot(id, b.id, table, rebuilt.stateTable, rebuilt.defaultState)) scriptedLoot++
                     statefulCount[rebuilt.family] = (statefulCount[rebuilt.family] ?: 0) + 1
                     rebuilt.note?.let { simplified.add(it) }
                 } else {
                     if (b.facing && b.orientation == Orientation.NONE) simplified.add("Alcuni blocchi orientabili si piazzano sempre rivolti nello stesso verso")
                     else if (b.stateCount > orientedStates) simplified.add("I blocchi con più stati in Java (es. colture, interruttori) hanno un solo aspetto")
                     mod.blockLoot[b.id]?.let { table ->
-                        val r = lootConv.convert(table, b.states?.let { defaultState(it) })
+                        val st = b.states?.let { defaultState(it) }
+                        val r = lootConv.convert(table, st)
                         lootPath = "loot_tables/blocks/" + b.id.ns + "/" + b.id.path + ".json"
                         lootOut[lootPath!!] = r.table
                         lootCount++
-                        if (r.simplified) simplified.add("Bottini dei blocchi senza tocco di velluto, fortuna e condizioni speciali")
+                        if (scriptLoot(id, b.id, table, null, st.orEmpty())) scriptedLoot++
+                        else if (r.simplified) simplified.add("Bottini dei blocchi senza tocco di velluto, fortuna e condizioni speciali")
                     }
                 }
                 val friction = bc?.friction?.takeIf { Math.abs(it - 0.6) > 1e-6 }?.let { (1.0 - it).coerceIn(0.0, 0.9) }
@@ -438,6 +470,12 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                     if (sfLook != null) Orientation.NONE else b.orientation, bc, friction))
                 blockEntries.add(ConvertedEntry(b.id.toString(), id, mod.lang["it_it"]?.get(key) ?: name, describe(finalLook)))
             }
+            // Blocchi con stati il cui bottino non è passato allo script (porte): la tabella Bedrock per stato resta l'unica.
+            val notScripted = lootSimplifiedBlocks.filter { j -> converted[j]?.let { it !in lootBlocks } != false }
+            if (notScripted.isNotEmpty()) simplified.add("Bottini dei blocchi senza tocco di velluto, fortuna e condizioni speciali")
+            if (scriptedLoot > 0) scriptedLootByMod[mod] = scriptedLoot
+            val newUnsupported = lootScript.unsupported.drop(unsupportedBefore)
+            if (newUnsupported.isNotEmpty()) simplified.add("Bottini: " + newUnsupported.joinToString("; "))
             for ((why, list) in shapeNotes) {
                 simplified.add(
                     "Forma semplificata (" + why + "): " + list.size + (if (list.size == 1) " blocco" else " blocchi") +
@@ -539,6 +577,9 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
             }
             if (foodsWithEffects > 0) scripted.add("Effetti dei cibi (pozioni dopo averli mangiati): $foodsWithEffects " + if (foodsWithEffects == 1) "cibo" else "cibi")
             if (toolsWorn > 0) scripted.add("Usura degli attrezzi quando scavano: $toolsWorn " + if (toolsWorn == 1) "attrezzo" else "attrezzi")
+            scriptedLootByMod[mod]?.let { n ->
+                scripted.add("Bottini con le regole di Java (tocco di velluto, fortuna, probabilità, stato del blocco): $n " + if (n == 1) "blocco" else "blocchi")
+            }
             if (placers > 0) fromCode.add("Oggetti che piazzano il loro blocco (semi e simili): $placers")
             val xpBlocks = if (!limits.scriptBehaviors) 0 else blocksOut.count { b -> b.mod === mod && (b.code?.xp?.second ?: 0) > 0 }
             if (xpBlocks > 0) scripted.add("Esperienza dai minerali: $xpBlocks " + if (xpBlocks == 1) "blocco" else "blocchi")
@@ -691,7 +732,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
                 val f = oreFeature(rl, placed, mod, converted) ?: continue
                 featuresOut.add(f.first); rulesOut.add(f.second); ores++
             }
-            if (ores > 0) simplified.add("I minerali compaiono solo nei chunk nuovi del mondo")
+            // (Come in Java: i minerali nuovi compaiono solo nei chunk generati dopo l'installazione: non è una differenza.)
 
             if (itemsFromCode > 0) fromCode.add("Oggetti con tipo e valori letti dal codice: $itemsFromCode")
             if (blocksFromCode > 0) fromCode.add("Blocchi con durezza, resistenza, luce e suono letti dal codice: $blocksFromCode")
@@ -777,7 +818,7 @@ class ModConverter(private val limits: ConvertLimits = ConvertLimits()) {
         }
         return ConversionPlan(
             failed + reports, mods, itemsOut, blocksOut, recipesOut, lootOut, featuresOut, entitiesOut, rulesOut,
-            resolver.customTags.mapValues { it.value.toSet() }, languages, soundPlan.sounds, spawnOut, taczOut, composites
+            resolver.customTags.mapValues { it.value.toSet() }, languages, soundPlan.sounds, spawnOut, taczOut, composites, lootBlocks, lootTables
         )
     }
 
@@ -1311,7 +1352,20 @@ internal class AddonWriter(
         }
 
         // ---- comportamenti (Script API) e manifest: alla fine, quando si sa quali componenti personalizzati servono
-        val js = Behaviors.mainJs(scripts)?.let { it + (tacz?.js ?: "") } ?: tacz?.js?.let { "// Scritto da Minecraft Mod Installer (JAVA TO BEDROCK).\n$it" }
+        // Bottini dei blocchi con le regole di Java (vedi LootScript).
+        val extra = StringBuilder(tacz?.js ?: "")
+        if (plan.lootBlocks.isNotEmpty()) {
+            val data = "// Bottini dei blocchi convertiti (tabelle di Java tradotte per lo script).\n" +
+                "export const LOOT = " + Json.stringify(plan.lootBlocks) + ";\n" +
+                "export const TABLES = " + Json.stringify(plan.lootTables) + ";\n"
+            sink(bp + "scripts/mmi_loot_data.js", data.toByteArray(Charsets.UTF_8))
+            val runtime = ModConverter::class.java.getResourceAsStream("/com/mmi/modinstaller/convert/loot_runtime.js")?.use { it.readBytes() }
+                ?: throw IllegalStateException("loot_runtime.js mancante")
+            sink(bp + "scripts/mmi_loot.js", runtime)
+            extra.append("import \"./mmi_loot.js\";\n")
+        }
+        val modules = extra.toString().takeIf { it.isNotEmpty() }
+        val js = Behaviors.mainJs(scripts)?.let { it + (modules ?: "") } ?: modules?.let { "// Scritto da Minecraft Mod Installer (JAVA TO BEDROCK).\n$it" }
         minEngine = when { stateful -> StateEngine.MIN_ENGINE; js != null -> Behaviors.MIN_ENGINE; else -> ModConverter.MIN_ENGINE }
         if (js != null) sink(bp + "scripts/main.js", js.toByteArray(Charsets.UTF_8))
         val description = "Convertito da Minecraft Java con Minecraft Mod Installer: " +

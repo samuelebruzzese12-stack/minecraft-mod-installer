@@ -94,7 +94,9 @@ class StatefulBlock(
     /** Cosa resta diverso da Java (per il rapporto), o null. */
     val note: String?,
     /** Stato Java «di partenza» (per i bottini). */
-    val defaultState: Map<String, String>
+    val defaultState: Map<String, String>,
+    /** Ogni combinazione di stati Bedrock con lo stato Java corrispondente (per eseguire i bottini di Java nello script). */
+    val stateTable: List<Pair<Map<String, Any>, Map<String, String>>> = emptyList()
 )
 
 enum class BlockFamily(val label: String) {
@@ -234,7 +236,7 @@ object StateEngine {
         }
         val custom = LinkedHashMap<String, List<Any>>()
         for (st in spec.states) if (st.custom) custom[st.name] = st.values
-        return StatefulBlock(family, bones, textures, tinted, custom, spec.traits, base, perms, spec.note, spec.java(combos.first()))
+        return StatefulBlock(family, bones, textures, tinted, custom, spec.traits, base, perms, spec.note, spec.java(combos.first()), combos.zip(javaOf))
     }
 
     // ---------------------------------------------------------------- famiglie

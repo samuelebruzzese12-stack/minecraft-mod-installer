@@ -41,9 +41,10 @@ class JElement(
         val DIRECTIONS = listOf("down", "up", "north", "south", "west", "east")
 
         /** Un elemento con le stesse texture su tutte le facce che hanno una voce in [byFace] (o [all]). */
-        fun box(from: List<Double>, to: List<Double>, all: String? = null, byFace: Map<String, String> = emptyMap()): JElement {
+        fun box(from: List<Double>, to: List<Double>, all: String? = null, byFace: Map<String, String> = emptyMap(), only: List<String>? = null): JElement {
             val faces = LinkedHashMap<String, JFace>()
             for (d in DIRECTIONS) {
+                if (only != null && d !in only) continue
                 val t = byFace[d] ?: byFace[if (d == "up" || d == "down") d else "side"] ?: all ?: continue
                 faces[d] = JFace(null, t, 0, false)
             }
@@ -211,6 +212,9 @@ class ModelResolver(private val jars: List<JavaJar>, private val limits: Convert
             "template_glass_pane_side" -> shape(listOf(JElement.box(listOf(7.0, 0.0, 0.0), listOf(9.0, 16.0, 7.0), all = "#pane", byFace = mapOf("up" to "#edge", "down" to "#edge"))), tex)
             "template_glass_pane_side_alt" -> shape(listOf(JElement.box(listOf(7.0, 0.0, 9.0), listOf(9.0, 16.0, 16.0), all = "#pane", byFace = mapOf("up" to "#edge", "down" to "#edge"))), tex)
             "carpet" -> shape(listOf(JElement.box(listOf(0.0, 0.0, 0.0), listOf(16.0, 1.0, 16.0), all = "#wool")), tex)
+            // Portali (come quello del Nether): una lastra sottile al centro, visibile solo dai due lati larghi.
+            "nether_portal_ns" -> shape(listOf(JElement.box(listOf(0.0, 0.0, 6.0), listOf(16.0, 16.0, 10.0), only = listOf("north", "south"), all = "#portal")), tex)
+            "nether_portal_ew" -> shape(listOf(JElement.box(listOf(6.0, 0.0, 0.0), listOf(10.0, 16.0, 16.0), only = listOf("east", "west"), all = "#portal")), tex)
             "pressure_plate_up" -> shape(listOf(JElement.box(listOf(1.0, 0.0, 1.0), listOf(15.0, 1.0, 15.0), all = "#texture")), tex)
             "pressure_plate_down" -> shape(listOf(JElement.box(listOf(1.0, 0.0, 1.0), listOf(15.0, 0.5, 15.0), all = "#texture")), tex)
             "button", "button_inventory" -> shape(listOf(JElement.box(listOf(5.0, 0.0, 6.0), listOf(11.0, 2.0, 10.0), all = "#texture")), tex)

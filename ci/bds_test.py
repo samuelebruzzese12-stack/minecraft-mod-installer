@@ -77,6 +77,45 @@ def guns_data(z, bp, behaviors):
                 break
 
 
+def loot_data(z, bp, behaviors):
+    """Bottini con le regole di Java (scripts/mmi_loot_data.js): un blocco «minerale» (tocco di velluto → sé stesso,
+    altrimenti un altro oggetto con la fortuna) per la prova nel server."""
+    if not bp:
+        return
+    try:
+        js = z.read(bp + "/scripts/mmi_loot_data.js").decode("utf-8")
+    except KeyError:
+        return
+    def const(name):
+        m = re.search(r"export const " + name + r" = (.*?);\n", js, re.S)
+        return json.loads(m.group(1)) if m else None
+    loot, tables = const("LOOT") or {}, const("TABLES") or []
+    for bid, spec in loot.items():
+        if spec.get("st"):
+            continue
+        t = tables[spec["t"]]
+        pools = t.get("p", [])
+        if len(pools) != 1 or len(pools[0].get("e", [])) != 1:
+            continue
+        e = pools[0]["e"][0]
+        if e.get("t") != "a" or len(e.get("ch", [])) != 2:
+            continue
+        silk, other = e["ch"]
+        cond = (silk.get("c") or [{}])[0]
+        if silk.get("id") != bid or cond.get("k") != "tool" or not any("silk_touch" in x.get("e", []) for x in cond.get("ench", [])):
+            continue
+        if other.get("t") != "i" or other.get("c"):
+            continue
+        fns = other.get("f") or []
+        if not any(f.get("k") == "bonus" and f.get("fo") == "ore_drops" for f in fns):
+            continue
+        counts = [f for f in fns if f.get("k") == "count"]
+        if counts and counts[0].get("n") not in ({"u": [1.0, 1.0]}, 1.0):
+            continue
+        behaviors["loot"] = {"block": bid, "drop": other["id"]}
+        return
+
+
 def read_addon(path):
     """Cartelle BP/RP dell'add-on, manifest e contenuto (identificatori e valori attesi)."""
     z = zipfile.ZipFile(path)
@@ -88,9 +127,10 @@ def read_addon(path):
             kind = m["modules"][0]["type"]
             packs[kind] = (n.split("/")[0], m)
     blocks, items, entities = [], [], []
-    behaviors = {"tools": [], "foods": [], "ores": [], "stateful": [], "guns": [], "gunRecipe": None}
+    behaviors = {"tools": [], "foods": [], "ores": [], "stateful": [], "guns": [], "gunRecipe": None, "loot": None}
     bp = packs.get("data", (None,))[0]
     guns_data(z, bp, behaviors)
+    loot_data(z, bp, behaviors)
     for n in names:
         if not bp or not n.startswith(bp + "/") or not n.endswith(".json"):
             continue
@@ -157,7 +197,7 @@ def read_addon(path):
 
 
 TEST_JS = r'''
-import { system, world, BlockTypes, ItemTypes, EntityTypes, ItemStack, GameMode, Direction } from "@minecraft/server";
+import { system, world, BlockTypes, ItemTypes, EntityTypes, ItemStack, GameMode, Direction, EnchantmentTypes } from "@minecraft/server";
 import * as gt from "@minecraft/server-gametest";
 const DATA = __DATA__;
 function log(o) { console.warn("BBTEST " + JSON.stringify(o)); }
@@ -407,6 +447,53 @@ if (DATA.behaviors.gunRecipe) gt.register("bb", "banco_armi", (test) => {
   });
 }).structureName("bb:plat").maxTicks(80).tag("bb");
 
+// ---- bottini con le regole di Java: piccone normale → l'altro oggetto; tocco di velluto → il blocco; fortuna III → di più
+if (DATA.behaviors.loot) gt.register("bb", "bottini", (test) => {
+  const L = DATA.behaviors.loot;
+  const p = test.spawnSimulatedPlayer({ x: 4, y: 2, z: 1 }, "Minatore", GameMode.Survival);
+  const inv = p.getComponent("minecraft:inventory").container;
+  const dim = test.getDimension();
+  const near = () => dim.getEntities({ type: "minecraft:item", location: test.worldLocation({ x: 8, y: 2, z: 8 }), maxDistance: 16 });
+  // Quello che il giocatore raccoglie da terra conta come caduto (si tiene solo il piccone nella prima casella).
+  const pocket = (id) => { let n = 0; for (let i = 1; i < inv.size; i++) { const it = inv.getItem(i); if (it && it.typeId === id) n += it.amount; } return n; };
+  const count = (id) => pocket(id) + near().filter((e) => e.getComponent("minecraft:item")?.itemStack.typeId === id).reduce((a, e) => a + e.getComponent("minecraft:item").itemStack.amount, 0);
+  const clear = () => { near().forEach((e) => e.remove()); for (let i = 1; i < inv.size; i++) inv.setItem(i, undefined); };
+  const pick = (ench, lv) => {
+    const it = new ItemStack("minecraft:netherite_pickaxe", 1);
+    if (ench) it.getComponent("minecraft:enchantable").addEnchantment({ type: EnchantmentTypes.get(ench), level: lv });
+    return it;
+  };
+  const res = { test: "bottini", block: L.block, drop: L.drop };
+  p.addEffect("haste", 4000, { amplifier: 4, showParticles: false });
+  // 10 blocchi a portata del giocatore (due file da 5), uno ogni 14 tick
+  const cols = [];
+  for (let x = 2; x < 7; x++) for (const z of [3, 4]) cols.push({ x, y: 2, z });
+  const phase = (name, ench, lv, start, after) => {
+    test.runAfterDelay(start, () => {
+      clear();
+      for (const c of cols) if (test.getBlock(c).typeId !== L.block) test.setBlockType(L.block, c);
+      inv.setItem(0, pick(ench, lv)); p.selectedSlotIndex = 0;
+    });
+    cols.forEach((c, i) => test.runAfterDelay(start + 4 + i * 14, () => { p.lookAtBlock(c); p.breakBlock(c); }));
+    test.runAfterDelay(start + 4 + cols.length * 14 + 10, () => {
+      res[name] = { drop: count(L.drop), block: count(L.block), left: cols.filter((c) => test.getBlock(c).typeId === L.block).length };
+      after && after();
+    });
+    return start + 4 + cols.length * 14 + 14;
+  };
+  let t = 4;
+  t = phase("normale", null, 0, t);
+  t = phase("velluto", "silk_touch", 1, t);
+  t = phase("fortuna3", "fortune", 3, t, () => {
+    // Fortuna III con «ore_drops» (Java): 1, 1, 2, 3 o 4 a blocco; tutti 1 su 10 blocchi ha probabilità 0,4^10 ≈ 0,01%.
+    const ok = res.normale.drop === cols.length && res.normale.block === 0 && res.velluto.block === cols.length && res.velluto.drop === 0 &&
+      res.fortuna3.drop > cols.length && res.normale.left === 0 && res.velluto.left === 0 && res.fortuna3.left === 0;
+    res.esito = ok ? "ok" : "no";
+    log(res);
+    if (ok) test.succeed(); else test.fail("bottini diversi da Java: " + JSON.stringify(res));
+  });
+}).structureName("bb:plat").maxTicks(900).tag("bb");
+
 system.runTimeout(() => log({ test: "pronto" }), 20);
 '''
 
@@ -435,7 +522,7 @@ def test_pack(dest, blocks, items, entities, behaviors=None):
     open(os.path.join(dest, "structures", "bb", "plat.mcstructure"), "wb").write(
         lenbt.mcstructure(size, data, [("minecraft:air", {}), ("minecraft:stone", {})]))
     payload = json.dumps({"blocks": blocks, "items": items, "entities": entities, "batch": BATCH,
-                          "behaviors": behaviors or {"tools": [], "foods": [], "ores": [], "stateful": [], "guns": [], "gunRecipe": None}})
+                          "behaviors": behaviors or {"tools": [], "foods": [], "ores": [], "stateful": [], "guns": [], "gunRecipe": None, "loot": None}})
     open(os.path.join(dest, "scripts", "main.js"), "w", encoding="utf-8").write(TEST_JS.replace("__DATA__", payload))
     return pid
 
@@ -582,7 +669,7 @@ def main():
             r["addon"], "OK" if ok else "PROBLEMI", r["blocks"], r["items"], r["entities"], len(r["passed"]), len(r["failed"]), r["content_log_count"])
         summary.append(line)
         for res in r["results"]:
-            if res.get("test") in ("arma", "banco_armi"):
+            if res.get("test") in ("arma", "banco_armi", "bottini"):
                 summary.append("   %s: %s" % (res.get("test"), json.dumps({k: v for k, v in res.items() if k != "test"}, ensure_ascii=False)[:400]))
             if isinstance(res.get("ok"), list) and res.get("ok"):
                 summary.append("   %s ok: %s" % (res.get("test"), "; ".join(map(str, res["ok"][:12]))))
